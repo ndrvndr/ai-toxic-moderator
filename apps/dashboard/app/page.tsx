@@ -1,47 +1,41 @@
-export default function Home() {
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+
+export default function LoginPage() {
   return (
-    <main>
-      <header>
-        <span className="brand">ATM / MODERATION CONSOLE</span>
-        <span className="badge">SIMULASI LOKAL</span>
-      </header>
-      <section>
-        <p className="eyebrow">MILESTONE 01 · FOUNDATION</p>
-        <h1>
-          Moderasi yang
-          <br />
-          bisa dijelaskan.
-        </h1>
-        <p className="intro">
-          Fondasi project sudah disiapkan. Pipeline deteksi dan live feed akan dihubungkan pada
-          tahap implementasi berikutnya.
-        </p>
-      </section>
-      <div className="grid">
-        <article>
-          <span>01 / API</span>
-          <h2>NestJS</h2>
-          <p>Proses API terpisah dengan pemeriksaan liveness dan koneksi database.</p>
-        </article>
-        <article>
-          <span>02 / DATA</span>
-          <h2>PostgreSQL</h2>
-          <p>Schema berversi untuk pesan, keputusan, evidence, feedback, dan audit.</p>
-        </article>
-        <article>
-          <span>03 / PROCESSING</span>
-          <h2>Worker foundation</h2>
-          <p>Struktur NestJS dan BullMQ tersedia. Consumer moderasi belum diaktifkan.</p>
-        </article>
+    <main className="flex min-h-svh items-center justify-center bg-muted/40 px-6 py-12">
+      <div className="w-full max-w-md space-y-8">
+        <div className="space-y-2 text-center">
+          <p className="text-sm font-semibold tracking-widest text-muted-foreground">
+            AI TOXIC MODERATOR
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight">Fokus pada live Anda.</h1>
+          <p className="text-sm leading-6 text-muted-foreground">
+            Pantau percakapan dan kelola moderasi channel YouTube dalam satu tempat.
+          </p>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Masuk ke dashboard</CardTitle>
+            <CardDescription>
+              Gunakan akun Google yang mengelola channel YouTube Anda.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-4">
+            <form action="http://127.0.0.1:3001/v1/auth/google" method="get">
+              <Button type="submit" className="w-full">
+                Masuk dengan Google
+              </Button>
+            </form>
+
+            <p className="text-center text-xs leading-5 text-muted-foreground">
+              Anda akan diarahkan ke Google untuk memilih akun dan memberikan izin akses YouTube.
+            </p>
+          </CardContent>
+        </Card>
       </div>
-      <aside>
-        <strong>Belum ada pesan yang diproses</strong>
-        <p>
-          Layar ini adalah app shell. Tidak ada koneksi YouTube, prediksi model, atau tindakan
-          moderasi nyata.
-        </p>
-      </aside>
-      <footer>Next.js / NestJS / PostgreSQL / Redis</footer>
     </main>
   );
 }
