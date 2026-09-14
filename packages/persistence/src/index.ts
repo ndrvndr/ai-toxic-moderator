@@ -25,3 +25,4 @@ export async function transaction<T>(
     client.release();
   }
 }
+export type { PoolClient } from 'pg';

@@ -19,6 +19,7 @@
     "test:monitoring-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/monitoring-schema.test.cjs",
     "test:monitoring-unit": "node --experimental-test-isolation=none --test tests/youtube-monitoring.test.cjs tests/monitoring-contracts.test.cjs",
     "test:google-service": "node --experimental-test-isolation=none --test tests/google-service.test.cjs",
+    "test:youtube-session": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/youtube-session.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
