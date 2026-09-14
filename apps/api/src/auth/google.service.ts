@@ -13,6 +13,8 @@ import {
   GoogleProvider,
   GoogleProviderError,
   YOUTUBE_SCOPE,
+  type GoogleProviderErrorCode,
+  type VerifiedBroadcast,
 } from './google-provider';
 import { tokenHash } from './session.service';
 
@@ -30,6 +32,45 @@ export function oauthBrowserToken(header: string | undefined) {
   const token = entries[0]!.slice(OAUTH_COOKIE.length + 1);
   return /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null;
 }
+
+const GOOGLE_ERROR_RESPONSES = {
+  RECONNECT_REQUIRED: {
+    status: 409,
+    message: 'Reconnect your Google account to continue.',
+  },
+  GOOGLE_UNAVAILABLE: {
+    status: 502,
+    message: 'Google is temporarily unavailable. Please try again.',
+  },
+  YOUTUBE_FORBIDDEN: {
+    status: 502,
+    message: 'YouTube rejected the request. Check your Google connection and API access.',
+  },
+  INVALID_BROADCAST_ID: {
+    status: 422,
+    message: 'The YouTube broadcast ID is invalid.',
+  },
+  BROADCAST_NOT_FOUND: {
+    status: 404,
+    message: 'The YouTube broadcast could not be found.',
+  },
+  BROADCAST_NOT_OWNED: {
+    status: 403,
+    message: 'This broadcast does not belong to the connected YouTube account.',
+  },
+  BROADCAST_NOT_LIVE: {
+    status: 409,
+    message: 'The broadcast must be live before monitoring can start.',
+  },
+  LIVE_CHAT_UNAVAILABLE: {
+    status: 409,
+    message: 'Live chat is not available for this broadcast.',
+  },
+  YOUTUBE_LOOKUP_INCOMPLETE: {
+    status: 503,
+    message: 'YouTube channel ownership could not be fully verified. Please try again.',
+  },
+} satisfies Record<GoogleProviderErrorCode, { status: number; message: string }>;
 
 @Injectable()
 export class GoogleService {
@@ -202,7 +243,10 @@ export class GoogleService {
     return token;
   }
 
-  async broadcasts(accountId: string) {
+  private async withAccessToken<T>(
+    accountId: string,
+    operation: (accessToken: string) => Promise<T>,
+  ): Promise<T> {
     this.enabled();
     try {
       const token = await transaction(this.database.pool, async (client) => {
@@ -254,18 +298,24 @@ export class GoogleService {
         );
         return refreshed.access_token;
       });
-      return await this.provider.broadcasts(token);
+      return await operation(token);
     } catch (error) {
       if (error instanceof GoogleProviderError) {
-        throw failure(
-          error.code === 'RECONNECT_REQUIRED' ? 409 : 502,
-          error.code,
-          error.code === 'RECONNECT_REQUIRED'
-            ? 'Hubungkan ulang akun Google.'
-            : 'Data YouTube belum dapat diambil. Coba kembali.',
-        );
+        const response = GOOGLE_ERROR_RESPONSES[error.code];
+        throw failure(response.status, error.code, response.message);
       }
+
       throw error;
     }
+  }
+
+  async broadcasts(accountId: string) {
+    return this.withAccessToken(accountId, (accessToken) => this.provider.broadcasts(accessToken));
+  }
+
+  async verifyBroadcast(accountId: string, broadcastId: string): Promise<VerifiedBroadcast> {
+    return this.withAccessToken(accountId, (accessToken) =>
+      this.provider.verifyBroadcast(accessToken, broadcastId),
+    );
   }
 }

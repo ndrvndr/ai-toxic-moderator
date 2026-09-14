@@ -59,6 +59,6 @@ class AuthController {
     { provide: APP_GUARD, useClass: SessionGuard },
     { provide: APP_GUARD, useClass: ChannelGuard },
   ],
-  exports: [SessionService],
+  exports: [SessionService, GoogleService],
 })
 export class AuthModule {}
