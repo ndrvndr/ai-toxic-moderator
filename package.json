@@ -16,6 +16,7 @@
     "test:db": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/database.test.cjs",
     "test:auth": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/auth.test.cjs",
     "test:google": "node --experimental-test-isolation=none --test tests/google.test.cjs",
+    "test:monitoring-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/monitoring-schema.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
