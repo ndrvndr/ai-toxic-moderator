@@ -79,7 +79,14 @@ export async function provisionRuntimeRole(client, { role, password, schema = 'p
     }
     await client.query(`GRANT SELECT,INSERT ON ${schemaSql}.monitoring_runs TO ${roleSql}`);
 
-    await client.query(`GRANT UPDATE(status) ON ${schemaSql}.monitoring_runs TO ${roleSql}`);
+    await client.query(
+      `GRANT UPDATE(
+    status,
+    stop_requested_at,
+    stopped_by_account_id,
+    finished_at
+  ) ON ${schemaSql}.monitoring_runs TO ${roleSql}`,
+    );
 
     await client.query(
       `GRANT SELECT,INSERT ON ${schemaSql}.monitoring_start_requests TO ${roleSql}`,

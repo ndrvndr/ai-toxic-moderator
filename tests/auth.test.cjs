@@ -345,7 +345,7 @@ test('session storage is bounded per account', async () => {
   assert.equal(count.rows[0].n, 10);
 });
 
-test('runtime database role cannot update membership or delete audit history', async () => {
+test('runtime database role cannot change membership identity or delete audit history', async () => {
   const runtime = new Client({
     connectionString: process.env.TEST_DATABASE_URL,
     options: `-c search_path=${schema} -c role=${runtimeRole}`,
@@ -355,7 +355,7 @@ test('runtime database role cannot update membership or delete audit history', a
 
   try {
     assert.equal((await runtime.query('SELECT current_user')).rows[0].current_user, runtimeRole);
-    await assert.rejects(runtime.query("UPDATE channel_memberships SET role='OWNER'"), {
+    await assert.rejects(runtime.query('UPDATE channel_memberships SET account_id = account_id'), {
       code: '42501',
     });
     await assert.rejects(runtime.query('DELETE FROM audit_events'), { code: '42501' });

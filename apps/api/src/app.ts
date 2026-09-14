@@ -12,10 +12,17 @@ import { ChannelsModule } from './channels/channels.module';
 import { DatabaseModule, type DatabasePool } from './database.module';
 import { HealthModule } from './health.module';
 import { ApiExceptionFilter, type ApiRequest, type ApiResponse } from './http';
+import { MonitoringModule } from './monitoring/monitoring.module';
 
 export async function createApi(config: AppConfig, pool?: DatabasePool) {
   @Module({
-    imports: [DatabaseModule.register(config, pool), AuthModule, ChannelsModule, HealthModule],
+    imports: [
+      DatabaseModule.register(config, pool),
+      AuthModule,
+      ChannelsModule,
+      HealthModule,
+      MonitoringModule,
+    ],
   })
   class ApiModule {}
   const app = await NestFactory.create<NestExpressApplication>(ApiModule, {

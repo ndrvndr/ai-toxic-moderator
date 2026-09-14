@@ -1,8 +1,12 @@
 import {
   monitoringRequestKey,
   monitoringRun,
+  monitoringStatusResponse,
   startMonitoringInput,
   startMonitoringResponse,
+  stopMonitoringInput,
+  stopMonitoringResponse,
+  uuid,
 } from '@moderator/contracts';
 import { transaction, type PoolClient } from '@moderator/persistence';
 import { Injectable } from '@nestjs/common';
@@ -106,6 +110,108 @@ export class MonitoringService {
         reused,
       });
     });
+  }
+
+  async status(accountId: string, channelId: string, runId: string) {
+    this.validateIds(channelId, runId);
+
+    return transaction(this.database.pool, async (client) => {
+      await this.requireAccess(client, accountId, channelId);
+
+      const run = await this.readRun(client, runId);
+
+      if (run.channel_id !== channelId) {
+        throw failure(404, 'MONITORING_RUN_NOT_FOUND', 'The monitoring run was not found.');
+      }
+
+      return monitoringStatusResponse.parse({ run });
+    });
+  }
+
+  async stop(accountId: string, channelId: string, runId: string, body: unknown) {
+    this.validateIds(channelId, runId);
+
+    if (!stopMonitoringInput.safeParse(body).success) {
+      throw failure(422, 'VALIDATION_ERROR', 'The stop request body must be an empty object.');
+    }
+
+    return transaction(this.database.pool, async (client) => {
+      await this.requireAccess(client, accountId, channelId);
+
+      const result = await client.query<{ status: string }>(
+        `
+          SELECT status
+          FROM monitoring_runs
+          WHERE id = $1 AND channel_id = $2
+          FOR UPDATE
+        `,
+        [runId, channelId],
+      );
+
+      const row = result.rows[0];
+
+      if (!row) {
+        throw failure(404, 'MONITORING_RUN_NOT_FOUND', 'The monitoring run was not found.');
+      }
+
+      if (row.status === 'STARTING' || row.status === 'RUNNING') {
+        await client.query(
+          `
+            WITH moment AS MATERIALIZED (
+              SELECT
+                GREATEST(
+                  clock_timestamp(),
+                  requested_at,
+                  started_at
+                ) AS at
+              FROM monitoring_runs
+              WHERE id = $1
+            )
+            UPDATE monitoring_runs
+            SET
+              status = CASE
+                WHEN status = 'STARTING' THEN 'STOPPED'
+                ELSE 'STOPPING'
+              END,
+              stop_requested_at = moment.at,
+              stopped_by_account_id = $2,
+              finished_at = CASE
+                WHEN status = 'STARTING' THEN moment.at
+                ELSE NULL
+              END
+            FROM moment
+            WHERE id = $1
+          `,
+          [runId, accountId],
+        );
+      }
+
+      return stopMonitoringResponse.parse({
+        run: await this.readRun(client, runId),
+      });
+    });
+  }
+
+  private validateIds(channelId: string, runId: string) {
+    if (!uuid.safeParse(channelId).success || !uuid.safeParse(runId).success) {
+      throw failure(422, 'VALIDATION_ERROR', 'Provide valid channel and monitoring run IDs.');
+    }
+  }
+
+  private async requireAccess(client: PoolClient, accountId: string, channelId: string) {
+    const result = await client.query<{ role: string }>(
+      `
+        SELECT role
+        FROM channel_memberships
+        WHERE channel_id = $1 AND account_id = $2
+        FOR SHARE
+      `,
+      [channelId, accountId],
+    );
+
+    if (!['OWNER', 'MODERATOR'].includes(result.rows[0]?.role ?? '')) {
+      throw failure(403, 'CHANNEL_FORBIDDEN', 'You do not have access to this channel.');
+    }
   }
 
   private async lockRequest(client: PoolClient, accountId: string, requestKey: string) {
