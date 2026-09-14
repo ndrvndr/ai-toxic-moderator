@@ -16,7 +16,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "incremental": true,
+    "incremental": false,
     "plugins": [
       {
         "name": "next"
@@ -33,5 +33,6 @@
   ],
   "exclude": [
     "node_modules"
-  ]
+  ],
+  "extends": "../../tsconfig.base.json"
 }

@@ -1,18 +1,53 @@
 import { z } from 'zod';
+
 const port = z.coerce.number().int().min(1024).max(65535);
+
 const schema = z.object({
-  NODE_ENV:z.enum(['development','test']).default('development'),
-  API_PORT:port.default(3001),
-  DATABASE_URL:z.url().refine(v => ['postgresql:','postgres:'].includes(new URL(v).protocol),'PostgreSQL URL required'),
-  REDIS_HOST:z.enum(['127.0.0.1','localhost','::1']).default('127.0.0.1'),
-  REDIS_PORT:port.default(56379),
-  WORKER_ENABLED:z.enum(['true','false']).default('false').transform(v=>v==='true'),
+  NODE_ENV: z.enum(['development', 'test']).default('development'),
+  API_PORT: port.default(3001),
+  DATABASE_URL: z
+    .url()
+    .refine(
+      (v) => ['postgresql:', 'postgres:'].includes(new URL(v).protocol),
+      'PostgreSQL URL required',
+    ),
+  REDIS_HOST: z.enum(['127.0.0.1', 'localhost', '::1']).default('127.0.0.1'),
+  REDIS_PORT: port.default(56379),
+  WORKER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  DEV_AUTH_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  DEV_ACCOUNT_ID: z.uuid().default('10000000-0000-4000-8000-000000000001'),
+  DASHBOARD_ORIGIN: z
+    .url()
+    .default('http://127.0.0.1:3000')
+    .refine((value) => {
+      const url = new URL(value);
+      return (
+        url.protocol === 'http:' &&
+        ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) &&
+        value === url.origin &&
+        !url.username &&
+        !url.password
+      );
+    }, 'An exact local HTTP origin is required'),
+  SESSION_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(3600),
 });
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   const result = schema.safeParse(env);
-  if(!result.success) throw new Error('Invalid development configuration: '+result.error.issues.map(i=>i.path.join('.')).join(', '));
+  if (!result.success)
+    throw new Error(
+      'Invalid development configuration: ' +
+        result.error.issues.map((i) => i.path.join('.')).join(', '),
+    );
   const host = new URL(result.data.DATABASE_URL).hostname;
-  if(!['127.0.0.1','localhost','[::1]'].includes(host)) throw new Error('Foundation database must be local');
+  if (!['127.0.0.1', 'localhost', '[::1]'].includes(host))
+    throw new Error('Foundation database must be local');
   return Object.freeze(result.data);
 }
 export type AppConfig = ReturnType<typeof loadConfig>;

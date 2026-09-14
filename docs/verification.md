@@ -1,5 +1,18 @@
 # Verifikasi foundation
 
+## Fitur dev-session-access — 14 September 2026
+
+- TypeScript strict build seluruh packages, API NestJS, dan worker: PASS.
+- TypeScript dashboard (`tsc --noEmit`): PASS. Sebanyak 38 file source/config executable dicocokkan dengan salinan yang diuji; tidak ada perbedaan.
+- Total 29 tests: PASS (9 contract/config, 8 PostgreSQL foundation, 12 HTTP/auth/runtime permissions).
+- API diuji pada server HTTP nyata dengan port loopback acak, PostgreSQL 18.0 terisolasi, dan role runtime tanpa izin mengubah membership atau menghapus audit/keputusan.
+- Tests mencakup login, logout, token hash/cookie, rotation, expiry, restart, auth disabled, Origin/Host, payload invalid/terlalu besar, membership dicabut, role OPERATOR, pagination, serta bounded sessions.
+- Kode sumber tetap berada di project Desktop. Karena runner menolak penulisan build output pada Desktop, kompilasi dan tests memakai salinan sementara source yang sama di workspace yang dapat ditulis. Database pengguna dan `.env` tidak diubah.
+- Build production dashboard belum dapat diulang pada runner sesi ini: Turbopack menolak dependensi bertaut di luar root salinan; percobaan Webpack mengalami spawn EPERM. Dashboard tidak diubah oleh fitur backend ini. Build foundation sebelumnya tercatat di bawah.
+- Redis, pipeline moderasi, UI login, OIDC, dan integrasi provider bukan cakupan fitur ini. Provisioning role runtime tersedia melalui CLI dan diuji pada database terisolasi; belum diterapkan ke database pengguna.
+
+## Riwayat foundation
+
 13 September 2026. Lingkungan: Windows, Node.js 22.20.0, npm 10.9.3, PostgreSQL 18.0 native lokal terisolasi. Docker engine tidak aktif saat pengujian; compose belum diuji start-to-finish.
 
 Hasil:

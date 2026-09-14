@@ -1,6 +1,6 @@
 # Backlog milestone pertama
 
-Status seluruh pekerjaan: TODO. Daftar ini tidak menyatakan bahwa kode atau pengujian sudah tersedia. Kerjakan berdasarkan dependensi, dan catat bukti selesai pada tiap tugas saat implementasi.
+Pembaruan 14 September 2026: fondasi M1-01–03 tersedia; M1-04 backend session development, guard membership, Origin dan provisioning role runtime sudah diimplementasikan pada branch `feat/dev-session-access`. Lihat `docs/dev-session-access.md` dan `docs/verification.md` untuk langkah penggunaan, hasil pengujian, serta batasan. M1-05 dan seterusnya belum dimulai.
 
 ## Urutan pekerjaan
 

@@ -1,0 +1,12 @@
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.next/
+**/.next/
+coverage/
+package-lock.json
+**/next-env.d.ts
+packages/persistence/migrations/
+.env*
+*.tsbuildinfo

@@ -11,22 +11,28 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node scripts/build.mjs --check",
+    "check": "npm run typecheck && npm run format:check",
     "test": "node --experimental-test-isolation=none --test tests/contracts.test.cjs tests/config.test.cjs",
     "test:db": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/database.test.cjs",
+    "test:auth": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/auth.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
     "build:core": "node scripts/build.mjs --core",
     "db:migrate": "node --env-file-if-exists=.env scripts/database.mjs migrate",
-    "db:seed": "node --env-file-if-exists=.env scripts/database.mjs seed"
+    "db:seed": "node --env-file-if-exists=.env scripts/database.mjs seed",
+    "db:runtime": "node --env-file-if-exists=.env scripts/runtime-role.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "format": "node scripts/organize-imports.mjs && prettier --write .",
+    "format:check": "node scripts/organize-imports.mjs --check && prettier --check ."
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/pg": "^8.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "prettier": "3.6.2"
   },
   "overrides": {
     "multer": "2.3.0"

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "paths": {
+      "@moderator/*": [
+        "packages/*/dist"
+      ]
+    }
+  }
+}

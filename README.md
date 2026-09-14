@@ -1,6 +1,8 @@
 # AI Toxic Moderator
 
-Fondasi monorepo moderasi YouTube Live Chat Indonesia. Tahap saat ini: scaffold dan kontrak data (M1-01–03). Belum ada pipeline deteksi, login, ingestion pesan, SSE feed, feedback endpoint, model AI, atau koneksi YouTube yang aktif.
+Monorepo moderasi YouTube Live Chat Indonesia. Fondasi M1-01–03 dan backend session development M1-04 tersedia. Login/logout lokal, `/v1/me`, dan daftar session channel sudah diimplementasikan. Pipeline deteksi, ingestion pesan, SSE feed, feedback endpoint, model AI, dan koneksi YouTube belum tersedia.
+
+Untuk mengaktifkan serta mencoba fitur akses, lihat [session development](docs/dev-session-access.md). `.env` pengguna tidak diubah otomatis; login memerlukan `DEV_AUTH_ENABLED=true`.
 
 ## Stack
 
@@ -39,7 +41,7 @@ npm run dev:api
 npm run dev:dashboard
 ```
 
-Dashboard: http://127.0.0.1:3000. API: http://127.0.0.1:3001/health/live dan /health/ready. Ready saat ini hanya memeriksa schema database foundation; bukan kesiapan pipeline moderasi.
+Dashboard: http://127.0.0.1:3000. API: http://127.0.0.1:3001/health/live dan /health/ready. Ready memeriksa schema foundation dan dashboard_sessions; bukan kesiapan pipeline moderasi.
 
 ```powershell
 npm run dev:worker
@@ -54,6 +56,7 @@ npm run check
 npm test
 $env:TEST_DATABASE_URL = 'postgresql://moderator:local_demo_only@127.0.0.1:55432/moderator'
 npm run test:db
+npm run test:auth
 ```
 
 Test database membuat schema unik `test_<uuid>` lalu menghapus schema itu saja; jangan arahkan ke database produksi. Test memeriksa migration/seed idempotent, deduplikasi, isolasi channel/session, riwayat immutable, feedback conditional, status simulasi, dan rollback transaksi.
@@ -64,7 +67,7 @@ Tests memakai opsi Node `--experimental-test-isolation=none` untuk menghindari b
 
 ```text
 apps/dashboard      Next.js app shell berbahasa Indonesia
-apps/api            NestJS health endpoints
+apps/api            NestJS auth, guard akses, daftar session channel, health
 apps/worker         NestJS application context dan registrasi BullMQ
 packages/contracts  Zod schemas dan tipe bersama API/queue
 packages/config     Validasi environment development
@@ -81,13 +84,13 @@ docs                Spesifikasi dan laporan verifikasi
 - Migrasi checksum-protected dengan transaksi dan advisory lock. Perubahan schema berikutnya memakai file migration baru.
 - Seed berulang tidak menimpa bundle immutable. Bundle `foundation-0` memiliki rule kosong dan policy disabled; ini tidak boleh dipakai seolah rule demo telah dibuat.
 - Unique constraints dan composite FK menjaga channel/session/run dan deduplikasi.
-- Raw message, bundle, keputusan, feedback, dan audit menolak UPDATE. Role runtime yang melarang DELETE serta enforcement permission ditambahkan pada M1-04; akun compose saat ini adalah akun development/migration.
+- Raw message, bundle, keputusan, feedback, dan audit menolak UPDATE. `db:runtime` menyediakan role API dengan hak akses terbatas; lihat panduan session development. Akun compose tetap akun development/migration sampai DATABASE_URL diarahkan ke role runtime.
 - Schema hanya mengizinkan tindakan DELETE berstatus SIMULATED. Invariant lintas tabel (outcome vs jumlah tindakan, task final vs decision, bundle vs version snapshot) diterapkan melalui service transaksi pada M1-07; schema foundation belum menggantikan validasi service tersebut.
 - `multer` dioverride ke 2.3.0 untuk memperbaiki advisory pada dependensi transitif platform-express. Tidak ada upload endpoint. Tinjau kembali override saat memperbarui NestJS.
 - Ports Docker hanya dibuka pada localhost. Jangan expose fondasi ini ke internet.
 
 ## Berikutnya
 
-M1-04: development session, guard membership, validasi Origin dan runtime permissions. M1-05–07: ingestion, rule/policy demo, outbox dispatcher, dan worker transactional. Dashboard live serta feedback baru dihubungkan setelah jalur data tersebut tersedia.
+M1-04 backend session, guard membership, Origin, dan provisioning runtime role sudah diimplementasikan. Berikutnya M1-05–07: ingestion, rule/policy demo, outbox dispatcher, dan worker transactional. Dashboard live serta feedback dihubungkan setelah jalur data tersebut tersedia.
 
 Lihat [hasil verifikasi](docs/verification.md) dan [backlog](docs/spec/03-backlog.md). Angka akurasi/performa moderasi belum diukur karena classifier belum diimplementasikan.
