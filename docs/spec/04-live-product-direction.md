@@ -1,39 +1,39 @@
-# Arah produk: monitoring YouTube otomatis
+# Product direction: automatic YouTube monitoring
 
-Keputusan pengguna menggantikan batas simulasi/SSE pada backlog awal untuk target produk akhir. Migration foundation yang sudah diterapkan tetap immutable; perlu migration lanjutan untuk data YouTube dan status tindakan nyata.
+The user's decisions supersede the simulation/SSE restrictions in the original backlog for the final product. Applied foundation migrations remain immutable; subsequent migrations are required for YouTube data and real action statuses.
 
-## Alur pengguna
+## User flow
 
-Login Google → halaman Live → pilih siaran aktif → Start Monitoring → chat, keputusan, alasan dan status tindakan diperbarui melalui WebSocket → Stop Monitoring atau siaran selesai → History per live stream.
+Google login → Live page → select an active broadcast → Start Monitoring → chat, decisions, reasons, and action statuses update through WebSocket → Stop Monitoring or broadcast ends → history per live stream.
 
-Moderasi otomatis tidak menunggu persetujuan manusia. Kebijakan ditetapkan sebelum mulai monitoring. Flagged adalah hasil pemeriksaan, bukan bukti keberhasilan tindakan. Model tidak langsung memanggil YouTube; policy engine menetapkan tindakan dan executor mencatat respons provider.
+Automatic moderation does not wait for human approval. Policies are configured before monitoring starts. Flagged is a classification result, not proof that an action succeeded. The model does not call YouTube directly; the policy engine selects actions and the executor records provider responses.
 
-## UI Next.js
+## Next.js UI
 
-Gunakan shadcn/ui dengan Tailwind, komponen lokal di `components/ui`, token warna semantik, dan layout konsisten. Halaman: login, Live, History, detail history, pengaturan kebijakan dan koneksi. Hindari angka demo yang tampak seperti data nyata.
+Use shadcn/ui with Tailwind, local components in `components/ui`, semantic color tokens, and consistent layouts. Pages: login, Live, History, history details, policy settings, and connection settings. Avoid demo statistics that appear to be real data.
 
-Live memuat selector siaran, Start/Stop Monitoring, status koneksi, daftar chat dan ringkasan. Statistik menghitung pesan unik, flagged, alasan per kategori, serta tindakan berhasil/gagal. Pesan mempunyai hasil pemeriksaan terpisah dari action: aman/flagged/error; none/delete/timeout/ban; pending/running/succeeded/failed/blocked/unknown. Status sukses hanya sesudah konfirmasi YouTube.
+The Live page includes a broadcast selector, Start/Stop Monitoring, connection status, chat list, and summaries. Statistics count unique messages, flagged messages, reasons by category, and successful/failed actions. Each message has a classification separate from its action: safe/flagged/error; none/delete/timeout/ban; pending/running/succeeded/failed/blocked/unknown. Success is recorded only after YouTube confirms it.
 
-History tetap ada setelah worker/API restart dan menyimpan alasan, snapshot versi policy/model, timestamp serta hasil tindakan. Hasil meragukan tidak memicu ban permanen. Ambang dan durasi konkret perlu ditetapkan serta diuji pada dataset sebelum enforcement nyata diaktifkan.
+History survives worker/API restarts and stores reasons, policy/model version snapshots, timestamps, and action outcomes. Uncertain results do not trigger permanent bans. Concrete thresholds and durations must be defined and evaluated against a dataset before real enforcement is enabled.
 
-## Backend dan data
+## Backend and data
 
-- NestJS: OAuth, sesi aplikasi, otorisasi channel, API Live/History dan gateway WebSocket.
-- Worker NestJS/BullMQ: ingestion, klasifikasi, policy, dan eksekusi tindakan yang dipisah sebagai job.
-- PostgreSQL: mapping channel YouTube, live session, pesan unik, keputusan, action attempts, history, statistik dan outbox.
-- Redis: antrean dan distribusi event; bukan sumber history utama.
-- Adapter YouTube: ambil chat dengan mekanisme resmi yang tersedia, hormati interval/quota, refresh token, delete, temporary ban (timeout), permanent ban.
+- NestJS: OAuth, application sessions, channel authorization, Live/History APIs, and the WebSocket gateway.
+- NestJS/BullMQ worker: ingestion, classification, policy evaluation, and action execution as separate jobs.
+- PostgreSQL: YouTube channel mappings, live sessions, unique messages, decisions, action attempts, history, statistics, and outbox.
+- Redis: queues and event distribution; not the primary source of history.
+- YouTube adapter: ingest chat using available official mechanisms, respect intervals/quotas, refresh tokens, delete messages, apply temporary bans (timeouts), and apply permanent bans.
 
-WebSocket hanya antara backend dan dashboard. Jangan menganggap YouTube mengirim WebSocket ke browser. Sambungan memerlukan session dan Origin valid, otorisasi per channel, cursor replay setelah reconnect, pembatasan buffer, serta pemutusan saat sesi/akses berakhir.
+WebSocket connects the backend to the dashboard only. Do not assume YouTube sends WebSocket messages to the browser. Connections require valid sessions and Origin, per-channel authorization, cursor replay after reconnect, bounded buffers, and disconnection when sessions/access expire.
 
-## Urutan implementasi
+## Implementation sequence
 
-1. Google OAuth dan daftar siaran milik grant pengguna.
-2. Pasang dependensi shadcn, halaman login dan Live dengan empty/error/loading states; koneksi dan pemilihan channel terverifikasi.
-3. Migration untuk source YouTube, monitoring lifecycle, chat deduplication dan history; endpoint start/stop idempotent.
-4. Ingestion worker dengan recovery, checkpoint, backpressure dan penghentian ketika siaran berakhir.
-5. Policy otomatis, alasan klasifikasi, serta executor delete/timeout/ban dengan audit. Timeout provider setelah pengiriman tidak dianggap sukses atau diulang buta; rekonsiliasi status terlebih dahulu.
-6. WebSocket dengan replay dan UI statistik/history berdasarkan data tersimpan.
-7. Uji end-to-end pada siaran pengujian, scope/permission, quota, reconnect, crash recovery dan akurasi classifier sebelum rilis.
+1. Google OAuth and broadcast listing using the user's grant.
+2. Install shadcn dependencies; implement login and Live pages with empty/error/loading states, verified connections, and channel selection.
+3. Add migrations for the YouTube source, monitoring lifecycle, chat deduplication, and history; implement idempotent start/stop endpoints.
+4. Add an ingestion worker with recovery, checkpoints, backpressure, and shutdown when the broadcast ends.
+5. Add automatic policies, classification reasons, and audited delete/timeout/ban executors. A provider timeout after sending a request is not treated as success or retried blindly; reconcile the status first.
+6. Add WebSocket with replay and statistics/history UI backed by persisted data.
+7. Run end-to-end tests on a test broadcast; verify scopes/permissions, quotas, reconnection, crash recovery, and classifier accuracy before release.
 
-Referensi UI: [instalasi manual shadcn/ui](https://ui.shadcn.com/docs/installation/manual). Referensi tindakan: [YouTube liveChatBans.insert](https://developers.google.com/youtube/v3/live/docs/liveChatBans/insert).
+UI reference: [shadcn/ui manual installation](https://ui.shadcn.com/docs/installation/manual). Action reference: [YouTube liveChatBans.insert](https://developers.google.com/youtube/v3/live/docs/liveChatBans/insert).

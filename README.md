@@ -1,24 +1,24 @@
 # AI Toxic Moderator
 
-Backend Google OAuth dan endpoint daftar live stream tersedia sebagai implementasi awal; lihat [setup Google OAuth](docs/google-oauth.md). Fitur ini belum diverifikasi dengan Google/PostgreSQL nyata. Arah produk terbaru adalah [monitoring otomatis dengan shadcn dan WebSocket](docs/spec/04-live-product-direction.md); bagian milestone di bawah mendokumentasikan fondasi sebelumnya.
+The initial Google OAuth backend and live broadcast listing endpoint are available; see [Google OAuth setup](docs/google-oauth.md). The current product direction is [automatic monitoring with shadcn and WebSocket](docs/spec/04-live-product-direction.md). The milestone sections below describe the earlier foundation. The user has reported successful local OAuth checks and committed the shadcn login page; this does not establish end-to-end monitoring readiness.
 
-Monorepo moderasi YouTube Live Chat Indonesia. Fondasi M1-01–03 dan backend session development M1-04 tersedia. Login/logout lokal, `/v1/me`, dan daftar session channel sudah diimplementasikan. Pipeline deteksi, ingestion pesan, SSE feed, feedback endpoint, model AI, dan koneksi YouTube belum tersedia.
+A monorepo for moderating Indonesian YouTube Live Chat. The M1-01–03 foundation and M1-04 development session backend are available. Local login/logout, `/v1/me`, and channel session listing have been implemented. The detection pipeline, message ingestion, live event feed, feedback endpoint, and AI model are not yet available. Google authentication and broadcast listing are covered separately in the OAuth guide.
 
-Untuk mengaktifkan serta mencoba fitur akses, lihat [session development](docs/dev-session-access.md). `.env` pengguna tidak diubah otomatis; login memerlukan `DEV_AUTH_ENABLED=true`.
+To enable and try development access, see [development sessions](docs/dev-session-access.md). The user's `.env` is not modified automatically; development login requires `DEV_AUTH_ENABLED=true`.
 
 ## Stack
 
-Next.js 16.3.5 + React; NestJS 12.0.1 dengan Express; worker NestJS terpisah dengan @nestjs/bullmq; TypeScript strict; PostgreSQL; Redis/BullMQ; Zod untuk runtime contracts. Persistence menggunakan `pg` dan SQL migrations secara eksplisit. ORM belum diperlukan pada fondasi ini. Versi resolusi seluruh dependensi disimpan dalam package-lock.json.
+Next.js 16.3.5 + React; NestJS 12.0.1 with Express; a separate NestJS worker with @nestjs/bullmq; strict TypeScript; PostgreSQL; Redis/BullMQ; and Zod for runtime contracts. The dashboard uses shadcn/ui with Tailwind. Persistence uses `pg` and explicit SQL migrations. An ORM is not required for this foundation. Resolved dependency versions are recorded in package-lock.json.
 
-## Prasyarat
+## Prerequisites
 
-- Node.js 22.12+ pada lini 22, atau Node.js 24+; diuji dengan Node 22.20.0 dan npm 10.9.3.
-- Docker Desktop dalam keadaan running, dengan Linux containers, untuk compose lokal.
-- Port localhost 3000 (dashboard), 3001 (API), 55432 (PostgreSQL), 56379 (Redis) tersedia.
+- Node.js 22.12+ on the 22 release line, or Node.js 24+; tested with Node 22.20.0 and npm 10.9.3.
+- Docker Desktop running with Linux containers for local Compose.
+- Available localhost ports: 3000 (dashboard), 3001 (API), 55432 (PostgreSQL), and 56379 (Redis).
 
 ## Setup
 
-Jalankan dari direktori yang berisi README ini:
+Run from the directory containing this README:
 
 ```powershell
 npm ci
@@ -31,9 +31,9 @@ npm run build
 npm test
 ```
 
-Jika `.env` sudah ada, sesuaikan isinya tanpa menimpa konfigurasi Anda. Kredensial compose adalah kredensial development lokal; proses aplikasi dibatasi loopback dan menolak mode production.
+If `.env` already exists, update it without overwriting your configuration; skip the copy command above. Compose credentials are for local development. Application processes are restricted to loopback and reject production mode.
 
-Dalam terminal terpisah:
+In separate terminals:
 
 ```powershell
 npm run dev:api
@@ -43,56 +43,57 @@ npm run dev:api
 npm run dev:dashboard
 ```
 
-Dashboard: http://127.0.0.1:3000. API: http://127.0.0.1:3001/health/live dan /health/ready. Ready memeriksa schema foundation dan dashboard_sessions; bukan kesiapan pipeline moderasi.
+Dashboard: http://127.0.0.1:3000. API: http://127.0.0.1:3001/health/live and /health/ready. Readiness checks database schema availability, including the session and OAuth tables; it does not indicate moderation pipeline readiness.
 
 ```powershell
 npm run dev:worker
 ```
 
-Worker menginisialisasi application context NestJS lalu keluar dengan sukses. Ia belum memiliki processor dan tidak mengambil job. `WORKER_ENABLED=true` hanya mendaftarkan koneksi/queue BullMQ untuk fondasi; bukan mengaktifkan moderasi. Ini disengaja sampai transaksi pipeline di M1-07 tersedia.
+The worker initializes a NestJS application context and then exits successfully. It has no processor yet and does not consume jobs. `WORKER_ENABLED=true` only registers the foundation BullMQ connection/queue; it does not enable moderation. This is intentional until the M1-07 pipeline transactions are implemented.
 
-## Pengujian
+## Testing
 
 ```powershell
 npm run check
 npm test
+npm run test:google
 $env:TEST_DATABASE_URL = 'postgresql://moderator:local_demo_only@127.0.0.1:55432/moderator'
 npm run test:db
 npm run test:auth
 ```
 
-Test database membuat schema unik `test_<uuid>` lalu menghapus schema itu saja; jangan arahkan ke database produksi. Test memeriksa migration/seed idempotent, deduplikasi, isolasi channel/session, riwayat immutable, feedback conditional, status simulasi, dan rollback transaksi.
+Database tests create a unique `test_<uuid>` schema and delete only that schema afterward; do not point them at a production database. They cover idempotent migrations/seeding, deduplication, channel/session isolation, immutable history, conditional feedback validation, simulation statuses, and transaction rollback.
 
-Tests memakai opsi Node `--experimental-test-isolation=none` untuk menghindari batasan child-process IPC pada runner Windows. Next build memakai worker threads dan pemeriksaan TypeScript melalui API compiler; type checking tetap dijalankan. Database integration test tetap menggunakan PostgreSQL nyata.
+Tests use Node's `--experimental-test-isolation=none` option to avoid child-process IPC restrictions in the Windows runner. Next builds use worker threads and the TypeScript compiler API; type checking remains enabled. Database integration tests use real PostgreSQL.
 
-## Struktur
+## Structure
 
 ```text
-apps/dashboard      Next.js app shell berbahasa Indonesia
-apps/api            NestJS auth, guard akses, daftar session channel, health
-apps/worker         NestJS application context dan registrasi BullMQ
-packages/contracts  Zod schemas dan tipe bersama API/queue
-packages/config     Validasi environment development
-packages/persistence SQL migration + pg transaction helper
-packages/moderation-core  Interface detection untuk M1-06
-packages/provider-adapters Interface executor simulasi
-scripts             Build, migration runner, seed
-tests               Contract/config dan database integration
-docs                Spesifikasi dan laporan verifikasi
+apps/dashboard           Next.js dashboard with an Indonesian login page and shadcn/ui
+apps/api                 NestJS auth, access guards, channel sessions, Google OAuth, broadcasts, health
+apps/worker              NestJS application context and BullMQ registration
+packages/contracts       Zod schemas and shared API/queue types
+packages/config          Development environment validation
+packages/persistence     SQL migrations and pg transaction helper
+packages/moderation-core Detection interface for M1-06
+packages/provider-adapters Simulation executor interface
+scripts                  Build, migration runner, and seed
+tests                    Contract/config, OAuth, and database integration tests
+docs                     Specifications and verification reports
 ```
 
-## Keputusan implementasi fondasi
+## Foundation implementation decisions
 
-- Migrasi checksum-protected dengan transaksi dan advisory lock. Perubahan schema berikutnya memakai file migration baru.
-- Seed berulang tidak menimpa bundle immutable. Bundle `foundation-0` memiliki rule kosong dan policy disabled; ini tidak boleh dipakai seolah rule demo telah dibuat.
-- Unique constraints dan composite FK menjaga channel/session/run dan deduplikasi.
-- Raw message, bundle, keputusan, feedback, dan audit menolak UPDATE. `db:runtime` menyediakan role API dengan hak akses terbatas; lihat panduan session development. Akun compose tetap akun development/migration sampai DATABASE_URL diarahkan ke role runtime.
-- Schema hanya mengizinkan tindakan DELETE berstatus SIMULATED. Invariant lintas tabel (outcome vs jumlah tindakan, task final vs decision, bundle vs version snapshot) diterapkan melalui service transaksi pada M1-07; schema foundation belum menggantikan validasi service tersebut.
-- `multer` dioverride ke 2.3.0 untuk memperbaiki advisory pada dependensi transitif platform-express. Tidak ada upload endpoint. Tinjau kembali override saat memperbarui NestJS.
-- Ports Docker hanya dibuka pada localhost. Jangan expose fondasi ini ke internet.
+- Migrations are protected by checksums and use transactions and an advisory lock. Subsequent schema changes require new migration files.
+- Repeated seeding does not overwrite immutable bundles. The `foundation-0` bundle has empty rules and a disabled policy; it must not be presented as an implemented demo ruleset.
+- Unique constraints and composite foreign keys enforce channel/session/run consistency and deduplication.
+- Raw messages, bundles, decisions, feedback, and audit records reject UPDATE. `db:runtime` provisions a restricted API role; see the development session guide. The Compose account remains the development/migration account until DATABASE_URL is switched to the runtime role.
+- The schema only permits DELETE actions with SIMULATED status. Cross-table invariants (outcome versus action count, terminal task versus decision, bundle versus version snapshot) will be enforced through transactional services in M1-07; the foundation schema does not replace those validations.
+- `multer` is overridden to 2.3.0 to address an advisory in the transitive platform-express dependency. There is no upload endpoint. Review the override when updating NestJS.
+- Docker ports are exposed only on localhost. Do not expose this foundation to the internet.
 
-## Berikutnya
+## Next steps
 
-M1-04 backend session, guard membership, Origin, dan provisioning runtime role sudah diimplementasikan. Berikutnya M1-05–07: ingestion, rule/policy demo, outbox dispatcher, dan worker transactional. Dashboard live serta feedback dihubungkan setelah jalur data tersebut tersedia.
+M1-04 backend sessions, membership guards, Origin validation, and runtime role provisioning have been implemented. The original M1-05–07 sequence covers ingestion, demo rules/policy, an outbox dispatcher, and a transactional worker. The updated product direction prioritizes Google OAuth, a shadcn dashboard, and automatic YouTube monitoring. Connect live dashboard data and feedback after their data paths are available.
 
-Lihat [hasil verifikasi](docs/verification.md) dan [backlog](docs/spec/03-backlog.md). Angka akurasi/performa moderasi belum diukur karena classifier belum diimplementasikan.
+See the [verification results](docs/verification.md) and [backlog](docs/spec/03-backlog.md). Moderation accuracy and performance have not been measured because the classifier has not been implemented.

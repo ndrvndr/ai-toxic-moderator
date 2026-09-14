@@ -1,10 +1,10 @@
-# Session development dan akses channel
+# Development sessions and channel access
 
-Branch: `feat/dev-session-access`. Fitur ini menyediakan autentikasi lokal untuk backend, bukan login production/OIDC. Tidak ada perubahan pada `.env` pengguna secara otomatis.
+Branch: `feat/dev-session-access`. This feature provides local backend authentication, not production/OIDC login. It does not modify the user's `.env` automatically. This guide describes the original development session feature; see [Google OAuth](google-oauth.md) for the later integration.
 
-## Mengaktifkan
+## Enabling development access
 
-Tambahkan atau sesuaikan di `.env`:
+Add or update these values in `.env`:
 
 ```dotenv
 DEV_AUTH_ENABLED=true
@@ -13,7 +13,7 @@ DASHBOARD_ORIGIN=http://127.0.0.1:3000
 SESSION_TTL_SECONDS=3600
 ```
 
-Kemudian, dari root project:
+Then run from the project root:
 
 ```powershell
 npm run build:core
@@ -22,11 +22,11 @@ npm run db:seed
 npm run dev:api
 ```
 
-Migration `002_development_sessions.sql` menambahkan penyimpanan session. Migration lama tidak diubah. Login default menggunakan akun moderator dari seed. `DEV_AUTH_ENABLED` default false; mode production dan origin publik ditolak validasi konfigurasi.
+Migration `002_development_sessions.sql` adds session storage. Earlier migrations are unchanged. Login uses the seeded moderator account by default. `DEV_AUTH_ENABLED` defaults to false; configuration validation rejects production mode and public origins.
 
-## Mencoba lewat PowerShell
+## Trying it with PowerShell
 
-Di terminal lain:
+In another terminal:
 
 ```powershell
 $api = 'http://127.0.0.1:3001'
@@ -38,38 +38,38 @@ Invoke-RestMethod "$api/v1/channels/20000000-0000-4000-8000-000000000001/session
 Invoke-RestMethod "$api/v1/auth/logout" -Method Post -Headers $origin -ContentType 'application/json' -Body '{}' -WebSession $devSession
 ```
 
-Setelah logout, `/v1/me` dengan cookie lama menghasilkan 401. Di browser nanti gunakan `credentials: 'include'`; gunakan host yang konsisten pada API dan dashboard (misalnya keduanya 127.0.0.1), karena cookie SameSite Strict tidak dikirim antar-site. Dashboard belum memiliki form login pada fitur backend ini.
+After logout, `/v1/me` returns 401 for the old cookie. Browser requests must use `credentials: 'include'`. Use a consistent host for the API and dashboard (for example, 127.0.0.1 for both), because SameSite Strict cookies are not sent across sites. A dashboard login form was outside the scope of this backend feature.
 
-## Kontrak
+## Contracts
 
-| Endpoint                                | Perilaku                                                                                                     |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| POST `/v1/auth/dev-session`             | Body `{}`; Origin wajib cocok; 201 `{expires_at}` + cookie; 404 bila fitur disabled                          |
-| GET `/v1/me`                            | Session valid wajib; account dari server dan membership terbaru                                              |
-| POST `/v1/auth/logout`                  | Body `{}`; session + Origin wajib; 204 dan hapus cookie/session                                              |
-| GET `/v1/channels/:channel_id/sessions` | Session + membership OWNER/MODERATOR; pagination limit/cursor; OPERATOR tidak otomatis mendapat akses konten |
-| GET `/health/live`                      | Tanpa session, pemeriksaan proses                                                                            |
-| GET `/health/ready`                     | Tanpa session, memeriksa schema foundation dan dashboard_sessions; bukan kesiapan pipeline moderasi          |
+| Endpoint                                | Behavior                                                                                                                |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| POST `/v1/auth/dev-session`             | Body `{}`; matching Origin required; 201 `{expires_at}` plus cookie; 404 when disabled                                  |
+| GET `/v1/me`                            | Valid session required; server-resolved account and current memberships                                                 |
+| POST `/v1/auth/logout`                  | Body `{}`; session and Origin required; 204 and removal of the cookie/session                                           |
+| GET `/v1/channels/:channel_id/sessions` | Session and OWNER/MODERATOR membership; limit/cursor pagination; OPERATOR does not automatically receive content access |
+| GET `/health/live`                      | No session required; process liveness check                                                                             |
+| GET `/health/ready`                     | No session required; checks foundation and session schema availability, not moderation pipeline readiness               |
 
-Endpoint private memakai guard global. Channel routes harus menggunakan nama parameter `channel_id`. Guard Origin berlaku untuk method selain GET/HEAD/OPTIONS. CORS hanya mengizinkan dashboard origin yang ditentukan; Host dan koneksi juga harus loopback. API tidak mempercayai X-Forwarded-Host/IP untuk melewati pembatasan lokal.
+Private endpoints use global guards. Channel routes must name their parameter `channel_id`. The Origin guard applies to methods other than GET/HEAD/OPTIONS. CORS only allows the configured dashboard origin; the Host and connection must also be loopback. The API does not trust X-Forwarded-Host/IP to bypass local restrictions.
 
-Session memakai token acak 256 bit di cookie `atm_dev_session`; database hanya menyimpan SHA-256 token. Cookie HttpOnly, SameSite=Strict, Path=/ dan Max-Age sesuai TTL. Secure belum dipasang karena endpoint development menggunakan HTTP loopback; konfigurasi ini tidak untuk publikasi production. Response autentikasi memakai Cache-Control no-store.
+Sessions use a random 256-bit token in the `atm_dev_session` cookie; the database stores only the token's SHA-256 hash. Cookies have HttpOnly, SameSite=Strict, Path=/, and Max-Age matching the TTL. Secure is not set because development endpoints use loopback HTTP; this configuration is not suitable for production deployment. Authentication responses use Cache-Control no-store.
 
-Login ulang mencabut cookie sebelumnya bila diberikan, lalu membuat token baru. Maksimal 10 session per akun; session expired dibersihkan saat login. Session bertahan setelah restart API, tetapi setiap request tetap memeriksa expiry dan membership terbaru. Tidak ada actor/role yang diterima dari body login. Error memakai envelope v1 dan X-Request-Id tanpa raw token atau detail koneksi database.
+Logging in again revokes the previous cookie if supplied and creates a new token. Each account is limited to 10 sessions; expired sessions are cleaned up during login. Sessions survive API restarts, but each request still checks expiration and current membership. The login body cannot supply an actor or role. Errors use the v1 envelope and X-Request-Id without raw tokens or database connection details.
 
-## Role database API
+## API database role
 
-Untuk memisahkan akun migrasi dari runtime, simpan koneksi administrator lokal sebagai `MIGRATION_DATABASE_URL`. Tambahkan `RUNTIME_DB_ROLE=moderator_api` dan `RUNTIME_DB_PASSWORD` pilihan Anda (minimal 16 karakter), lalu jalankan:
+To separate migration and runtime accounts, store the local administrator connection as `MIGRATION_DATABASE_URL`. Add `RUNTIME_DB_ROLE=moderator_api` and a `RUNTIME_DB_PASSWORD` of your choice (at least 16 characters), then run:
 
 ```powershell
 npm run db:runtime
 ```
 
-Setelah berhasil, ganti user/password dalam `DATABASE_URL` menjadi role runtime tersebut. URL-encode password bila berisi karakter khusus. `db:migrate` dan `db:seed` akan memakai `MIGRATION_DATABASE_URL`; API memakai `DATABASE_URL`. Script provisioning memerlukan administrator PostgreSQL yang boleh membuat role dan memberi grant.
+After it succeeds, change the user/password in `DATABASE_URL` to the runtime role. URL-encode passwords containing special characters. `db:migrate` and `db:seed` use `MIGRATION_DATABASE_URL`; the API uses `DATABASE_URL`. The provisioning script requires a PostgreSQL administrator permitted to create roles and grant privileges.
 
-Role runtime hanya mendapat SELECT untuk account/channel/membership/session stream/run/config, serta SELECT/INSERT/DELETE pada dashboard_sessions. Role tidak memiliki schema/table dan tidak dapat mengubah membership atau menghapus keputusan/audit. Script hanya mengelola role yang dibuatnya sendiri, menolak role lain yang sudah ada, dan dapat memperbarui password role terkelola. Database pengguna tidak diprovisikan otomatis oleh implementasi fitur ini.
+The original development session role receives SELECT on account/channel/membership/stream session/run/configuration tables and SELECT/INSERT/DELETE on dashboard_sessions. The later OAuth feature adds account insertion and privileges for OAuth tables; rerun provisioning after applying its migration. The role does not own schemas/tables and cannot modify memberships or delete decisions/audit records. The script only manages roles it created, rejects unrelated existing roles, and can update managed role passwords. This feature does not provision the user's database automatically.
 
-## Verifikasi
+## Verification
 
 ```powershell
 npm run build
@@ -79,4 +79,4 @@ npm run test:db
 npm run test:auth
 ```
 
-Test auth memakai database lokal administratif: membuat schema dan role acak, menjalankan API HTTP dengan role runtime terbatas, lalu membersihkan hanya schema/role milik test. Jangan arahkan test ke production. Laporan aktual tersedia pada `docs/verification.md`.
+Authentication tests use an administrative local database connection: they create a random schema and role, run the HTTP API with the restricted runtime role, and clean up only test-owned resources. Do not point these tests at production. Recorded results are available in `docs/verification.md`.

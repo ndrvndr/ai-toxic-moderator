@@ -1,35 +1,37 @@
-# Verifikasi foundation
+# Foundation verification
 
-## Fitur dev-session-access — 14 September 2026
+This document records historical verification runs. Results and limitations apply to the feature and environment identified in each section, not automatically to the current application.
 
-- TypeScript strict build seluruh packages, API NestJS, dan worker: PASS.
-- TypeScript dashboard (`tsc --noEmit`): PASS. Sebanyak 38 file source/config executable dicocokkan dengan salinan yang diuji; tidak ada perbedaan.
-- Total 29 tests: PASS (9 contract/config, 8 PostgreSQL foundation, 12 HTTP/auth/runtime permissions).
-- API diuji pada server HTTP nyata dengan port loopback acak, PostgreSQL 18.0 terisolasi, dan role runtime tanpa izin mengubah membership atau menghapus audit/keputusan.
-- Tests mencakup login, logout, token hash/cookie, rotation, expiry, restart, auth disabled, Origin/Host, payload invalid/terlalu besar, membership dicabut, role OPERATOR, pagination, serta bounded sessions.
-- Kode sumber tetap berada di project Desktop. Karena runner menolak penulisan build output pada Desktop, kompilasi dan tests memakai salinan sementara source yang sama di workspace yang dapat ditulis. Database pengguna dan `.env` tidak diubah.
-- Build production dashboard belum dapat diulang pada runner sesi ini: Turbopack menolak dependensi bertaut di luar root salinan; percobaan Webpack mengalami spawn EPERM. Dashboard tidak diubah oleh fitur backend ini. Build foundation sebelumnya tercatat di bawah.
-- Redis, pipeline moderasi, UI login, OIDC, dan integrasi provider bukan cakupan fitur ini. Provisioning role runtime tersedia melalui CLI dan diuji pada database terisolasi; belum diterapkan ke database pengguna.
+## dev-session-access feature — September 14, 2026
 
-## Riwayat foundation
+- Strict TypeScript builds for all packages, the NestJS API, and worker: PASS.
+- Dashboard TypeScript (`tsc --noEmit`): PASS. A total of 38 executable source/configuration files were compared with the tested copy; no differences were found.
+- Total: 29 tests PASS (9 contract/config, 8 PostgreSQL foundation, 12 HTTP/auth/runtime permissions).
+- The API was tested on a real HTTP server using a random loopback port, isolated PostgreSQL 18.0, and a runtime role without permissions to modify memberships or delete audit records/decisions.
+- Tests cover login, logout, token hashes/cookies, rotation, expiration, restart, disabled authentication, Origin/Host, invalid/oversized payloads, revoked membership, the OPERATOR role, pagination, and bounded sessions.
+- Source code remained in the Desktop project. Because the runner rejected build output writes on Desktop, compilation and tests used a temporary copy of the same source in a writable workspace. The user's database and `.env` were unchanged.
+- The dashboard production build could not be repeated in that session's runner: Turbopack rejected linked dependencies outside the copied root; a Webpack attempt encountered spawn EPERM. This backend feature did not change the dashboard. The earlier foundation build is recorded below.
+- Redis, the moderation pipeline, login UI, OIDC, and provider integration were outside this feature's scope. Runtime role provisioning was available through the CLI and tested on an isolated database; it had not been applied to the user's database.
 
-13 September 2026. Lingkungan: Windows, Node.js 22.20.0, npm 10.9.3, PostgreSQL 18.0 native lokal terisolasi. Docker engine tidak aktif saat pengujian; compose belum diuji start-to-finish.
+## Foundation history
 
-Hasil:
+September 13, 2026. Environment: Windows, Node.js 22.20.0, npm 10.9.3, and isolated local native PostgreSQL 18.0. The Docker engine was not running during testing; Compose had not been tested from start to finish.
 
-- TypeScript strict build semua shared packages, API NestJS, dan worker: PASS.
-- Next.js production build dengan type checking serta prerender homepage: PASS.
+Results:
+
+- Strict TypeScript builds for all shared packages, the NestJS API, and worker: PASS.
+- Next.js production build with type checking and homepage prerendering: PASS.
 - 8 contract/config tests: PASS.
-- 8 PostgreSQL integration tests: PASS, memakai schema unik yang dibersihkan setelah test.
-- CLI migration dan seed pada database uji: PASS; pengulangan pada integration test tidak menduplikasi seed.
-- Worker NestJS context bootstrap/shutdown dengan queue disabled: PASS. Redis/BullMQ runtime belum diuji.
-- API localhost `/health/live` dan `/health/ready` setelah migration: HTTP 200.
-- Dashboard production server: HTTP 200, konten foundation dan NestJS tersedia.
-- `docker compose config --quiet`: PASS. Menjalankan container belum diverifikasi karena engine Docker tidak aktif.
-- npm audit setelah override multer 2.3.0: 0 vulnerabilities pada saat pemeriksaan; bukan jaminan permanen.
+- 8 PostgreSQL integration tests: PASS, using a unique schema cleaned up after testing.
+- Migration and seed CLI against the test database: PASS; repeated runs in integration tests did not duplicate seed data.
+- NestJS worker context bootstrap/shutdown with the queue disabled: PASS. Redis/BullMQ runtime had not been tested.
+- Localhost API `/health/live` and `/health/ready` after migration: HTTP 200.
+- Dashboard production server: HTTP 200, with foundation and NestJS content present.
+- `docker compose config --quiet`: PASS. Container startup was not verified because the Docker engine was not running.
+- npm audit after overriding multer to 2.3.0: 0 vulnerabilities at the time of the check; this is not a permanent guarantee.
 
-Kendala runner: mode default Node test dan Next TypeScript CLI mengalami `spawn EPERM`. Pengujian dijalankan dalam satu proses Node, sedangkan Next menggunakan worker threads dan TypeScript API. Tidak ada type check yang dinonaktifkan.
+Runner limitations: the default Node test mode and Next TypeScript CLI encountered `spawn EPERM`. Tests ran in a single Node process, while Next used worker threads and the TypeScript API. No type checks were disabled.
 
-Belum diuji/diimplementasikan: autentikasi, pipeline moderasi, queue consumption, provider, feed realtime, feedback API, model, klasifikasi fixture F01–F17, E2E MVP, throughput, dan deployment publik. App shell belum menjalani review visual browser.
+Not tested/implemented at that time: authentication, moderation pipeline, queue consumption, provider integration, real-time feed, feedback API, model, F01–F17 fixture classification, MVP E2E, throughput, and public deployment. The app shell had not undergone a browser visual review.
 
-Status backlog: M1-01 foundation tersedia (worker sengaja belum menjadi consumer); M1-02 runtime schemas awal tersedia, OpenAPI endpoint implementation menyusul saat API domain dibuat; M1-03 migration/seed tersedia. M1-04 dan seterusnya belum dimulai. Tidak ada klaim MVP selesai.
+Backlog status at that time: M1-01 foundation available (the worker intentionally was not yet a consumer); M1-02 initial runtime schemas available, with OpenAPI endpoint implementation to follow domain API development; M1-03 migration/seed available. M1-04 and later items had not started. No claim of MVP completion was made.
