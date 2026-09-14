@@ -52,15 +52,13 @@ export class ApiExceptionFilter implements ExceptionFilter {
       413: ['PAYLOAD_TOO_LARGE', 'Payload terlalu besar.'],
     };
     const [code, message] = defaults[status] ?? ['INTERNAL_ERROR', 'Request tidak dapat diproses.'];
-    response
-      .status(status)
-      .json({
-        error: {
-          code: detail?.code ?? code,
-          message: detail?.message ?? message,
-          field_errors: detail?.field_errors ?? [],
-          trace_id: request.traceId ?? randomUUID(),
-        },
-      });
+    response.status(status).json({
+      error: {
+        code: detail?.code ?? code,
+        message: detail?.message ?? message,
+        field_errors: detail?.field_errors ?? [],
+        trace_id: request.traceId ?? randomUUID(),
+      },
+    });
   }
 }

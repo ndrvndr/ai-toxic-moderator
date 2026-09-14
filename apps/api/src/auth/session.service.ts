@@ -32,10 +32,10 @@ export class SessionService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
   async resolve(token: string | null): Promise<AuthenticatedAccount | null> {
-    if (!this.config.DEV_AUTH_ENABLED || !token) return null;
+    if ((!this.config.DEV_AUTH_ENABLED && !this.config.GOOGLE_AUTH_ENABLED) || !token) return null;
     const result = await this.database.pool.query(
-      'SELECT a.id,a.display_name FROM dashboard_sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash=$1 AND s.expires_at>clock_timestamp()',
-      [tokenHash(token)],
+      "SELECT a.id,a.display_name FROM dashboard_sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash=$1 AND s.expires_at>clock_timestamp() AND ((s.auth_provider='development' AND $2) OR (s.auth_provider='google' AND $3))",
+      [tokenHash(token), this.config.DEV_AUTH_ENABLED, this.config.GOOGLE_AUTH_ENABLED],
     );
     return result.rows[0] ?? null;
   }

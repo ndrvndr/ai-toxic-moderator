@@ -42,14 +42,14 @@ Setelah logout, `/v1/me` dengan cookie lama menghasilkan 401. Di browser nanti g
 
 ## Kontrak
 
-| Endpoint | Perilaku |
-| --- | --- |
-| POST `/v1/auth/dev-session` | Body `{}`; Origin wajib cocok; 201 `{expires_at}` + cookie; 404 bila fitur disabled |
-| GET `/v1/me` | Session valid wajib; account dari server dan membership terbaru |
-| POST `/v1/auth/logout` | Body `{}`; session + Origin wajib; 204 dan hapus cookie/session |
+| Endpoint                                | Perilaku                                                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| POST `/v1/auth/dev-session`             | Body `{}`; Origin wajib cocok; 201 `{expires_at}` + cookie; 404 bila fitur disabled                          |
+| GET `/v1/me`                            | Session valid wajib; account dari server dan membership terbaru                                              |
+| POST `/v1/auth/logout`                  | Body `{}`; session + Origin wajib; 204 dan hapus cookie/session                                              |
 | GET `/v1/channels/:channel_id/sessions` | Session + membership OWNER/MODERATOR; pagination limit/cursor; OPERATOR tidak otomatis mendapat akses konten |
-| GET `/health/live` | Tanpa session, pemeriksaan proses |
-| GET `/health/ready` | Tanpa session, memeriksa schema foundation dan dashboard_sessions; bukan kesiapan pipeline moderasi |
+| GET `/health/live`                      | Tanpa session, pemeriksaan proses                                                                            |
+| GET `/health/ready`                     | Tanpa session, memeriksa schema foundation dan dashboard_sessions; bukan kesiapan pipeline moderasi          |
 
 Endpoint private memakai guard global. Channel routes harus menggunakan nama parameter `channel_id`. Guard Origin berlaku untuk method selain GET/HEAD/OPTIONS. CORS hanya mengizinkan dashboard origin yang ditentukan; Host dan koneksi juga harus loopback. API tidak mempercayai X-Forwarded-Host/IP untuk melewati pembatasan lokal.
 

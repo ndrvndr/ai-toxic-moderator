@@ -60,6 +60,14 @@ export async function provisionRuntimeRole(client, { role, password, schema = 'p
     await client.query(
       `GRANT SELECT,INSERT,DELETE ON ${schemaSql}.dashboard_sessions TO ${roleSql}`,
     );
+    await client.query(`GRANT INSERT ON ${schemaSql}.accounts TO ${roleSql}`);
+    await client.query(`GRANT SELECT,INSERT ON ${schemaSql}.google_identities TO ${roleSql}`);
+    await client.query(
+      `GRANT SELECT,INSERT,UPDATE ON ${schemaSql}.google_credentials TO ${roleSql}`,
+    );
+    await client.query(
+      `GRANT SELECT,INSERT,DELETE ON ${schemaSql}.google_oauth_attempts TO ${roleSql}`,
+    );
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

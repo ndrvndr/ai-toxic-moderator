@@ -1,5 +1,7 @@
 # AI Toxic Moderator
 
+Backend Google OAuth dan endpoint daftar live stream tersedia sebagai implementasi awal; lihat [setup Google OAuth](docs/google-oauth.md). Fitur ini belum diverifikasi dengan Google/PostgreSQL nyata. Arah produk terbaru adalah [monitoring otomatis dengan shadcn dan WebSocket](docs/spec/04-live-product-direction.md); bagian milestone di bawah mendokumentasikan fondasi sebelumnya.
+
 Monorepo moderasi YouTube Live Chat Indonesia. Fondasi M1-01–03 dan backend session development M1-04 tersedia. Login/logout lokal, `/v1/me`, dan daftar session channel sudah diimplementasikan. Pipeline deteksi, ingestion pesan, SSE feed, feedback endpoint, model AI, dan koneksi YouTube belum tersedia.
 
 Untuk mengaktifkan serta mencoba fitur akses, lihat [session development](docs/dev-session-access.md). `.env` pengguna tidak diubah otomatis; login memerlukan `DEV_AUTH_ENABLED=true`.

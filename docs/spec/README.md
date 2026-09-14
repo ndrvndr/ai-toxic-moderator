@@ -26,13 +26,13 @@ Spesifikasi ini memperinci dan, untuk scope milestone pertama, menggantikan bagi
 
 Konfigurasi immutable `ruleset-dev-1` dan `policy-dev-1`; perubahan menghasilkan versi baru. Tujuannya menguji mekanisme, belum membuktikan kualitas moderasi produksi.
 
-| Kasus fixture | Sinyal | Outcome | Rencana tindakan |
-| --- | --- | --- | --- |
-| Tanpa rule cocok | Tidak ada dalam cakupan rule demo | ALLOW | Kosong |
-| Istilah ambigu tanpa kondisi lengkap | Kandidat perlu konteks | REVIEW | Kosong |
-| Entitas gambling dan ajakan promosi yang eksplisit | GAMBLING, S3 | ACTION_REQUIRED | DELETE simulasi |
-| Hinaan langsung terhadap target dalam pola demo | HARASSMENT, S2 | ACTION_REQUIRED | DELETE simulasi |
-| Pipeline gagal setelah retry habis | Error pemrosesan | ERROR | Kosong |
+| Kasus fixture                                      | Sinyal                            | Outcome         | Rencana tindakan |
+| -------------------------------------------------- | --------------------------------- | --------------- | ---------------- |
+| Tanpa rule cocok                                   | Tidak ada dalam cakupan rule demo | ALLOW           | Kosong           |
+| Istilah ambigu tanpa kondisi lengkap               | Kandidat perlu konteks            | REVIEW          | Kosong           |
+| Entitas gambling dan ajakan promosi yang eksplisit | GAMBLING, S3                      | ACTION_REQUIRED | DELETE simulasi  |
+| Hinaan langsung terhadap target dalam pola demo    | HARASSMENT, S2                    | ACTION_REQUIRED | DELETE simulasi  |
+| Pipeline gagal setelah retry habis                 | Error pemrosesan                  | ERROR           | Kosong           |
 
 ALLOW berarti tidak terdeteksi oleh rule demo, bukan jaminan semua kategori aman. TIMEOUT/BAN tidak dihasilkan policy milestone pertama. Threat, hate, scam, PII, dan kategori blueprint lain belum diimplementasikan; coverage ditampilkan pada dashboard.
 

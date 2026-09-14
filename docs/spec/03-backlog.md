@@ -4,20 +4,20 @@ Pembaruan 14 September 2026: fondasi M1-01–03 tersedia; M1-04 backend session 
 
 ## Urutan pekerjaan
 
-| ID | Pekerjaan / hasil | Dependensi | Kriteria penerimaan |
-| --- | --- | --- | --- |
-| M1-01 | Scaffold monorepo: dashboard Next.js, API NestJS/Express, worker NestJS application context; packages/contracts, moderation-core, persistence, config, provider-adapters | — | TypeScript strict, lockfile, script dev/build/check; API dan worker boot terpisah; processor @nestjs/bullmq hanya aktif di worker; fresh install dan build berhasil pada runtime yang didokumentasikan |
-| M1-02 | Runtime schemas dan fixtures request/response/event | M1-01 | Field salah, unknown field, span invalid, status tak dikenal, dan field conditional feedback ditolak; fixture valid diterima |
-| M1-03 | Migration PostgreSQL, seed satu channel/session/run/bundle/account | M1-02 | Migration dari DB kosong, seed idempotent; cross-channel FK dan duplicate constraints diuji; aturan session/run konsisten |
-| M1-04 | Development session, membership, Origin check, pembatasan local binding | M1-03 | Actor tidak bisa disisipkan client; channel lain ditolak; sesi development tidak dapat aktif pada konfigurasi public/production |
-| M1-05 | Ingestion API + task + transactional outbox | M1-04 | POST 202; duplicate identik satu row/task, duplicate beda isi 409; raw text identik byte-for-byte setelah decode JSON/encode UTF-8 |
-| M1-06 | Text processor, evidence mapping, rule demo + policy immutable | M1-02 | Semua fixture di bawah lolos; policy memberi action hanya pada strong matches; confidence null; versi pinned |
-| M1-07 | Outbox dispatcher, BullMQ worker, persistence decision/action simulasi/audit | M1-03,05,06 | Event → decision; retry paralel tetap satu hasil; tidak ada provider/network enforcement; rollback transaksi tidak meninggalkan action tanpa decision |
-| M1-08 | Feed/detail/task API dan SSE persisted | M1-07 | Pagination deterministik, filter aktif, snapshot watermark dan resume tidak kehilangan event; akses tiap resource terverifikasi |
-| M1-09 | App shell, form pesan, feed, detail dan ringkasan hasil tampil | M1-08 | Input → status task → decision tanpa refresh; detail mempertahankan raw text; empty/loading/error/offline serta label SIMULATION jelas |
-| M1-10 | Feedback API + audit + UI | M1-04,08,09 | Submit/retry idempotent, koreksi tersimpan terpisah dari decision, cache direfresh saat feedback event |
-| M1-11 | Retry terminal failure, reconciler, graceful shutdown, readiness dan log | M1-07,08 | Worker/Redis restart tidak membuat duplikat; terminal failure tampil ERROR; task tersangkut dapat dipulihkan |
-| M1-12 | E2E, integration failure checks, a11y inti, README demo | M1-09,10,11 | Semua acceptance gate di bawah lulus; perintah setup/test/demo tervalidasi dari kondisi bersih |
+| ID    | Pekerjaan / hasil                                                                                                                                                        | Dependensi  | Kriteria penerimaan                                                                                                                                                                                    |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| M1-01 | Scaffold monorepo: dashboard Next.js, API NestJS/Express, worker NestJS application context; packages/contracts, moderation-core, persistence, config, provider-adapters | —           | TypeScript strict, lockfile, script dev/build/check; API dan worker boot terpisah; processor @nestjs/bullmq hanya aktif di worker; fresh install dan build berhasil pada runtime yang didokumentasikan |
+| M1-02 | Runtime schemas dan fixtures request/response/event                                                                                                                      | M1-01       | Field salah, unknown field, span invalid, status tak dikenal, dan field conditional feedback ditolak; fixture valid diterima                                                                           |
+| M1-03 | Migration PostgreSQL, seed satu channel/session/run/bundle/account                                                                                                       | M1-02       | Migration dari DB kosong, seed idempotent; cross-channel FK dan duplicate constraints diuji; aturan session/run konsisten                                                                              |
+| M1-04 | Development session, membership, Origin check, pembatasan local binding                                                                                                  | M1-03       | Actor tidak bisa disisipkan client; channel lain ditolak; sesi development tidak dapat aktif pada konfigurasi public/production                                                                        |
+| M1-05 | Ingestion API + task + transactional outbox                                                                                                                              | M1-04       | POST 202; duplicate identik satu row/task, duplicate beda isi 409; raw text identik byte-for-byte setelah decode JSON/encode UTF-8                                                                     |
+| M1-06 | Text processor, evidence mapping, rule demo + policy immutable                                                                                                           | M1-02       | Semua fixture di bawah lolos; policy memberi action hanya pada strong matches; confidence null; versi pinned                                                                                           |
+| M1-07 | Outbox dispatcher, BullMQ worker, persistence decision/action simulasi/audit                                                                                             | M1-03,05,06 | Event → decision; retry paralel tetap satu hasil; tidak ada provider/network enforcement; rollback transaksi tidak meninggalkan action tanpa decision                                                  |
+| M1-08 | Feed/detail/task API dan SSE persisted                                                                                                                                   | M1-07       | Pagination deterministik, filter aktif, snapshot watermark dan resume tidak kehilangan event; akses tiap resource terverifikasi                                                                        |
+| M1-09 | App shell, form pesan, feed, detail dan ringkasan hasil tampil                                                                                                           | M1-08       | Input → status task → decision tanpa refresh; detail mempertahankan raw text; empty/loading/error/offline serta label SIMULATION jelas                                                                 |
+| M1-10 | Feedback API + audit + UI                                                                                                                                                | M1-04,08,09 | Submit/retry idempotent, koreksi tersimpan terpisah dari decision, cache direfresh saat feedback event                                                                                                 |
+| M1-11 | Retry terminal failure, reconciler, graceful shutdown, readiness dan log                                                                                                 | M1-07,08    | Worker/Redis restart tidak membuat duplikat; terminal failure tampil ERROR; task tersangkut dapat dipulihkan                                                                                           |
+| M1-12 | E2E, integration failure checks, a11y inti, README demo                                                                                                                  | M1-09,10,11 | Semua acceptance gate di bawah lulus; perintah setup/test/demo tervalidasi dari kondisi bersih                                                                                                         |
 
 Tidak menetapkan durasi kalender tanpa mengetahui kapasitas pengembang dan lingkungan. Pecah sesi kerja menurut hasil yang dapat diuji: foundation (01–04), pipeline (05–07), dashboard (08–10), verification (11–12).
 
@@ -25,25 +25,25 @@ Tidak menetapkan durasi kalender tanpa mengetahui kapasitas pengembang dan lingk
 
 Expected ini merupakan spesifikasi rule demo, bukan label training model atau klaim classifier umum.
 
-| ID | Pesan / kondisi | Hasil yang diharapkan |
-| --- | --- | --- |
-| F01 | slot RAM | ALLOW, action kosong |
-| F02 | babi hutan | ALLOW |
-| F03 | judi itu berbahaya | ALLOW |
-| F04 | anjing laut | ALLOW |
-| F05 | gila keren | ALLOW |
-| F06 | ayo daftar judi online di contoh.invalid sekarang | ACTION_REQUIRED, GAMBLING, S3, DELETE/SIMULATED |
-| F07 | kamu bodoh | ACTION_REQUIRED, HARASSMENT, S2, DELETE/SIMULATED |
-| F08 | slot | REVIEW, action kosong |
-| F09 | jangan bilang kamu bodoh | ALLOW; pengecualian span/konteks |
-| F10 | slot RAM bagus, ayo daftar judi online di contoh.invalid sekarang | ACTION_REQUIRED; pengecualian benign tidak membatalkan evidence lain |
-| F11 | AYO  DAFTAR JUDI ONLINE di contoh.invalid SEKARANG | Hasil F06 setelah normalisasi; raw tetap utuh |
-| F12 | 😀 kamu bodoh | Hasil F07; span UTF-16 benar setelah emoji |
-| F13 | ｋａｍｕ bodoh | Hasil F07 setelah NFKC; raw span benar atau eksplisit UNAVAILABLE |
-| F14 | ulangi F06 dengan external ID dan payload sama | message/task/decision/action count tidak bertambah |
-| F15 | ulangi external ID F06 dengan raw text berbeda | HTTP 409; pesan asli tidak berubah |
-| F16 | whitespace-only atau >2.000 code points | HTTP 422, tidak ada message/outbox |
-| F17 | error pemrosesan deterministik setelah retry habis (fault injection test) | Task FAILED, decision ERROR, tidak ada action |
+| ID  | Pesan / kondisi                                                           | Hasil yang diharapkan                                                |
+| --- | ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| F01 | slot RAM                                                                  | ALLOW, action kosong                                                 |
+| F02 | babi hutan                                                                | ALLOW                                                                |
+| F03 | judi itu berbahaya                                                        | ALLOW                                                                |
+| F04 | anjing laut                                                               | ALLOW                                                                |
+| F05 | gila keren                                                                | ALLOW                                                                |
+| F06 | ayo daftar judi online di contoh.invalid sekarang                         | ACTION_REQUIRED, GAMBLING, S3, DELETE/SIMULATED                      |
+| F07 | kamu bodoh                                                                | ACTION_REQUIRED, HARASSMENT, S2, DELETE/SIMULATED                    |
+| F08 | slot                                                                      | REVIEW, action kosong                                                |
+| F09 | jangan bilang kamu bodoh                                                  | ALLOW; pengecualian span/konteks                                     |
+| F10 | slot RAM bagus, ayo daftar judi online di contoh.invalid sekarang         | ACTION_REQUIRED; pengecualian benign tidak membatalkan evidence lain |
+| F11 | AYO DAFTAR JUDI ONLINE di contoh.invalid SEKARANG                         | Hasil F06 setelah normalisasi; raw tetap utuh                        |
+| F12 | 😀 kamu bodoh                                                             | Hasil F07; span UTF-16 benar setelah emoji                           |
+| F13 | ｋａｍｕ bodoh                                                            | Hasil F07 setelah NFKC; raw span benar atau eksplisit UNAVAILABLE    |
+| F14 | ulangi F06 dengan external ID dan payload sama                            | message/task/decision/action count tidak bertambah                   |
+| F15 | ulangi external ID F06 dengan raw text berbeda                            | HTTP 409; pesan asli tidak berubah                                   |
+| F16 | whitespace-only atau >2.000 code points                                   | HTTP 422, tidak ada message/outbox                                   |
+| F17 | error pemrosesan deterministik setelah retry habis (fault injection test) | Task FAILED, decision ERROR, tidak ada action                        |
 
 Sebelum implementasi rule, tulis definisi token/phrase dan batas konteks untuk F06–F13 dalam konfigurasi seed. Jangan membangun pengecualian dengan hardcode seluruh kalimat fixture. Tambahkan variasi positif dan negatif yang independen dari pola contoh untuk menguji generalisasi terbatas.
 

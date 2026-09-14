@@ -15,18 +15,18 @@ Implementasi server menggunakan NestJS: controller untuk endpoint, guard untuk s
 
 ## Resource dan endpoint
 
-| Method/path | Request / query | Respons |
-| --- | --- | --- |
-| GET `/v1/me` | Session cookie | 200 account + channel memberships |
-| GET `/v1/channels/:channel_id/sessions` | limit 1–100 default 20, cursor opsional | 200 items + next_cursor; session memiliki primary_run_id |
-| POST `/v1/channels/:channel_id/sessions/:session_id/messages` | Pesan sintetis di bawah | 202 message_id, task_id, status, decision_id nullable, duplicate |
-| GET `/v1/channels/:channel_id/tasks/:task_id` | — | 200 status QUEUED/RUNNING/COMPLETED/FAILED, decision_id nullable, last_error_code nullable |
-| GET `/v1/channels/:channel_id/decisions` | session_id opsional, outcome opsional, limit 1–100 default 50, cursor opsional | 200 items (DecisionSummary), next_cursor nullable, watermark |
-| GET `/v1/channels/:channel_id/decisions/:decision_id` | — | 200 DecisionDetail |
-| POST `/v1/channels/:channel_id/decisions/:decision_id/feedback` | Idempotency-Key UUID header + feedback | 201 feedback; retry identik 200 existing |
-| GET `/v1/channels/:channel_id/events` | Last-Event-ID header atau after query | 200 text/event-stream |
-| GET `/health/live` | — | 200 process alive |
-| GET `/health/ready` | — | 200 dependencies ready atau 503; tanpa rahasia/detail jaringan |
+| Method/path                                                     | Request / query                                                                | Respons                                                                                    |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| GET `/v1/me`                                                    | Session cookie                                                                 | 200 account + channel memberships                                                          |
+| GET `/v1/channels/:channel_id/sessions`                         | limit 1–100 default 20, cursor opsional                                        | 200 items + next_cursor; session memiliki primary_run_id                                   |
+| POST `/v1/channels/:channel_id/sessions/:session_id/messages`   | Pesan sintetis di bawah                                                        | 202 message_id, task_id, status, decision_id nullable, duplicate                           |
+| GET `/v1/channels/:channel_id/tasks/:task_id`                   | —                                                                              | 200 status QUEUED/RUNNING/COMPLETED/FAILED, decision_id nullable, last_error_code nullable |
+| GET `/v1/channels/:channel_id/decisions`                        | session_id opsional, outcome opsional, limit 1–100 default 50, cursor opsional | 200 items (DecisionSummary), next_cursor nullable, watermark                               |
+| GET `/v1/channels/:channel_id/decisions/:decision_id`           | —                                                                              | 200 DecisionDetail                                                                         |
+| POST `/v1/channels/:channel_id/decisions/:decision_id/feedback` | Idempotency-Key UUID header + feedback                                         | 201 feedback; retry identik 200 existing                                                   |
+| GET `/v1/channels/:channel_id/events`                           | Last-Event-ID header atau after query                                          | 200 text/event-stream                                                                      |
+| GET `/health/live`                                              | —                                                                              | 200 process alive                                                                          |
+| GET `/health/ready`                                             | —                                                                              | 200 dependencies ready atau 503; tanpa rahasia/detail jaringan                             |
 
 Session/channel/account serta bundle dibuat oleh seed development. Tidak ada endpoint publik untuk seed. Status worker, umur task tertua, dan jumlah task gagal diperiksa lewat health internal/CLI development pada milestone ini.
 

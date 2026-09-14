@@ -6,6 +6,9 @@ import { devSessionInput, devSessionResponse } from '@moderator/contracts';
 
 import { APP_CONFIG } from '../database.module';
 import { failure, type ApiRequest, type ApiResponse } from '../http';
+import { GoogleProvider } from './google-provider';
+import { GoogleController } from './google.controller';
+import { GoogleService } from './google.service';
 import { ChannelGuard, OriginGuard, Public, SessionGuard } from './guards';
 import { cookieToken, sessionCookie, SessionService } from './session.service';
 
@@ -47,9 +50,11 @@ class AuthController {
   }
 }
 @Module({
-  controllers: [AuthController],
+  controllers: [AuthController, GoogleController],
   providers: [
     SessionService,
+    GoogleService,
+    { provide: GoogleProvider, useFactory: () => new GoogleProvider() },
     { provide: APP_GUARD, useClass: OriginGuard },
     { provide: APP_GUARD, useClass: SessionGuard },
     { provide: APP_GUARD, useClass: ChannelGuard },

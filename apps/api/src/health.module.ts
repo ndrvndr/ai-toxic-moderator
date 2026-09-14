@@ -15,6 +15,8 @@ class HealthController {
     try {
       await this.database.pool.query('SELECT 1 FROM configuration_bundles LIMIT 1');
       await this.database.pool.query('SELECT 1 FROM dashboard_sessions LIMIT 1');
+      await this.database.pool.query('SELECT auth_provider FROM dashboard_sessions LIMIT 1');
+      await this.database.pool.query('SELECT 1 FROM google_oauth_attempts LIMIT 1');
     } catch {
       throw failure(503, 'NOT_READY', 'Database atau migration belum siap.');
     }
