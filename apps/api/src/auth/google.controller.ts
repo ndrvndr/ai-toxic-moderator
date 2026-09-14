@@ -52,11 +52,17 @@ export class GoogleController {
         sessionCookie(token, this.config.SESSION_TTL_SECONDS),
       ]);
       response
-        .writeHead(303, { Location: `${this.config.DASHBOARD_ORIGIN}/?auth=connected` })
+        .writeHead(303, {
+          Location: `${this.config.DASHBOARD_ORIGIN}/live`,
+        })
         .end();
     } catch {
       // Never reflect provider descriptions, authorization codes, or credentials into the browser URL.
-      response.writeHead(303, { Location: `${this.config.DASHBOARD_ORIGIN}/?auth=failed` }).end();
+      response
+        .writeHead(303, {
+          Location: `${this.config.DASHBOARD_ORIGIN}/login?auth=failed`,
+        })
+        .end();
     }
   }
 
