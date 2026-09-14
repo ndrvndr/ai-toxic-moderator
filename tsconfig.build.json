@@ -3,9 +3,7 @@
   "compilerOptions": {
     "noEmit": false,
     "paths": {
-      "@moderator/*": [
-        "packages/*/dist"
-      ]
+      "@moderator/*": ["./packages/*/dist"]
     }
   }
 }
