@@ -34,11 +34,31 @@ export function decryptToken(value: string, key: string, context: string): strin
   ]).toString('utf8');
 }
 
+export type GoogleProviderErrorCode =
+  | 'RECONNECT_REQUIRED'
+  | 'GOOGLE_UNAVAILABLE'
+  | 'YOUTUBE_FORBIDDEN'
+  | 'INVALID_BROADCAST_ID'
+  | 'BROADCAST_NOT_FOUND'
+  | 'BROADCAST_NOT_OWNED'
+  | 'BROADCAST_NOT_LIVE'
+  | 'LIVE_CHAT_UNAVAILABLE'
+  | 'YOUTUBE_LOOKUP_INCOMPLETE';
+
 export class GoogleProviderError extends Error {
-  constructor(readonly code: 'RECONNECT_REQUIRED' | 'GOOGLE_UNAVAILABLE' | 'YOUTUBE_FORBIDDEN') {
+  constructor(readonly code: GoogleProviderErrorCode) {
     super(code);
+    this.name = 'GoogleProviderError';
   }
 }
+
+export type VerifiedBroadcast = Readonly<{
+  youtube_broadcast_id: string;
+  youtube_channel_id: string;
+  channel_title: string;
+  title: string;
+  live_chat_id: string;
+}>;
 
 const tokenResponse = z.object({
   access_token: z.string().min(1),
@@ -90,6 +110,135 @@ export class GoogleProvider {
         headers: { Authorization: `Bearer ${accessToken}` },
       }),
     );
+  }
+
+  async verifyBroadcast(accessToken: string, broadcastId: string): Promise<VerifiedBroadcast> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(broadcastId)) {
+      throw new GoogleProviderError('INVALID_BROADCAST_ID');
+    }
+
+    const broadcastUrl = new URL('https://www.googleapis.com/youtube/v3/liveBroadcasts');
+
+    broadcastUrl.search = new URLSearchParams({
+      part: 'id,snippet,status',
+      id: broadcastId,
+    }).toString();
+
+    const broadcastSchema = z.object({
+      items: z
+        .array(
+          z.object({
+            id: z.string().min(1),
+            snippet: z.object({
+              channelId: z.string().min(1).max(128),
+              title: z.string().min(1),
+              liveChatId: z.string().max(1024).optional(),
+            }),
+            status: z.object({
+              lifeCycleStatus: z.string(),
+            }),
+          }),
+        )
+        .default([]),
+    });
+
+    const broadcastResult = broadcastSchema.safeParse(
+      await this.json(broadcastUrl.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
+    );
+
+    if (!broadcastResult.success) {
+      throw new GoogleProviderError('GOOGLE_UNAVAILABLE');
+    }
+
+    const broadcast = broadcastResult.data.items.find((item) => item.id === broadcastId);
+
+    if (!broadcast) {
+      throw new GoogleProviderError('BROADCAST_NOT_FOUND');
+    }
+
+    const channelSchema = z.object({
+      items: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(128),
+            snippet: z.object({
+              title: z.string().min(1),
+            }),
+          }),
+        )
+        .default([]),
+      nextPageToken: z.string().min(1).optional(),
+    });
+
+    let pageToken: string | undefined;
+    let channelTitle: string | undefined;
+    const visitedTokens = new Set<string>();
+
+    // Bound provider requests and reject incomplete ownership checks.
+    for (let page = 0; page < 10; page++) {
+      const channelUrl = new URL('https://www.googleapis.com/youtube/v3/channels');
+
+      channelUrl.search = new URLSearchParams({
+        part: 'id,snippet',
+        mine: 'true',
+        maxResults: '50',
+        ...(pageToken ? { pageToken } : {}),
+      }).toString();
+
+      const channelResult = channelSchema.safeParse(
+        await this.json(channelUrl.toString(), {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      );
+
+      if (!channelResult.success) {
+        throw new GoogleProviderError('GOOGLE_UNAVAILABLE');
+      }
+
+      const ownedChannel = channelResult.data.items.find(
+        (item) => item.id === broadcast.snippet.channelId,
+      );
+
+      if (ownedChannel) {
+        channelTitle = ownedChannel.snippet.title;
+        break;
+      }
+
+      const nextToken = channelResult.data.nextPageToken;
+
+      if (!nextToken) {
+        throw new GoogleProviderError('BROADCAST_NOT_OWNED');
+      }
+
+      if (visitedTokens.has(nextToken)) {
+        throw new GoogleProviderError('YOUTUBE_LOOKUP_INCOMPLETE');
+      }
+
+      visitedTokens.add(nextToken);
+      pageToken = nextToken;
+    }
+
+    if (!channelTitle) {
+      throw new GoogleProviderError('YOUTUBE_LOOKUP_INCOMPLETE');
+    }
+
+    if (broadcast.status.lifeCycleStatus !== 'live') {
+      throw new GoogleProviderError('BROADCAST_NOT_LIVE');
+    }
+
+    if (!broadcast.snippet.liveChatId) {
+      throw new GoogleProviderError('LIVE_CHAT_UNAVAILABLE');
+    }
+
+    return Object.freeze({
+      youtube_broadcast_id: broadcast.id,
+      youtube_channel_id: broadcast.snippet.channelId,
+      channel_title: channelTitle,
+      title: broadcast.snippet.title,
+      live_chat_id: broadcast.snippet.liveChatId,
+    });
   }
 
   async broadcasts(accessToken: string) {
