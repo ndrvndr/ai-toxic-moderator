@@ -8,6 +8,6 @@
       "@moderator/*": ["./packages/*/src"]
     }
   },
-  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts"],
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "apps/**/*.mts", "packages/**/*.ts"],
   "exclude": ["node_modules", "**/node_modules", "**/dist", "**/.next"]
 }
