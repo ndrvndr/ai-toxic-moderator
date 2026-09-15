@@ -95,7 +95,7 @@ configuration review without including sensitive values.
 - **Control IDs:** SEC-06, SEC-11, SEC-12, SEC-13, SEC-17, APP-05
 - **Environment:** Local test environment
 - **Verification date:** 2026-09-15
-- **Commit:** To be recorded
+- **Commit:** 583e314
 - **Evidence:**
   - `npm run test:live-event-feed`
   - `npm run test:live-websocket`
