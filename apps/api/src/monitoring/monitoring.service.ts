@@ -7,6 +7,7 @@ import {
   stopMonitoringInput,
   stopMonitoringResponse,
   uuid,
+  youtubeBroadcastId,
 } from '@moderator/contracts';
 import { transaction, type PoolClient } from '@moderator/persistence';
 import { Injectable } from '@nestjs/common';
@@ -318,6 +319,38 @@ export class MonitoringService {
       started_at: row.started_at?.toISOString() ?? null,
       stop_requested_at: row.stop_requested_at?.toISOString() ?? null,
       finished_at: row.finished_at?.toISOString() ?? null,
+    });
+  }
+
+  async latest(accountId: string, broadcastId: string) {
+    if (!youtubeBroadcastId.safeParse(broadcastId).success) {
+      throw failure(422, 'VALIDATION_ERROR', 'The YouTube broadcast ID is invalid.');
+    }
+
+    return transaction(this.database.pool, async (client) => {
+      const result = await client.query<{ id: string }>(
+        `
+          SELECT run.id
+          FROM monitoring_runs run
+          JOIN youtube_broadcasts broadcast
+            ON broadcast.channel_id = run.channel_id
+            AND broadcast.session_id = run.session_id
+          JOIN channel_memberships membership
+            ON membership.channel_id = run.channel_id
+          WHERE broadcast.youtube_broadcast_id = $1
+            AND membership.account_id = $2
+            AND membership.role IN ('OWNER', 'MODERATOR')
+          ORDER BY run.requested_at DESC, run.id DESC
+          LIMIT 1
+        `,
+        [broadcastId, accountId],
+      );
+
+      const latest = result.rows[0];
+
+      return monitoringStatusResponse.parse({
+        run: latest ? await this.readRun(client, latest.id) : null,
+      });
     });
   }
 }

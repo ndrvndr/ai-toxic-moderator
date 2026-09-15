@@ -461,3 +461,27 @@ test('chat access requires a session and current channel membership', async () =
 
   assert.equal((await request(chatPath(run))).status, 403);
 });
+
+test('broadcast monitoring lookup restores the latest accessible run', async () => {
+  const run = await startRun();
+
+  const response = await request(`/v1/youtube/broadcasts/${run.youtube_broadcast_id}/monitoring`);
+
+  assert.equal(response.status, 200);
+  const data = monitoringStatusResponse.parse(await response.json());
+  assert.equal(data.run.id, run.id);
+});
+
+test('broadcast monitoring lookup does not expose inaccessible runs', async () => {
+  const run = await startRun();
+
+  await admin.query('DELETE FROM channel_memberships WHERE channel_id = $1 AND account_id = $2', [
+    run.channel_id,
+    accountId,
+  ]);
+
+  const response = await request(`/v1/youtube/broadcasts/${run.youtube_broadcast_id}/monitoring`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { run: null });
+});
