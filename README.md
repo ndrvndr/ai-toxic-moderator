@@ -1,6 +1,8 @@
 # AI Toxic Moderator
 
-The initial Google OAuth backend and live broadcast listing endpoint are available; see [Google OAuth setup](docs/google-oauth.md). The current product direction is [automatic monitoring with shadcn and WebSocket](docs/spec/04-live-product-direction.md). The milestone sections below describe the earlier foundation. The user has reported successful local OAuth checks and committed the shadcn login page; this does not establish end-to-end monitoring readiness.
+Google OAuth, live broadcast listing, the shadcn dashboard shell, and monitoring lifecycle endpoints are available. See [Google OAuth setup](docs/google-oauth.md) and [monitoring lifecycle](docs/monitoring-lifecycle.md).
+
+Monitoring runs can be created, inspected, and stopped. Chat ingestion, WebSocket delivery, classification, and moderation actions are not implemented yet. A STARTING run does not indicate that chat ingestion is active.
 
 A monorepo for moderating Indonesian YouTube Live Chat. The M1-01–03 foundation and M1-04 development session backend are available. Local login/logout, `/v1/me`, and channel session listing have been implemented. The detection pipeline, message ingestion, live event feed, feedback endpoint, and AI model are not yet available. Google authentication and broadcast listing are covered separately in the OAuth guide.
 
@@ -69,8 +71,8 @@ Tests use Node's `--experimental-test-isolation=none` option to avoid child-proc
 ## Structure
 
 ```text
-apps/dashboard           Next.js dashboard with an Indonesian login page and shadcn/ui
-apps/api                 NestJS auth, access guards, channel sessions, Google OAuth, broadcasts, health
+apps/dashboard           Next.js dashboard with English UI, shadcn/ui, login, and live pages
+apps/api                 NestJS auth, access guards, Google OAuth, broadcasts, monitoring lifecycle, health
 apps/worker              NestJS application context and BullMQ registration
 packages/contracts       Zod schemas and shared API/queue types
 packages/config          Development environment validation
@@ -94,6 +96,15 @@ docs                     Specifications and verification reports
 
 ## Next steps
 
-M1-04 backend sessions, membership guards, Origin validation, and runtime role provisioning have been implemented. The original M1-05–07 sequence covers ingestion, demo rules/policy, an outbox dispatcher, and a transactional worker. The updated product direction prioritizes Google OAuth, a shadcn dashboard, and automatic YouTube monitoring. Connect live dashboard data and feedback after their data paths are available.
+Implement a durable YouTube chat ingestion worker with run ownership, recovery
+after process failure, polling checkpoints, and message deduplication.
 
-See the [verification results](docs/verification.md) and [backlog](docs/spec/03-backlog.md). Moderation accuracy and performance have not been measured because the classifier has not been implemented.
+Then connect persisted chat events to the dashboard through WebSocket delivery,
+followed by classification and automatic moderation actions.
+
+See the [monitoring lifecycle](docs/monitoring-lifecycle.md),
+[product direction](docs/spec/04-live-product-direction.md), and
+[backlog](docs/spec/03-backlog.md).
+
+Moderation accuracy and performance have not been measured because the
+classifier has not been implemented.
