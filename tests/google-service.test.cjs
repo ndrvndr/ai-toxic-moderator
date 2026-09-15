@@ -254,3 +254,31 @@ test('disabled Google authentication prevents database and provider access', asy
     expectHttpError(404, 'GOOGLE_AUTH_DISABLED'),
   );
 });
+
+test('an explicitly empty refresh scope requires reconnection', async () => {
+  const db = database(credentials(false));
+
+  const service = new GoogleService(db, config, {
+    async token() {
+      return {
+        access_token: 'insufficient-access',
+        expires_in: 3600,
+        scope: '',
+      };
+    },
+    async verifyBroadcast() {
+      assert.fail('YouTube must not be called with an empty granted scope');
+    },
+  });
+
+  await assert.rejects(
+    service.verifyBroadcast(accountId, 'broadcast-1'),
+    expectHttpError(409, 'RECONNECT_REQUIRED'),
+  );
+
+  assert.equal(
+    db.calls.some((call) => call.sql.startsWith('UPDATE google_credentials')),
+    false,
+  );
+  assert.equal(db.calls.at(-1).sql, 'ROLLBACK');
+});

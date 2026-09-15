@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@moderator/contracts": "0.1.0"
+    "@moderator/contracts": "0.1.0",
+    "@moderator/persistence": "^0.1.0",
+    "zod": "^4.6.5"
   }
 }
