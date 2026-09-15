@@ -4,7 +4,13 @@ const { randomUUID } = require('node:crypto');
 const { Client, Pool } = require('pg');
 
 const { source } = require('./helpers/source.cjs');
-const { appendLiveEvent, transaction } = source('packages/persistence/src/index.ts');
+const {
+  appendLiveEvent,
+  readLiveEvents,
+  InvalidLiveEventCursorError,
+  LiveEventSessionNotFoundError,
+  transaction,
+} = source('packages/persistence/src/index.ts');
 
 const schema = `live_event_${randomUUID().replaceAll('-', '')}`;
 
@@ -220,4 +226,167 @@ test('stored events cannot be updated', async () => {
     ),
     (error) => error.code === '23514',
   );
+});
+
+function read(f, after = null, limit = 100) {
+  return transaction(pool, (connection) =>
+    readLiveEvents(connection, {
+      channelId: f.channelId,
+      sessionId: f.sessionId,
+      after,
+      limit,
+    }),
+  );
+}
+
+test('a session without events starts at cursor zero', async () => {
+  const f = await fixture();
+
+  assert.deepEqual(await read(f), {
+    watermark: '0',
+    next_cursor: '0',
+    has_more: false,
+    items: [],
+  });
+});
+
+test('a new subscription starts at the current watermark', async () => {
+  const f = await fixture();
+
+  await append(f);
+  await append(f, 'monitoring.updated');
+
+  assert.deepEqual(await read(f), {
+    watermark: '2',
+    next_cursor: '2',
+    has_more: false,
+    items: [],
+  });
+
+  await append(f);
+
+  const page = await read(f, '2');
+
+  assert.deepEqual(page.items, [
+    {
+      sequence: '3',
+      run_id: f.runId,
+      event_type: 'chat.updated',
+    },
+  ]);
+  assert.equal(page.next_cursor, '3');
+});
+
+test('replay uses ascending pages without skipping pending events', async () => {
+  const f = await fixture();
+
+  await append(f);
+  await append(f, 'monitoring.updated');
+  await append(f);
+
+  const first = await read(f, '0', 2);
+
+  assert.deepEqual(
+    first.items.map((event) => event.sequence),
+    ['1', '2'],
+  );
+  assert.equal(first.watermark, '3');
+  assert.equal(first.next_cursor, '2');
+  assert.equal(first.has_more, true);
+
+  const second = await read(f, first.next_cursor, 2);
+
+  assert.deepEqual(
+    second.items.map((event) => event.sequence),
+    ['3'],
+  );
+  assert.equal(second.next_cursor, '3');
+  assert.equal(second.has_more, false);
+
+  const empty = await read(f, second.next_cursor, 2);
+
+  assert.equal(empty.items.length, 0);
+  assert.equal(empty.next_cursor, '3');
+  assert.equal(empty.has_more, false);
+});
+
+test('replay remains scoped to its channel and session', async () => {
+  const first = await fixture();
+  const second = await fixture();
+
+  await append(first);
+  await append(second, 'monitoring.updated');
+
+  const page = await read(first, '0');
+
+  assert.deepEqual(page.items, [
+    {
+      sequence: '1',
+      run_id: first.runId,
+      event_type: 'chat.updated',
+    },
+  ]);
+
+  await assert.rejects(
+    read({
+      ...first,
+      sessionId: second.sessionId,
+    }),
+    LiveEventSessionNotFoundError,
+  );
+});
+
+test('malformed and future cursors are rejected', async () => {
+  const f = await fixture();
+
+  for (const cursor of [
+    '',
+    '-1',
+    '01',
+    '1.5',
+    '1e2',
+    ' 1',
+    '9223372036854775808',
+    '9'.repeat(100),
+  ]) {
+    await assert.rejects(read(f, cursor), InvalidLiveEventCursorError);
+  }
+
+  await assert.rejects(read(f, '1'), InvalidLiveEventCursorError);
+});
+
+test('invalid page limits are rejected', async () => {
+  const f = await fixture();
+
+  for (const limit of [0, -1, 101, 1.5, NaN, Infinity]) {
+    await assert.rejects(read(f, '0', limit), RangeError);
+  }
+});
+
+test('replay does not expose uncommitted events', async () => {
+  const f = await fixture();
+  const connection = await pool.connect();
+
+  try {
+    await connection.query('BEGIN');
+    await appendLiveEvent(connection, eventInput(f));
+
+    const beforeCommit = await read(f, '0');
+
+    assert.equal(beforeCommit.watermark, '0');
+    assert.deepEqual(beforeCommit.items, []);
+
+    await connection.query('COMMIT');
+
+    const afterCommit = await read(f, '0');
+
+    assert.equal(afterCommit.watermark, '1');
+    assert.deepEqual(
+      afterCommit.items.map((event) => event.sequence),
+      ['1'],
+    );
+  } finally {
+    await connection.query('ROLLBACK');
+    connection.release();
+  }
 });
