@@ -8,6 +8,8 @@ const { LeaseStore, LeaseLostError } = source('apps/worker/src/ingestion/lease-s
 const { BatchWriter, StaleBatchError, MonitoringNotIngestingError } = source(
   'apps/worker/src/ingestion/batch-writer.ts',
 );
+const { PollCycle } = source('apps/worker/src/ingestion/poll-cycle.ts');
+const { YoutubeChatError } = source('packages/provider-adapters/src/youtube-chat.ts');
 
 const schema = `worker_lease_${randomUUID().replaceAll('-', '')}`;
 
@@ -482,4 +484,206 @@ test('a replaced worker cannot persist a batch', async () => {
     [f.sessionId],
   );
   assert.equal(result.rows.length, 0);
+});
+
+async function cycleFixture() {
+  const f = await batchFixture();
+
+  const result = await admin.query(
+    'SELECT credential_account_id FROM monitoring_runs WHERE id = $1',
+    [f.runId],
+  );
+
+  let tokenCalls = 0;
+  let chatCalls = 0;
+
+  const tokens = {
+    async accessToken(accountId) {
+      tokenCalls++;
+      assert.equal(accountId, result.rows[0].credential_account_id);
+      return 'test-cycle-access';
+    },
+  };
+
+  const chat = {
+    async list(input) {
+      chatCalls++;
+      assert.equal(input.accessToken, 'test-cycle-access');
+      assert.equal(input.liveChatId, f.item.snippet.liveChatId);
+      assert.equal(input.pageToken, null);
+
+      return {
+        next_page_token: 'page-2',
+        polling_interval_ms: 60000,
+        offline_at: null,
+        items: [f.item],
+      };
+    },
+  };
+
+  return {
+    ...f,
+    tokens,
+    chat,
+    cycle: new PollCycle(store, f.writer, tokens, chat),
+    get tokenCalls() {
+      return tokenCalls;
+    },
+    get chatCalls() {
+      return chatCalls;
+    },
+  };
+}
+
+test('poll cycle uses stored credentials and persists the provider batch', async () => {
+  const f = await cycleFixture();
+
+  assert.deepEqual(await f.cycle.run(f.lease), {
+    kind: 'POLLED',
+    inserted: 1,
+    revision: '1',
+    offline_at: null,
+    chat_ended: false,
+  });
+
+  assert.equal(f.tokenCalls, 1);
+  assert.equal(f.chatCalls, 1);
+});
+
+test('poll cycle waits without contacting providers before the next polling time', async () => {
+  const f = await cycleFixture();
+
+  await f.cycle.run(f.lease);
+  const result = await f.cycle.run(f.lease);
+
+  assert.equal(result.kind, 'WAIT');
+  assert.equal(f.tokenCalls, 1);
+  assert.equal(f.chatCalls, 1);
+});
+
+test('poll cycle skips providers when stop has been requested', async () => {
+  const f = await cycleFixture();
+
+  await admin.query(
+    `
+      UPDATE monitoring_runs
+      SET status = 'STOPPING', stop_requested_at = clock_timestamp()
+      WHERE id = $1
+    `,
+    [f.runId],
+  );
+
+  assert.deepEqual(await f.cycle.run(f.lease), {
+    kind: 'STOP_REQUESTED',
+  });
+
+  assert.equal(f.tokenCalls, 0);
+  assert.equal(f.chatCalls, 0);
+});
+
+test('provider failure leaves the polling checkpoint unchanged', async () => {
+  const f = await cycleFixture();
+
+  f.chat.list = async () => {
+    throw new YoutubeChatError('YOUTUBE_RATE_LIMITED', 12000);
+  };
+
+  await assert.rejects(
+    f.cycle.run(f.lease),
+    (error) =>
+      error instanceof YoutubeChatError &&
+      error.code === 'YOUTUBE_RATE_LIMITED' &&
+      error.retryAfterMs === 12000,
+  );
+
+  const checkpoint = await f.writer.checkpoint(f.lease);
+  assert.equal(checkpoint.revision, '0');
+  assert.equal(checkpoint.next_page_token, null);
+
+  const observations = await admin.query(
+    'SELECT id FROM youtube_chat_observations WHERE session_id = $1',
+    [f.sessionId],
+  );
+  assert.equal(observations.rows.length, 0);
+});
+
+test('cancellation after receiving a response prevents batch persistence', async () => {
+  const f = await cycleFixture();
+  const controller = new AbortController();
+  const original = f.chat.list;
+
+  f.chat.list = async (input) => {
+    const response = await original(input);
+    controller.abort();
+    return response;
+  };
+
+  await assert.rejects(
+    f.cycle.run(f.lease, controller.signal),
+    (error) => error instanceof YoutubeChatError && error.code === 'REQUEST_CANCELLED',
+  );
+
+  const checkpoint = await f.writer.checkpoint(f.lease);
+  assert.equal(checkpoint.revision, '0');
+});
+
+test('a run cancelled during the external request cannot persist its response', async () => {
+  const f = await cycleFixture();
+  const original = f.chat.list;
+
+  f.chat.list = async (input) => {
+    const response = await original(input);
+
+    await admin.query(
+      `
+        UPDATE monitoring_runs
+        SET status = 'STOPPED', finished_at = clock_timestamp()
+        WHERE id = $1
+      `,
+      [f.runId],
+    );
+
+    return response;
+  };
+
+  await assert.rejects(f.cycle.run(f.lease), LeaseLostError);
+
+  const observations = await admin.query(
+    'SELECT id FROM youtube_chat_observations WHERE session_id = $1',
+    [f.sessionId],
+  );
+  assert.equal(observations.rows.length, 0);
+});
+
+test('the final chat event is persisted before reporting completion', async () => {
+  const f = await cycleFixture();
+
+  f.chat.list = async () => ({
+    next_page_token: null,
+    polling_interval_ms: 5000,
+    offline_at: '2026-01-01T00:01:00Z',
+    items: [
+      {
+        id: 'ended-event',
+        snippet: {
+          type: 'chatEndedEvent',
+          liveChatId: f.item.snippet.liveChatId,
+          publishedAt: '2026-01-01T00:01:00Z',
+        },
+      },
+    ],
+  });
+
+  const result = await f.cycle.run(f.lease);
+
+  assert.equal(result.kind, 'POLLED');
+  assert.equal(result.chat_ended, true);
+  assert.equal(result.offline_at, '2026-01-01T00:01:00Z');
+  assert.equal(result.inserted, 1);
+
+  const stored = await admin.query(
+    'SELECT event_type FROM youtube_chat_observations WHERE session_id = $1',
+    [f.sessionId],
+  );
+  assert.equal(stored.rows[0].event_type, 'chatEndedEvent');
 });

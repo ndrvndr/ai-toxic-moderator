@@ -61,12 +61,17 @@ export class BatchWriter {
         revision: string;
         next_page_token: string | null;
         next_poll_at: Date;
+        due: boolean;
       }>(
         `
-          SELECT revision::text, next_page_token, next_poll_at
-          FROM youtube_chat_checkpoints
-          WHERE session_id = $1
-        `,
+    SELECT
+      revision::text,
+      next_page_token,
+      next_poll_at,
+      next_poll_at <= clock_timestamp() AS due
+    FROM youtube_chat_checkpoints
+    WHERE session_id = $1
+  `,
         [run.session_id],
       );
 
@@ -76,6 +81,7 @@ export class BatchWriter {
         revision: row.revision,
         next_page_token: row.next_page_token,
         next_poll_at: row.next_poll_at.toISOString(),
+        due: row.due,
       };
     });
   }
