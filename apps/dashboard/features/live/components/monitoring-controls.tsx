@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useSession } from '@/features/auth/hooks/use-session';
 import { getErrorMessage } from '@/lib/api-client';
 
+import { useLiveEvents } from '../hooks/use-live-events';
 import { useMonitoring } from '../hooks/use-monitoring';
 import { LiveChatPanel } from './live-chat-panel';
 
@@ -17,6 +18,12 @@ export function MonitoringControls({ broadcastId, liveChatAvailable }: Monitorin
   const { monitoring, start, stop } = useMonitoring(session.data?.account.id, broadcastId);
 
   const run = monitoring.data?.run;
+  const connectionStatus = useLiveEvents({
+    accountId: session.data?.account.id,
+    broadcastId,
+    channelId: run?.channel_id,
+    sessionId: run?.session_id,
+  });
   const busy = start.isPending || stop.isPending;
   const active =
     run !== null && run !== undefined && ['STARTING', 'RUNNING', 'STOPPING'].includes(run.status);
@@ -92,6 +99,7 @@ export function MonitoringControls({ broadcastId, liveChatAvailable }: Monitorin
           key={`${session.data.account.id}:${run.session_id}`}
           accountId={session.data.account.id}
           run={run}
+          connectionStatus={connectionStatus}
         />
       )}
     </div>

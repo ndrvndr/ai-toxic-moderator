@@ -6,16 +6,38 @@ import { Button } from '@/components/ui/button';
 import { getErrorMessage } from '@/lib/api-client';
 
 import { useLiveChat } from '../hooks/use-live-chat';
+import type { LiveConnectionStatus } from '../hooks/use-live-events';
 import { ChatMessage } from './chat-message';
 
 type LiveChatPanelProps = {
   accountId: string;
   run: MonitoringRun;
+  connectionStatus: LiveConnectionStatus;
 };
 
-export function LiveChatPanel({ accountId, run }: LiveChatPanelProps) {
-  const chat = useLiveChat(accountId, run);
+const connectionLabels: Record<LiveConnectionStatus, string> = {
+  idle: 'Live updates inactive',
+  connecting: 'Connecting to live updates…',
+  connected: 'Live updates connected',
+  reconnecting: 'Reconnecting…',
+  unauthenticated: 'Your session has expired. Please sign in again.',
+  forbidden: 'You no longer have access to this chat.',
+  unavailable: 'Live updates unavailable. Refresh the page to reconnect.',
+};
+
+export function LiveChatPanel({ accountId, run, connectionStatus }: LiveChatPanelProps) {
+  const chat = useLiveChat(accountId, run, connectionStatus);
   const active = ['STARTING', 'RUNNING', 'STOPPING'].includes(run.status);
+
+  if (connectionStatus === 'unauthenticated' || connectionStatus === 'forbidden') {
+    return (
+      <section aria-label="Livestream chat" className="border-t pt-4">
+        <p role="alert" className="text-sm text-destructive">
+          {connectionLabels[connectionStatus]}
+        </p>
+      </section>
+    );
+  }
 
   // Pages are newest first. Keep the newest loaded version of each resource.
   const latest = new Map<string, ChatObservation>();
@@ -36,8 +58,18 @@ export function LiveChatPanel({ accountId, run }: LiveChatPanelProps) {
         <div>
           <h3 className="font-semibold">Chat</h3>
           <p className="text-xs text-muted-foreground">
-            Newest first · {active ? 'Updates every 5 seconds' : 'Monitoring ended'}
+            Newest first · {active ? 'Monitoring active' : 'Monitoring ended'}
           </p>
+
+          <p role="status" className="text-xs text-muted-foreground">
+            {connectionLabels[connectionStatus]}
+          </p>
+
+          {active && ['connecting', 'reconnecting', 'unavailable'].includes(connectionStatus) && (
+            <p className="text-xs text-muted-foreground">
+              Chat refreshes every 15 seconds while live updates are disconnected.
+            </p>
+          )}
         </div>
 
         <Button
