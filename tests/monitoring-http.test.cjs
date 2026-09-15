@@ -485,3 +485,46 @@ test('broadcast monitoring lookup does not expose inaccessible runs', async () =
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { run: null });
 });
+
+test('start and stop publish events without duplicates from repeated requests', async () => {
+  const broadcast = registerBroadcast();
+  const requestKey = randomUUID();
+
+  const start = () =>
+    request('/v1/monitoring/start', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': requestKey },
+      body: {
+        youtube_broadcast_id: broadcast.youtube_broadcast_id,
+      },
+    });
+
+  const first = await start();
+  assert.equal(first.status, 200);
+  const { run } = startMonitoringResponse.parse(await first.json());
+
+  assert.equal((await start()).status, 200);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const stopped = await request(`${runPath(run)}/stop`, {
+      method: 'POST',
+      body: {},
+    });
+    assert.equal(stopped.status, 200);
+  }
+
+  const events = await admin.query(
+    `
+      SELECT sequence::text, event_type
+      FROM live_events
+      WHERE session_id = $1
+      ORDER BY sequence
+    `,
+    [run.session_id],
+  );
+
+  assert.deepEqual(events.rows, [
+    { sequence: '1', event_type: 'monitoring.updated' },
+    { sequence: '2', event_type: 'monitoring.updated' },
+  ]);
+});

@@ -9,7 +9,7 @@ import {
   uuid,
   youtubeBroadcastId,
 } from '@moderator/contracts';
-import { transaction, type PoolClient } from '@moderator/persistence';
+import { appendLiveEvent, transaction, type PoolClient } from '@moderator/persistence';
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 
@@ -106,6 +106,15 @@ export class MonitoringService {
         [accountId, key.data, runId],
       );
 
+      if (!reused) {
+        await appendLiveEvent(client, {
+          channelId: session.channel_id,
+          sessionId: session.session_id,
+          runId,
+          type: 'monitoring.updated',
+        });
+      }
+
       return startMonitoringResponse.parse({
         run: await this.readRun(client, runId),
         reused,
@@ -187,9 +196,18 @@ export class MonitoringService {
         );
       }
 
-      return stopMonitoringResponse.parse({
-        run: await this.readRun(client, runId),
-      });
+      const run = await this.readRun(client, runId);
+
+      if (row.status === 'STARTING' || row.status === 'RUNNING') {
+        await appendLiveEvent(client, {
+          channelId: run.channel_id,
+          sessionId: run.session_id,
+          runId,
+          type: 'monitoring.updated',
+        });
+      }
+
+      return stopMonitoringResponse.parse({ run });
     });
   }
 

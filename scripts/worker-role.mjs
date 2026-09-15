@@ -81,6 +81,11 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     updated_at
   ) ON ${schemaSql}.google_credentials TO ${roleSql}`,
     );
+    await client.query(
+      `GRANT SELECT,INSERT,UPDATE ON ${schemaSql}.live_event_counters TO ${roleSql}`,
+    );
+
+    await client.query(`GRANT SELECT,INSERT ON ${schemaSql}.live_events TO ${roleSql}`);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

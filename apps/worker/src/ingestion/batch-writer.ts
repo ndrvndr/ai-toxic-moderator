@@ -1,5 +1,5 @@
 import { youtubeIngestionBatch } from '@moderator/contracts';
-import type { PoolClient } from '@moderator/persistence';
+import { appendLiveEvent, type PoolClient } from '@moderator/persistence';
 import { createHash, randomUUID } from 'node:crypto';
 
 import { LeaseStore, type WorkerLease } from './lease-store';
@@ -210,6 +210,24 @@ export class BatchWriter {
         [lease.run_id],
       );
 
+      if (inserted > 0) {
+        await appendLiveEvent(client, {
+          channelId: run.channel_id,
+          sessionId: run.session_id,
+          runId: lease.run_id,
+          type: 'chat.updated',
+        });
+      }
+
+      if (run.status === 'STARTING' || run.last_error_code !== null) {
+        await appendLiveEvent(client, {
+          channelId: run.channel_id,
+          sessionId: run.session_id,
+          runId: lease.run_id,
+          type: 'monitoring.updated',
+        });
+      }
+
       return {
         inserted,
         revision: updated.rows[0]!.revision,
@@ -223,13 +241,15 @@ export class BatchWriter {
       session_id: string;
       live_chat_id: string;
       status: string;
+      last_error_code: string | null;
     }>(
       `
         SELECT
           run.channel_id,
           run.session_id,
           run.status,
-          broadcast.live_chat_id
+          broadcast.live_chat_id,
+          run.last_error_code
         FROM monitoring_runs run
         JOIN youtube_broadcasts broadcast
           ON broadcast.channel_id = run.channel_id
