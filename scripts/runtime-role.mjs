@@ -91,6 +91,7 @@ export async function provisionRuntimeRole(client, { role, password, schema = 'p
     await client.query(
       `GRANT SELECT,INSERT ON ${schemaSql}.monitoring_start_requests TO ${roleSql}`,
     );
+    await client.query(`GRANT SELECT ON ${schemaSql}.youtube_chat_observations TO ${roleSql}`);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

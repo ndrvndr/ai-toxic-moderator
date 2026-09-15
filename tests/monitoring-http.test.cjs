@@ -10,6 +10,7 @@ const {
   startMonitoringResponse,
   stopMonitoringResponse,
   monitoringStatusResponse,
+  chatPage,
 } = require('@moderator/contracts');
 
 const schema = `monitoring_http_${randomUUID().replaceAll('-', '')}`;
@@ -296,4 +297,167 @@ test('stop rejects client-supplied actor and status fields', async () => {
 
   const status = await request(runPath(run));
   assert.equal((await status.json()).run.status, 'STARTING');
+});
+
+function chatPath(run) {
+  return `/v1/channels/${run.channel_id}/sessions/${run.session_id}/chat`;
+}
+
+async function insertChatObservation(
+  run,
+  {
+    id = randomUUID(),
+    receivedAt = '2026-01-01T00:00:00.123456Z',
+    text = 'Test viewer message',
+  } = {},
+) {
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_observations(
+        id,
+        channel_id,
+        session_id,
+        first_observed_run_id,
+        external_message_id,
+        event_type,
+        published_at,
+        received_at,
+        payload,
+        payload_hash
+      )
+      VALUES(
+        $1, $2, $3, $4, $5, 'textMessageEvent',
+        $6, $6, $7::jsonb, $8
+      )
+    `,
+    [
+      id,
+      run.channel_id,
+      run.session_id,
+      run.id,
+      `message-${id}`,
+      receivedAt,
+      JSON.stringify({
+        snippet: {
+          liveChatId: 'internal-chat-identifier',
+          textMessageDetails: { messageText: text },
+        },
+        authorDetails: {
+          channelId: 'viewer-channel',
+          displayName: 'Test viewer',
+        },
+      }),
+      'a'.repeat(64),
+    ],
+  );
+
+  return id;
+}
+
+test('chat endpoint returns an empty page for an existing session', async () => {
+  const run = await startRun();
+  const response = await request(chatPath(run));
+
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.deepEqual(chatPage.parse(await response.json()), {
+    items: [],
+    next_cursor: null,
+  });
+});
+
+test('chat pagination preserves microseconds and hides raw provider payload', async () => {
+  const run = await startRun();
+
+  const older = await insertChatObservation(run, {
+    receivedAt: '2026-01-01T00:00:00.123455Z',
+  });
+  const newer = await insertChatObservation(run, {
+    receivedAt: '2026-01-01T00:00:00.123456Z',
+  });
+
+  const firstResponse = await request(`${chatPath(run)}?limit=1`);
+  assert.equal(firstResponse.status, 200);
+  const first = chatPage.parse(await firstResponse.json());
+
+  assert.equal(first.items[0].id, newer);
+  assert.equal(first.items[0].evaluation_status, 'NOT_EVALUATED');
+  assert.equal(first.items[0].display_text, 'Test viewer message');
+  assert.equal(first.items[0].author_display_name, 'Test viewer');
+  assert.ok(first.next_cursor);
+  assert.equal(JSON.stringify(first).includes('internal-chat-identifier'), false);
+  assert.equal('payload' in first.items[0], false);
+
+  const secondResponse = await request(
+    `${chatPath(run)}?limit=1&cursor=${encodeURIComponent(first.next_cursor)}`,
+  );
+  assert.equal(secondResponse.status, 200);
+  const second = chatPage.parse(await secondResponse.json());
+
+  assert.equal(second.items[0].id, older);
+  assert.equal(second.next_cursor, null);
+});
+
+test('chat pagination uses observation ID to break timestamp ties', async () => {
+  const run = await startRun();
+  const ids = [randomUUID(), randomUUID()].sort();
+
+  await insertChatObservation(run, { id: ids[0] });
+  await insertChatObservation(run, { id: ids[1] });
+
+  const firstResponse = await request(`${chatPath(run)}?limit=1`);
+  assert.equal(firstResponse.status, 200);
+  const first = chatPage.parse(await firstResponse.json());
+
+  assert.equal(first.items[0].id, ids[1]);
+
+  const secondResponse = await request(
+    `${chatPath(run)}?limit=1&cursor=${encodeURIComponent(first.next_cursor)}`,
+  );
+  assert.equal(secondResponse.status, 200);
+  const second = chatPage.parse(await secondResponse.json());
+
+  assert.equal(second.items[0].id, ids[0]);
+  assert.equal(second.next_cursor, null);
+});
+
+test('chat endpoint rejects cross-session cursors and invalid pagination', async () => {
+  const firstRun = await startRun();
+  const secondRun = await startRun();
+
+  await insertChatObservation(firstRun);
+  await insertChatObservation(firstRun);
+
+  const firstResponse = await request(`${chatPath(firstRun)}?limit=1`);
+  assert.equal(firstResponse.status, 200);
+  const first = chatPage.parse(await firstResponse.json());
+
+  const wrongCursor = await request(
+    `${chatPath(secondRun)}?cursor=${encodeURIComponent(first.next_cursor)}`,
+  );
+  assert.equal(wrongCursor.status, 400);
+
+  assert.equal((await request(`${chatPath(firstRun)}?limit=101`)).status, 422);
+
+  assert.equal(
+    (await request(`/v1/channels/${firstRun.channel_id}/sessions/${secondRun.session_id}/chat`))
+      .status,
+    404,
+  );
+});
+
+test('chat access requires a session and current channel membership', async () => {
+  const run = await startRun();
+
+  assert.equal((await request(chatPath(run), { headers: { Cookie: '' } })).status, 401);
+
+  await admin.query(
+    `
+      UPDATE channel_memberships
+      SET role = 'OPERATOR'
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [run.channel_id, accountId],
+  );
+
+  assert.equal((await request(chatPath(run))).status, 403);
 });

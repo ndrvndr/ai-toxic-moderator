@@ -9,6 +9,7 @@ import type { AppConfig } from '@moderator/config';
 
 import { AuthModule } from './auth/auth.module';
 import { ChannelsModule } from './channels/channels.module';
+import { ChatModule } from './chat/chat.module';
 import { DatabaseModule, type DatabasePool } from './database.module';
 import { HealthModule } from './health.module';
 import { ApiExceptionFilter, type ApiRequest, type ApiResponse } from './http';
@@ -22,6 +23,7 @@ export async function createApi(config: AppConfig, pool?: DatabasePool) {
       ChannelsModule,
       HealthModule,
       MonitoringModule,
+      ChatModule,
     ],
   })
   class ApiModule {}

@@ -246,5 +246,6 @@ export const sessionCursor = z.strictObject({
   created_at: z.iso.datetime({ offset: true }),
   id: uuid,
 });
+export * from './chat';
 export * from './monitoring';
 export * from './youtube-ingestion';
