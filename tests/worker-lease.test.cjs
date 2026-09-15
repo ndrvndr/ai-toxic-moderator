@@ -5,7 +5,7 @@ const { Client, Pool } = require('pg');
 const { source } = require('./helpers/source.cjs');
 
 const { LeaseStore, LeaseLostError } = source('apps/worker/src/ingestion/lease-store.ts');
-const { BatchWriter, StaleBatchError, MonitoringNotIngestingError } = source(
+const { BatchWriter, StaleBatchError, MonitoringNotIngestingError, ChatAlreadyEndedError } = source(
   'apps/worker/src/ingestion/batch-writer.ts',
 );
 const { PollCycle } = source('apps/worker/src/ingestion/poll-cycle.ts');
@@ -864,4 +864,117 @@ test('retry is rejected after a stop request', async () => {
   );
 
   assert.equal(result.rows[0].revision, '0');
+});
+
+test('a replacement worker detects persisted chat completion without provider calls', async () => {
+  const f = await batchFixture();
+
+  await f.writer.commit(f.lease, {
+    ...f.batch,
+    next_page_token: null,
+    items: [
+      {
+        id: 'chat-ended',
+        snippet: {
+          type: 'chatEndedEvent',
+          liveChatId: f.item.snippet.liveChatId,
+          publishedAt: '2026-01-01T00:01:00Z',
+        },
+      },
+    ],
+  });
+
+  // Simulate process death after commit but before run finalization.
+  await expire(admin, f.runId);
+
+  const replacementStore = new LeaseStore(pool);
+  const replacementLease = await replacementStore.claim(f.runId, randomUUID());
+  assert.ok(replacementLease);
+
+  const cycle = new PollCycle(
+    replacementStore,
+    new BatchWriter(replacementStore),
+    {
+      async accessToken() {
+        assert.fail('Completed chat must not request a token');
+      },
+    },
+    {
+      async list() {
+        assert.fail('Completed chat must not call YouTube');
+      },
+    },
+  );
+
+  assert.deepEqual(await cycle.run(replacementLease), {
+    kind: 'CHAT_ENDED',
+  });
+
+  assert.equal(await replacementStore.finish(replacementLease, 'STOPPED'), 'STOPPED');
+
+  const observations = await admin.query(
+    'SELECT id FROM youtube_chat_observations WHERE session_id = $1',
+    [f.sessionId],
+  );
+
+  assert.equal(observations.rows.length, 1);
+});
+
+test('completed chat rejects further batch writes', async () => {
+  const f = await batchFixture();
+
+  await f.writer.commit(f.lease, {
+    ...f.batch,
+    next_page_token: null,
+    offline_at: '2026-01-01T00:01:00Z',
+    items: [],
+  });
+
+  await assert.rejects(
+    f.writer.commit(f.lease, {
+      ...f.batch,
+      expected_revision: '1',
+      request_page_token: null,
+    }),
+    ChatAlreadyEndedError,
+  );
+
+  const checkpoint = await f.writer.checkpoint(f.lease);
+  assert.equal(checkpoint.revision, '1');
+  assert.ok(checkpoint.chat_ended_at);
+});
+
+test('offline metadata with a continuation token does not end ingestion', async () => {
+  const f = await batchFixture();
+
+  await f.writer.commit(f.lease, {
+    ...f.batch,
+    offline_at: '2026-01-01T00:01:00Z',
+    next_page_token: 'remaining-chat-page',
+  });
+
+  const checkpoint = await f.writer.checkpoint(f.lease);
+
+  assert.equal(checkpoint.chat_ended_at, null);
+  assert.equal(checkpoint.next_page_token, 'remaining-chat-page');
+});
+
+test('offline metadata without a continuation token persists completion', async () => {
+  const f = await batchFixture();
+
+  await f.writer.commit(f.lease, {
+    ...f.batch,
+    offline_at: '2026-01-01T00:01:00Z',
+    next_page_token: null,
+  });
+
+  const checkpoint = await f.writer.checkpoint(f.lease);
+  assert.ok(checkpoint.chat_ended_at);
+
+  const observations = await admin.query(
+    'SELECT id FROM youtube_chat_observations WHERE session_id = $1',
+    [f.sessionId],
+  );
+
+  assert.equal(observations.rows.length, 1);
 });

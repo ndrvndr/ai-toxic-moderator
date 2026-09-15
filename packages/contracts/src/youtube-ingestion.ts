@@ -18,6 +18,7 @@ export const youtubeIngestionBatch = z.strictObject({
   request_page_token: z.string().min(1).nullable(),
   next_page_token: z.string().min(1).nullable(),
   polling_interval_ms: z.number().int().min(1).max(2147483647),
+  offline_at: z.iso.datetime({ offset: true }).nullable().default(null),
   items: z.array(youtubeChatResource),
 });
 

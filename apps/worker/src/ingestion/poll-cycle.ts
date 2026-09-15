@@ -47,6 +47,10 @@ export class PollCycle {
 
     const checkpoint = await this.writer.checkpoint(lease);
 
+    if (checkpoint.chat_ended_at !== null) {
+      return { kind: 'CHAT_ENDED' as const };
+    }
+
     if (!checkpoint.due) {
       return {
         kind: 'WAIT' as const,
@@ -74,6 +78,7 @@ export class PollCycle {
       request_page_token: checkpoint.next_page_token,
       next_page_token: page.next_page_token,
       polling_interval_ms: page.polling_interval_ms,
+      offline_at: page.offline_at,
       items: page.items,
     });
 
@@ -82,7 +87,9 @@ export class PollCycle {
       inserted: persisted.inserted,
       revision: persisted.revision,
       offline_at: page.offline_at,
-      chat_ended: page.items.some((item) => item.snippet.type === 'chatEndedEvent'),
+      chat_ended:
+        page.items.some((item) => item.snippet.type === 'chatEndedEvent') ||
+        (page.offline_at !== null && page.next_page_token === null),
     };
   }
 

@@ -62,13 +62,15 @@ export class BatchWriter {
         next_page_token: string | null;
         next_poll_at: Date;
         due: boolean;
+        chat_ended_at: Date | null;
       }>(
         `
     SELECT
       revision::text,
       next_page_token,
       next_poll_at,
-      next_poll_at <= clock_timestamp() AS due
+      next_poll_at <= clock_timestamp() AS due,
+      chat_ended_at
     FROM youtube_chat_checkpoints
     WHERE session_id = $1
   `,
@@ -82,6 +84,7 @@ export class BatchWriter {
         next_page_token: row.next_page_token,
         next_poll_at: row.next_poll_at.toISOString(),
         due: row.due,
+        chat_ended_at: row.chat_ended_at?.toISOString() ?? null,
       };
     });
   }
@@ -95,9 +98,10 @@ export class BatchWriter {
       const checkpoint = await client.query<{
         revision: string;
         next_page_token: string | null;
+        chat_ended_at: Date | null;
       }>(
         `
-          SELECT revision::text, next_page_token
+          SELECT revision::text, next_page_token, chat_ended_at
           FROM youtube_chat_checkpoints
           WHERE session_id = $1
           FOR UPDATE
@@ -113,6 +117,10 @@ export class BatchWriter {
         current.next_page_token !== batch.request_page_token
       ) {
         throw new StaleBatchError();
+      }
+
+      if (current.chat_ended_at !== null) {
+        throw new ChatAlreadyEndedError();
       }
 
       let inserted = 0;
@@ -158,25 +166,33 @@ export class BatchWriter {
         inserted += result.rowCount ?? 0;
       }
 
+      const chatEnded =
+        batch.items.some((item) => item.snippet.type === 'chatEndedEvent') ||
+        (batch.offline_at !== null && batch.next_page_token === null);
+
       const updated = await client.query<{ revision: string }>(
         `
-          WITH moment AS MATERIALIZED (
-            SELECT clock_timestamp() AS at
-          )
-          UPDATE youtube_chat_checkpoints
-          SET
-            revision = revision + 1,
-            next_page_token = $2,
-            next_poll_at = moment.at + $3 * interval '1 millisecond',
-            last_successful_poll_at = moment.at,
-            consecutive_failures = 0,
-            last_error_code = NULL,
-            updated_at = moment.at
-          FROM moment
-          WHERE session_id = $1
-          RETURNING revision::text
-        `,
-        [run.session_id, batch.next_page_token, batch.polling_interval_ms],
+    WITH moment AS MATERIALIZED (
+      SELECT clock_timestamp() AS at
+    )
+    UPDATE youtube_chat_checkpoints
+    SET
+      revision = revision + 1,
+      next_page_token = $2,
+      next_poll_at = moment.at + $3 * interval '1 millisecond',
+      last_successful_poll_at = moment.at,
+      consecutive_failures = 0,
+      last_error_code = NULL,
+      updated_at = moment.at,
+      chat_ended_at = CASE
+        WHEN $4 THEN COALESCE(chat_ended_at, moment.at)
+        ELSE chat_ended_at
+      END
+    FROM moment
+    WHERE session_id = $1
+    RETURNING revision::text
+  `,
+        [run.session_id, batch.next_page_token, batch.polling_interval_ms, chatEnded],
       );
 
       await client.query(
@@ -230,5 +246,12 @@ export class BatchWriter {
     }
 
     return run;
+  }
+}
+
+export class ChatAlreadyEndedError extends Error {
+  constructor() {
+    super('The chat has already completed ingestion.');
+    this.name = 'ChatAlreadyEndedError';
   }
 }
