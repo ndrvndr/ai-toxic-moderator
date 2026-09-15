@@ -5,6 +5,9 @@ const { Client, Pool } = require('pg');
 const { source } = require('./helpers/source.cjs');
 
 const { LeaseStore, LeaseLostError } = source('apps/worker/src/ingestion/lease-store.ts');
+const { BatchWriter, StaleBatchError, MonitoringNotIngestingError } = source(
+  'apps/worker/src/ingestion/batch-writer.ts',
+);
 
 const schema = `worker_lease_${randomUUID().replaceAll('-', '')}`;
 
@@ -290,4 +293,193 @@ test('expired ownership cannot be revived by heartbeat', async () => {
 
   await assert.rejects(store.heartbeat(lease), LeaseLostError);
   await assert.rejects(store.release(lease), LeaseLostError);
+});
+
+async function batchFixture() {
+  const f = await fixture();
+  const lease = await store.claim(f.runId, randomUUID());
+  assert.ok(lease);
+
+  const writer = new BatchWriter(store);
+  const checkpoint = await writer.checkpoint(lease);
+
+  const broadcast = await admin.query(
+    'SELECT live_chat_id FROM youtube_broadcasts WHERE session_id = $1',
+    [f.sessionId],
+  );
+
+  const item = {
+    id: 'message-1',
+    snippet: {
+      type: 'textMessageEvent',
+      liveChatId: broadcast.rows[0].live_chat_id,
+      publishedAt: '2026-01-01T00:00:00Z',
+      textMessageDetails: { messageText: 'Test message' },
+    },
+  };
+
+  return {
+    ...f,
+    lease,
+    writer,
+    item,
+    batch: {
+      expected_revision: checkpoint.revision,
+      request_page_token: checkpoint.next_page_token,
+      next_page_token: 'page-2',
+      polling_interval_ms: 5000,
+      items: [item],
+    },
+  };
+}
+
+test('batch persistence advances the checkpoint and marks the run RUNNING', async () => {
+  const f = await batchFixture();
+
+  assert.deepEqual(await f.writer.commit(f.lease, f.batch), {
+    inserted: 1,
+    revision: '1',
+  });
+
+  const result = await admin.query(
+    `
+      SELECT
+        checkpoint.next_page_token,
+        checkpoint.revision::text,
+        checkpoint.next_poll_at - checkpoint.last_successful_poll_at
+          = interval '5 seconds' AS respects_interval,
+        run.status,
+        run.started_at
+      FROM youtube_chat_checkpoints checkpoint
+      JOIN monitoring_runs run ON run.session_id = checkpoint.session_id
+      WHERE run.id = $1
+    `,
+    [f.runId],
+  );
+
+  assert.equal(result.rows[0].next_page_token, 'page-2');
+  assert.equal(result.rows[0].revision, '1');
+  assert.equal(result.rows[0].respects_interval, true);
+  assert.equal(result.rows[0].status, 'RUNNING');
+  assert.ok(result.rows[0].started_at);
+});
+
+test('snapshot deduplication ignores JSON object key order', async () => {
+  const f = await batchFixture();
+
+  await f.writer.commit(f.lease, f.batch);
+
+  const reordered = {
+    snippet: {
+      textMessageDetails: { messageText: 'Test message' },
+      publishedAt: f.item.snippet.publishedAt,
+      liveChatId: f.item.snippet.liveChatId,
+      type: f.item.snippet.type,
+    },
+    id: f.item.id,
+  };
+
+  const result = await f.writer.commit(f.lease, {
+    ...f.batch,
+    expected_revision: '1',
+    request_page_token: 'page-2',
+    next_page_token: 'page-3',
+    items: [reordered],
+  });
+
+  assert.deepEqual(result, { inserted: 0, revision: '2' });
+});
+
+test('only one response can advance a checkpoint revision', async () => {
+  const f = await batchFixture();
+
+  const results = await Promise.allSettled([
+    f.writer.commit(f.lease, f.batch),
+    f.writer.commit(f.lease, f.batch),
+  ]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+
+  const rejected = results.find((result) => result.status === 'rejected');
+  assert.ok(rejected.reason instanceof StaleBatchError);
+});
+
+test('a bad resource rolls back earlier observations and checkpoint changes', async () => {
+  const f = await batchFixture();
+
+  await assert.rejects(
+    f.writer.commit(f.lease, {
+      ...f.batch,
+      items: [
+        f.item,
+        {
+          ...f.item,
+          id: 'message-2',
+          snippet: {
+            ...f.item.snippet,
+            liveChatId: 'another-live-chat',
+          },
+        },
+      ],
+    }),
+    /another live chat/,
+  );
+
+  const observations = await admin.query(
+    'SELECT id FROM youtube_chat_observations WHERE session_id = $1',
+    [f.sessionId],
+  );
+  assert.equal(observations.rows.length, 0);
+
+  const checkpoint = await f.writer.checkpoint(f.lease);
+  assert.equal(checkpoint.revision, '0');
+  assert.equal(checkpoint.next_page_token, null);
+
+  const run = await admin.query('SELECT status FROM monitoring_runs WHERE id = $1', [f.runId]);
+  assert.equal(run.rows[0].status, 'STARTING');
+});
+
+test('a STOPPING run rejects new batches without advancing its checkpoint', async () => {
+  const f = await batchFixture();
+
+  await admin.query(
+    `
+      UPDATE monitoring_runs
+      SET status = 'STOPPING', stop_requested_at = clock_timestamp()
+      WHERE id = $1
+    `,
+    [f.runId],
+  );
+
+  await assert.rejects(f.writer.commit(f.lease, f.batch), MonitoringNotIngestingError);
+
+  const result = await admin.query(
+    'SELECT revision::text FROM youtube_chat_checkpoints WHERE session_id = $1',
+    [f.sessionId],
+  );
+  assert.equal(result.rows[0].revision, '0');
+});
+
+test('an empty successful batch still advances its checkpoint', async () => {
+  const f = await batchFixture();
+
+  assert.deepEqual(await f.writer.commit(f.lease, { ...f.batch, items: [] }), {
+    inserted: 0,
+    revision: '1',
+  });
+});
+
+test('a replaced worker cannot persist a batch', async () => {
+  const f = await batchFixture();
+
+  await expire(admin, f.runId);
+  assert.ok(await store.claim(f.runId, randomUUID()));
+
+  await assert.rejects(f.writer.commit(f.lease, f.batch), LeaseLostError);
+
+  const result = await admin.query(
+    'SELECT id FROM youtube_chat_observations WHERE session_id = $1',
+    [f.sessionId],
+  );
+  assert.equal(result.rows.length, 0);
 });
