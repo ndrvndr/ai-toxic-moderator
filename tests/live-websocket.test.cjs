@@ -198,3 +198,82 @@ test('duplicate subscription parameters are rejected', async (t) => {
 
   assert.equal(connection.rejected, 400);
 });
+
+test('session revocation closes an existing connection', async (t) => {
+  let revoked = false;
+
+  const { url } = await fixture(t, async () => {
+    if (revoked) {
+      throw new LiveAccessError(401, 4001, 'Authentication required.');
+    }
+
+    return {
+      watermark: '0',
+      next_cursor: '0',
+      has_more: false,
+      items: [],
+    };
+  });
+
+  const connection = connect(url);
+
+  await waitFor(() => connection.messages.length > 0);
+  assert.equal(connection.messages[0].type, 'ready');
+
+  revoked = true;
+
+  await waitFor(() => connection.closed !== null);
+  assert.equal(connection.closed, 4001);
+});
+
+test('client application messages are rejected on the read-only connection', async (t) => {
+  const { url } = await fixture(t, async () => ({
+    watermark: '0',
+    next_cursor: '0',
+    has_more: false,
+    items: [],
+  }));
+
+  const connection = connect(url);
+
+  await waitFor(() => connection.messages.length > 0);
+
+  connection.socket.send(JSON.stringify({ type: 'change-channel' }));
+
+  await waitFor(() => connection.closed !== null);
+  assert.equal(connection.closed, 1008);
+});
+
+test('internal feed errors do not expose their details to clients', async (t) => {
+  let fail = false;
+  let closeReason = '';
+
+  const { url } = await fixture(t, async () => {
+    if (fail) {
+      throw new Error('Sensitive internal database diagnostic');
+    }
+
+    return {
+      watermark: '0',
+      next_cursor: '0',
+      has_more: false,
+      items: [],
+    };
+  });
+
+  const connection = connect(url);
+
+  connection.socket.on('close', (_code, reason) => {
+    closeReason = reason.toString();
+  });
+
+  await waitFor(() => connection.messages.length > 0);
+
+  fail = true;
+
+  await waitFor(() => connection.closed !== null);
+
+  assert.equal(connection.closed, 1011);
+  assert.equal(closeReason, 'Live feed unavailable.');
+  assert.equal(JSON.stringify(connection.messages).includes('Sensitive internal'), false);
+});

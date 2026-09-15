@@ -1,9 +1,12 @@
+require('reflect-metadata');
 const { before, after, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, randomBytes } = require('node:crypto');
 const { Client, Pool } = require('pg');
 
 const { source } = require('./helpers/source.cjs');
+const { LiveAccessService, LiveAccessError } = source('apps/api/src/live/live-access.service.ts');
+const { SessionService, tokenHash } = source('apps/api/src/auth/session.service.ts');
 const {
   appendLiveEvent,
   readLiveEvents,
@@ -389,4 +392,193 @@ test('replay does not expose uncommitted events', async () => {
     await connection.query('ROLLBACK');
     connection.release();
   }
+});
+
+async function authenticatedFixture(role = 'OWNER') {
+  const f = await fixture();
+  const token = randomBytes(32).toString('base64url');
+
+  if (role !== null) {
+    await client.query(
+      `
+        INSERT INTO channel_memberships(channel_id, account_id, role)
+        VALUES($1, $2, $3)
+      `,
+      [f.channelId, f.accountId, role],
+    );
+  }
+
+  await client.query(
+    `
+      INSERT INTO dashboard_sessions(
+        id, account_id, token_hash, expires_at, auth_provider
+      )
+      VALUES(
+        $1, $2, $3,
+        clock_timestamp() + interval '1 hour',
+        'development'
+      )
+    `,
+    [randomUUID(), f.accountId, tokenHash(token)],
+  );
+
+  const database = { pool };
+  const sessions = new SessionService(database, {
+    DEV_AUTH_ENABLED: true,
+    GOOGLE_AUTH_ENABLED: false,
+  });
+
+  const access = new LiveAccessService(database, sessions);
+
+  return {
+    ...f,
+    token,
+    sessions,
+    access,
+    subscription: {
+      channelId: f.channelId,
+      sessionId: f.sessionId,
+      after: '0',
+    },
+  };
+}
+
+function accessError(status, closeCode) {
+  return (error) =>
+    error instanceof LiveAccessError && error.status === status && error.closeCode === closeCode;
+}
+
+test('owners and moderators can read their live events', async () => {
+  for (const role of ['OWNER', 'MODERATOR']) {
+    const f = await authenticatedFixture(role);
+    await append(f);
+
+    const page = await f.access.read(f.token, f.subscription);
+
+    assert.deepEqual(page.items, [
+      {
+        sequence: '1',
+        run_id: f.runId,
+        event_type: 'chat.updated',
+      },
+    ]);
+  }
+});
+
+test('operators and accounts without membership cannot read live events', async () => {
+  for (const role of ['OPERATOR', null]) {
+    const f = await authenticatedFixture(role);
+    await append(f);
+
+    await assert.rejects(f.access.read(f.token, f.subscription), accessError(403, 4003));
+  }
+});
+
+test('a valid account cannot read another channel through its identifiers', async () => {
+  const first = await authenticatedFixture();
+  const second = await authenticatedFixture();
+
+  await append(second);
+
+  await assert.rejects(first.access.read(first.token, second.subscription), accessError(403, 4003));
+});
+
+test('a session cannot be substituted into an authorized channel', async () => {
+  const first = await authenticatedFixture();
+  const second = await authenticatedFixture();
+
+  await assert.rejects(
+    first.access.read(first.token, {
+      ...first.subscription,
+      sessionId: second.sessionId,
+    }),
+    accessError(404, 4004),
+  );
+});
+
+test('missing and unknown sessions cannot read live events', async () => {
+  const f = await authenticatedFixture();
+
+  for (const token of [null, randomBytes(32).toString('base64url')]) {
+    await assert.rejects(f.access.read(token, f.subscription), accessError(401, 4001));
+  }
+});
+
+test('expired sessions cannot read live events', async () => {
+  const f = await authenticatedFixture();
+
+  await client.query(
+    `
+      UPDATE dashboard_sessions
+      SET
+        created_at = statement_timestamp() - interval '2 hours',
+        expires_at = statement_timestamp() - interval '1 hour'
+      WHERE token_hash = $1
+    `,
+    [tokenHash(f.token)],
+  );
+
+  await assert.rejects(f.access.read(f.token, f.subscription), accessError(401, 4001));
+});
+
+test('revoked sessions are rejected on the next feed read', async () => {
+  const f = await authenticatedFixture();
+
+  await f.access.read(f.token, f.subscription);
+  await f.sessions.revoke(tokenHash(f.token));
+
+  await assert.rejects(f.access.read(f.token, f.subscription), accessError(401, 4001));
+});
+
+test('membership changes are enforced on subsequent feed reads', async () => {
+  const f = await authenticatedFixture();
+
+  await f.access.read(f.token, f.subscription);
+
+  await client.query(
+    `
+      UPDATE channel_memberships
+      SET role = 'OPERATOR'
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [f.channelId, f.accountId],
+  );
+
+  await assert.rejects(f.access.read(f.token, f.subscription), accessError(403, 4003));
+
+  await client.query(
+    `
+      DELETE FROM channel_memberships
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [f.channelId, f.accountId],
+  );
+
+  await assert.rejects(f.access.read(f.token, f.subscription), accessError(403, 4003));
+});
+
+test('disabled authentication providers invalidate existing sessions', async () => {
+  const f = await authenticatedFixture();
+
+  const database = { pool };
+  const sessions = new SessionService(database, {
+    DEV_AUTH_ENABLED: false,
+    GOOGLE_AUTH_ENABLED: false,
+  });
+
+  const access = new LiveAccessService(database, sessions);
+
+  await assert.rejects(access.read(f.token, f.subscription), accessError(401, 4001));
+});
+
+test('future cursors return a safe access error', async () => {
+  const f = await authenticatedFixture();
+
+  await assert.rejects(
+    f.access.read(f.token, {
+      ...f.subscription,
+      after: '1',
+    }),
+    accessError(400, 4000),
+  );
 });

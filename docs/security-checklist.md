@@ -90,6 +90,33 @@ configuration review without including sensitive values.
 - **Result:**
 - **Remaining work:**
 
+## Live Feed Access Verification
+
+- **Control IDs:** SEC-06, SEC-11, SEC-12, SEC-13, SEC-17, APP-05
+- **Environment:** Local test environment
+- **Verification date:** 2026-09-15
+- **Commit:** To be recorded
+- **Evidence:**
+  - `npm run test:live-event-feed`
+  - `npm run test:live-websocket`
+- **Coverage:**
+  - Owner and moderator access.
+  - Operator and missing-membership denial.
+  - Cross-channel and cross-session access denial.
+  - Missing, unknown, expired, and revoked sessions.
+  - Membership changes and disabled authentication providers.
+  - Invalid future cursors.
+  - WebSocket closure after authentication failure.
+  - Rejection of client application messages.
+  - Safe WebSocket error messages.
+- **Limitations:**
+  - Database access tests use a local test database.
+  - Transport tests use a replacement access service.
+  - Production configuration, proxy behavior, connection limits,
+    slow clients, and full application shutdown require further verification.
+- **Checklist status:** Related controls remain Pending until all their
+  verification criteria are covered.
+
 ## Release Gate
 
 Before production launch:
