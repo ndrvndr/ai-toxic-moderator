@@ -22,6 +22,8 @@
     "test:youtube-session": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/youtube-session.test.cjs",
     "test:monitoring-start": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/monitoring-start.test.cjs",
     "test:monitoring-http": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/monitoring-http.test.cjs",
+    "test:ingestion-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/ingestion-schema.test.cjs",
+    "test:migration-checksum": "node --experimental-test-isolation=none --test tests/migration-checksum.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",

@@ -6,6 +6,8 @@ import pg from 'pg';
 
 import { loadConfig } from '@moderator/config';
 
+import { matchesMigrationChecksum } from './migration-checksum.mjs';
+
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 export const ids = {
@@ -30,8 +32,10 @@ export async function migrate(client) {
         name,
       ]);
       if (existing.rows.length) {
-        if (existing.rows[0].checksum !== checksum)
+        if (!matchesMigrationChecksum(sql, existing.rows[0].checksum)) {
           throw new Error('Applied migration changed: ' + name);
+        }
+
         continue;
       }
       await client.query(sql);
