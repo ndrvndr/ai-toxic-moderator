@@ -27,6 +27,7 @@
     "test:worker-lease": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/worker-lease.test.cjs",
     "test:chat-observation-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/chat-observation-schema.test.cjs",
     "test:youtube-chat-adapter": "node --experimental-test-isolation=none --test tests/youtube-chat-adapter.test.cjs",
+    "test:worker-runtime": "node --experimental-test-isolation=none --test tests/worker-runtime.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
@@ -34,6 +35,7 @@
     "db:migrate": "node --env-file-if-exists=.env scripts/database.mjs migrate",
     "db:seed": "node --env-file-if-exists=.env scripts/database.mjs seed",
     "db:runtime": "node --env-file-if-exists=.env scripts/runtime-role.mjs",
+    "db:worker": "node --env-file-if-exists=.env scripts/worker-role.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "format": "node scripts/organize-imports.mjs && prettier --write .",
     "format:check": "node scripts/organize-imports.mjs --check && prettier --check ."

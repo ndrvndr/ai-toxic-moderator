@@ -15,6 +15,9 @@ const { IngestionCoordinator } = source('apps/worker/src/ingestion/coordinator.t
 
 const schema = `worker_lease_${randomUUID().replaceAll('-', '')}`;
 
+const workerRole = `atm_worker_${randomUUID().replaceAll('-', '')}`;
+let roleCreated = false;
+
 let admin;
 let pool;
 let store;
@@ -40,12 +43,21 @@ before(async () => {
   await admin.query(`SET search_path TO ${schema}`);
   await migrate(admin);
 
+  const { provisionWorkerRole } = await import('../scripts/worker-role.mjs');
+
+  await provisionWorkerRole(admin, {
+    role: workerRole,
+    password: randomUUID(),
+    schema,
+  });
+  roleCreated = true;
+
   pool = new Pool({
     connectionString: url,
     max: 4,
     connectionTimeoutMillis: 3000,
     statement_timeout: 10000,
-    options: `-c search_path=${schema}`,
+    options: `-c search_path=${schema} -c role=${workerRole}`,
   });
 
   store = new LeaseStore(pool);
@@ -58,6 +70,7 @@ after(async () => {
     if (admin) {
       try {
         if (schemaCreated) await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+        if (roleCreated) await admin.query(`DROP ROLE ${workerRole}`);
       } finally {
         await admin.end();
       }
@@ -1146,4 +1159,20 @@ test('competing coordinators do not persist duplicate polling batches', async ()
     [f.sessionId],
   );
   assert.equal(observations.rows.length, 1);
+});
+
+test('worker role cannot access login sessions or modify historical observations', async () => {
+  const role = await pool.query('SELECT current_user');
+  assert.equal(role.rows[0].current_user, workerRole);
+
+  for (const sql of [
+    'SELECT * FROM dashboard_sessions',
+    'SELECT * FROM google_oauth_attempts',
+    'DELETE FROM youtube_chat_observations',
+    "UPDATE youtube_chat_observations SET payload = '{}'::jsonb",
+    'UPDATE monitoring_runs SET credential_account_id = credential_account_id',
+    "INSERT INTO accounts(id, display_name) VALUES(gen_random_uuid(), 'Forbidden')",
+  ]) {
+    await assert.rejects(pool.query(sql), (error) => error.code === '42501');
+  }
 });
