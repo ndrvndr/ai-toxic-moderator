@@ -5,6 +5,7 @@ import { useSession } from '@/features/auth/hooks/use-session';
 import { getErrorMessage } from '@/lib/api-client';
 
 import { useMonitoring } from '../hooks/use-monitoring';
+import { LiveChatPanel } from './live-chat-panel';
 
 type MonitoringControlsProps = {
   broadcastId: string;
@@ -85,6 +86,14 @@ export function MonitoringControls({ broadcastId, liveChatAvailable }: Monitorin
         Monitoring collects chat messages. Classification and automatic moderation are not available
         yet.
       </p>
+
+      {run && session.data && (
+        <LiveChatPanel
+          key={`${session.data.account.id}:${run.session_id}`}
+          accountId={session.data.account.id}
+          run={run}
+        />
+      )}
     </div>
   );
 }
