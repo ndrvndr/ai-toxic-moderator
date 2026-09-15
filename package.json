@@ -30,6 +30,7 @@
     "test:worker-runtime": "node --experimental-test-isolation=none --test tests/worker-runtime.test.cjs",
     "test:ingestion-integration": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/ingestion-integration.test.cjs",
     "test:live-event-feed": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/live-event-feed.test.cjs",
+    "test:live-websocket": "node --experimental-test-isolation=none --test tests/live-websocket.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
