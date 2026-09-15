@@ -26,6 +26,7 @@
     "test:migration-checksum": "node --experimental-test-isolation=none --test tests/migration-checksum.test.cjs",
     "test:worker-lease": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/worker-lease.test.cjs",
     "test:chat-observation-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/chat-observation-schema.test.cjs",
+    "test:youtube-chat-adapter": "node --experimental-test-isolation=none --test tests/youtube-chat-adapter.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",

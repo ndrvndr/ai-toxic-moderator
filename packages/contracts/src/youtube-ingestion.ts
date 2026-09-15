@@ -20,3 +20,21 @@ export const youtubeIngestionBatch = z.strictObject({
   polling_interval_ms: z.number().int().min(1).max(2147483647),
   items: z.array(youtubeChatResource),
 });
+
+export const youtubeChatListResponse = z
+  .object({
+    nextPageToken: z.string().min(1).optional(),
+    pollingIntervalMillis: z.number().int().min(0).max(2147483647),
+    offlineAt: z.iso.datetime({ offset: true }).optional(),
+    items: z.array(youtubeChatResource),
+    activePollItem: youtubeChatResource.optional(),
+  })
+  .superRefine((response, context) => {
+    if (!response.nextPageToken && !response.offlineAt) {
+      context.addIssue({
+        code: 'custom',
+        path: ['nextPageToken'],
+        message: 'An active chat response must provide a continuation token.',
+      });
+    }
+  });
