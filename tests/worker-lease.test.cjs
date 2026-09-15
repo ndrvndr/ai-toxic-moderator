@@ -11,6 +11,7 @@ const { BatchWriter, StaleBatchError, MonitoringNotIngestingError, ChatAlreadyEn
 const { PollCycle } = source('apps/worker/src/ingestion/poll-cycle.ts');
 const { YoutubeChatError } = source('packages/provider-adapters/src/youtube-chat.ts');
 const { RetryStore } = source('apps/worker/src/ingestion/retry-store.ts');
+const { IngestionCoordinator } = source('apps/worker/src/ingestion/coordinator.ts');
 
 const schema = `worker_lease_${randomUUID().replaceAll('-', '')}`;
 
@@ -976,5 +977,173 @@ test('offline metadata without a continuation token persists completion', async 
     [f.sessionId],
   );
 
+  assert.equal(observations.rows.length, 1);
+});
+
+async function coordinatorFixture() {
+  const f = await cycleFixture();
+
+  // The coordinator must acquire its own lease.
+  await store.release(f.lease);
+
+  return {
+    ...f,
+    coordinator: new IngestionCoordinator(pool, store, f.cycle, new RetryStore(store)),
+  };
+}
+
+test('coordinator polls a run and releases ownership between cycles', async () => {
+  const f = await coordinatorFixture();
+
+  const first = await f.coordinator.process(f.runId);
+  assert.equal(first.kind, 'POLLED');
+
+  const lease = await admin.query(
+    'SELECT owner_id FROM monitoring_worker_leases WHERE run_id = $1',
+    [f.runId],
+  );
+  assert.equal(lease.rows[0].owner_id, null);
+
+  const second = await f.coordinator.process(f.runId);
+  assert.equal(second.kind, 'WAIT');
+});
+
+test('coordinator persists transient failure backoff', async () => {
+  const f = await coordinatorFixture();
+
+  f.chat.list = async () => {
+    throw new YoutubeChatError('YOUTUBE_RATE_LIMITED', 12000);
+  };
+
+  const result = await f.coordinator.process(f.runId);
+  assert.equal(result.kind, 'RETRY');
+  assert.equal(result.error_code, 'YOUTUBE_RATE_LIMITED');
+
+  const stored = await admin.query(
+    `
+      SELECT
+        run.status,
+        checkpoint.consecutive_failures,
+        checkpoint.next_poll_at > clock_timestamp() AS delayed
+      FROM monitoring_runs run
+      JOIN youtube_chat_checkpoints checkpoint
+        ON checkpoint.session_id = run.session_id
+      WHERE run.id = $1
+    `,
+    [f.runId],
+  );
+
+  assert.equal(stored.rows[0].status, 'STARTING');
+  assert.equal(stored.rows[0].consecutive_failures, 1);
+  assert.equal(stored.rows[0].delayed, true);
+});
+
+test('coordinator finalizes a permanent provider failure', async () => {
+  const f = await coordinatorFixture();
+
+  f.chat.list = async () => {
+    throw new YoutubeChatError('RECONNECT_REQUIRED');
+  };
+
+  assert.deepEqual(await f.coordinator.process(f.runId), {
+    kind: 'FAILED',
+  });
+
+  const result = await admin.query(
+    'SELECT status, last_error_code FROM monitoring_runs WHERE id = $1',
+    [f.runId],
+  );
+
+  assert.deepEqual(result.rows[0], {
+    status: 'FAILED',
+    last_error_code: 'RECONNECT_REQUIRED',
+  });
+});
+
+test('coordinator completes a stop request without contacting Google', async () => {
+  const f = await coordinatorFixture();
+
+  await admin.query(
+    `
+      UPDATE monitoring_runs
+      SET status = 'STOPPING', stop_requested_at = clock_timestamp()
+      WHERE id = $1
+    `,
+    [f.runId],
+  );
+
+  assert.deepEqual(await f.coordinator.process(f.runId), {
+    kind: 'STOPPED',
+  });
+});
+
+test('coordinator recovers completion from a persisted final batch', async () => {
+  const f = await cycleFixture();
+
+  await f.writer.commit(f.lease, {
+    ...f.batch,
+    next_page_token: null,
+    offline_at: '2026-01-01T00:01:00Z',
+    items: [],
+  });
+
+  await store.release(f.lease);
+
+  f.tokens.accessToken = async () => {
+    assert.fail('Completed chat must not request another token');
+  };
+
+  f.chat.list = async () => {
+    assert.fail('Completed chat must not call YouTube');
+  };
+
+  const coordinator = new IngestionCoordinator(pool, store, f.cycle, new RetryStore(store));
+
+  assert.deepEqual(await coordinator.process(f.runId), {
+    kind: 'STOPPED',
+  });
+});
+
+test('coordinator stops retrying after eight consecutive failures', async () => {
+  const f = await coordinatorFixture();
+
+  await admin.query(
+    `
+      UPDATE youtube_chat_checkpoints
+      SET consecutive_failures = 7
+      WHERE session_id = $1
+    `,
+    [f.sessionId],
+  );
+
+  f.chat.list = async () => {
+    throw new YoutubeChatError('YOUTUBE_UNAVAILABLE');
+  };
+
+  assert.deepEqual(await f.coordinator.process(f.runId), {
+    kind: 'FAILED',
+  });
+
+  const result = await admin.query('SELECT last_error_code FROM monitoring_runs WHERE id = $1', [
+    f.runId,
+  ]);
+  assert.equal(result.rows[0].last_error_code, 'YOUTUBE_UNAVAILABLE');
+});
+
+test('competing coordinators do not persist duplicate polling batches', async () => {
+  const f = await coordinatorFixture();
+
+  const second = new IngestionCoordinator(pool, store, f.cycle, new RetryStore(store));
+
+  const results = await Promise.all([f.coordinator.process(f.runId), second.process(f.runId)]);
+
+  assert.equal(results.filter((result) => result.kind === 'POLLED').length, 1);
+
+  assert.ok(results.every((result) => ['POLLED', 'BUSY', 'WAIT'].includes(result.kind)));
+
+  const observations = await admin.query(
+    'SELECT id FROM youtube_chat_observations WHERE session_id = $1',
+    [f.sessionId],
+  );
   assert.equal(observations.rows.length, 1);
 });
