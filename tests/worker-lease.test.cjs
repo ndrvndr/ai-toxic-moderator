@@ -10,6 +10,7 @@ const { BatchWriter, StaleBatchError, MonitoringNotIngestingError } = source(
 );
 const { PollCycle } = source('apps/worker/src/ingestion/poll-cycle.ts');
 const { YoutubeChatError } = source('packages/provider-adapters/src/youtube-chat.ts');
+const { RetryStore } = source('apps/worker/src/ingestion/retry-store.ts');
 
 const schema = `worker_lease_${randomUUID().replaceAll('-', '')}`;
 
@@ -686,4 +687,181 @@ test('the final chat event is persisted before reporting completion', async () =
     [f.sessionId],
   );
   assert.equal(stored.rows[0].event_type, 'chatEndedEvent');
+});
+
+test('finishing a run stores completion and releases its lease atomically', async () => {
+  const f = await batchFixture();
+
+  await f.writer.commit(f.lease, f.batch);
+  assert.equal(await store.finish(f.lease, 'STOPPED'), 'STOPPED');
+
+  const result = await admin.query(
+    `
+      SELECT run.status, run.finished_at, run.last_error_code, lease.owner_id
+      FROM monitoring_runs run
+      JOIN monitoring_worker_leases lease ON lease.run_id = run.id
+      WHERE run.id = $1
+    `,
+    [f.runId],
+  );
+
+  assert.equal(result.rows[0].status, 'STOPPED');
+  assert.ok(result.rows[0].finished_at);
+  assert.equal(result.rows[0].last_error_code, null);
+  assert.equal(result.rows[0].owner_id, null);
+
+  await assert.rejects(store.finish(f.lease, 'STOPPED'), LeaseLostError);
+});
+
+test('a failed run stores only its safe error code', async () => {
+  const f = await batchFixture();
+
+  assert.equal(await store.finish(f.lease, 'FAILED', 'RECONNECT_REQUIRED'), 'FAILED');
+
+  const result = await admin.query(
+    'SELECT status, last_error_code FROM monitoring_runs WHERE id = $1',
+    [f.runId],
+  );
+
+  assert.deepEqual(result.rows[0], {
+    status: 'FAILED',
+    last_error_code: 'RECONNECT_REQUIRED',
+  });
+});
+
+test('a pending user stop takes precedence over provider failure', async () => {
+  const f = await batchFixture();
+
+  await admin.query(
+    `
+      UPDATE monitoring_runs
+      SET
+        status = 'STOPPING',
+        stop_requested_at = clock_timestamp(),
+        stopped_by_account_id = requested_by_account_id
+      WHERE id = $1
+    `,
+    [f.runId],
+  );
+
+  assert.equal(await store.finish(f.lease, 'FAILED', 'YOUTUBE_FORBIDDEN'), 'STOPPED');
+
+  const result = await admin.query(
+    `
+      SELECT
+        last_error_code,
+        stopped_by_account_id,
+        finished_at >= stop_requested_at AS valid_completion
+      FROM monitoring_runs
+      WHERE id = $1
+    `,
+    [f.runId],
+  );
+
+  assert.equal(result.rows[0].last_error_code, null);
+  assert.ok(result.rows[0].stopped_by_account_id);
+  assert.equal(result.rows[0].valid_completion, true);
+});
+
+test('a previous owner cannot finish a run after takeover', async () => {
+  const f = await batchFixture();
+
+  await expire(admin, f.runId);
+  const replacement = await store.claim(f.runId, randomUUID());
+  assert.ok(replacement);
+
+  await assert.rejects(store.finish(f.lease, 'FAILED', 'YOUTUBE_FORBIDDEN'), LeaseLostError);
+
+  const result = await admin.query('SELECT status FROM monitoring_runs WHERE id = $1', [f.runId]);
+
+  assert.equal(result.rows[0].status, 'STARTING');
+  await store.heartbeat(replacement);
+});
+
+test('retry preserves the page token and respects Retry-After', async () => {
+  const f = await batchFixture();
+  const retries = new RetryStore(store);
+
+  const result = await retries.schedule(f.lease, 'YOUTUBE_RATE_LIMITED', 12000);
+
+  assert.equal(result.revision, '1');
+  assert.equal(result.consecutive_failures, 1);
+
+  const checkpoint = await admin.query(
+    `
+      SELECT
+        next_page_token,
+        last_error_code,
+        next_poll_at - updated_at >= interval '12 seconds' AS respects_delay
+      FROM youtube_chat_checkpoints
+      WHERE session_id = $1
+    `,
+    [f.sessionId],
+  );
+
+  assert.equal(checkpoint.rows[0].next_page_token, null);
+  assert.equal(checkpoint.rows[0].last_error_code, 'YOUTUBE_RATE_LIMITED');
+  assert.equal(checkpoint.rows[0].respects_delay, true);
+
+  await assert.rejects(f.writer.commit(f.lease, f.batch), StaleBatchError);
+});
+
+test('successful batch persistence clears retry state', async () => {
+  const f = await batchFixture();
+  const retries = new RetryStore(store);
+
+  await retries.schedule(f.lease, 'YOUTUBE_UNAVAILABLE');
+
+  await f.writer.commit(f.lease, {
+    ...f.batch,
+    expected_revision: '1',
+  });
+
+  const result = await admin.query(
+    `
+      SELECT
+        checkpoint.consecutive_failures,
+        checkpoint.last_error_code AS checkpoint_error,
+        run.last_error_code AS run_error,
+        run.status
+      FROM monitoring_runs run
+      JOIN youtube_chat_checkpoints checkpoint
+        ON checkpoint.session_id = run.session_id
+      WHERE run.id = $1
+    `,
+    [f.runId],
+  );
+
+  assert.deepEqual(result.rows[0], {
+    consecutive_failures: 0,
+    checkpoint_error: null,
+    run_error: null,
+    status: 'RUNNING',
+  });
+});
+
+test('retry is rejected after a stop request', async () => {
+  const f = await batchFixture();
+  const retries = new RetryStore(store);
+
+  await admin.query(
+    `
+      UPDATE monitoring_runs
+      SET status = 'STOPPING', stop_requested_at = clock_timestamp()
+      WHERE id = $1
+    `,
+    [f.runId],
+  );
+
+  await assert.rejects(
+    retries.schedule(f.lease, 'YOUTUBE_UNAVAILABLE'),
+    MonitoringNotIngestingError,
+  );
+
+  const result = await admin.query(
+    'SELECT revision::text FROM youtube_chat_checkpoints WHERE session_id = $1',
+    [f.sessionId],
+  );
+
+  assert.equal(result.rows[0].revision, '0');
 });

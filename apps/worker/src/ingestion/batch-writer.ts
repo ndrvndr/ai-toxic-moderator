@@ -181,12 +181,16 @@ export class BatchWriter {
 
       await client.query(
         `
-          UPDATE monitoring_runs
-          SET
-            status = 'RUNNING',
-            started_at = GREATEST(clock_timestamp(), requested_at)
-          WHERE id = $1 AND status = 'STARTING'
-        `,
+    UPDATE monitoring_runs
+    SET
+      status = 'RUNNING',
+      started_at = COALESCE(
+        started_at,
+        GREATEST(clock_timestamp(), requested_at)
+      ),
+      last_error_code = NULL
+    WHERE id = $1 AND status IN ('STARTING', 'RUNNING')
+  `,
         [lease.run_id],
       );
 

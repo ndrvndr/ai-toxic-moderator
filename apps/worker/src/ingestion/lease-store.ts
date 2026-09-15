@@ -79,7 +79,7 @@ export class LeaseStore {
 
   async heartbeat(lease: WorkerLease): Promise<void> {
     await this.withLease(lease, async (client) => {
-      await client.query(
+      const result = await client.query(
         `
           WITH moment AS MATERIALIZED (
             SELECT clock_timestamp() AS at
@@ -93,9 +93,12 @@ export class LeaseStore {
           WHERE run_id = $1
             AND owner_id = $2
             AND generation = $3::bigint
+            AND expires_at > moment.at
         `,
         [lease.run_id, lease.owner_id, lease.generation, this.ttlSeconds],
       );
+
+      if (result.rowCount !== 1) throw new LeaseLostError();
     });
   }
 
@@ -120,6 +123,74 @@ export class LeaseStore {
       );
 
       if (result.rowCount !== 1) throw new LeaseLostError();
+    });
+  }
+
+  async finish(
+    lease: WorkerLease,
+    status: 'STOPPED' | 'FAILED',
+    errorCode: string | null = null,
+  ): Promise<'STOPPED' | 'FAILED'> {
+    if (
+      (status === 'FAILED' && (errorCode === null || !/^[A-Z][A-Z0-9_]{0,127}$/.test(errorCode))) ||
+      (status === 'STOPPED' && errorCode !== null)
+    ) {
+      throw new Error('Provide a safe error code only when marking a run failed.');
+    }
+
+    return transaction(this.pool, async (client) => {
+      await this.assertOwned(client, lease);
+
+      const result = await client.query<{ status: 'STOPPED' | 'FAILED' }>(
+        `
+          UPDATE monitoring_runs AS run
+          SET
+            status = CASE
+              WHEN run.status = 'STOPPING' THEN 'STOPPED'
+              ELSE $4
+            END,
+            finished_at = GREATEST(
+              clock_timestamp(),
+              run.requested_at,
+              run.started_at,
+              run.stop_requested_at
+            ),
+            last_error_code = CASE
+              WHEN run.status = 'STOPPING' THEN NULL
+              ELSE $5
+            END
+          FROM monitoring_worker_leases AS lease
+          WHERE run.id = $1
+            AND lease.run_id = run.id
+            AND lease.owner_id = $2
+            AND lease.generation = $3::bigint
+            AND lease.expires_at > clock_timestamp()
+            AND run.status IN ('STARTING', 'RUNNING', 'STOPPING')
+          RETURNING run.status
+        `,
+        [lease.run_id, lease.owner_id, lease.generation, status, errorCode],
+      );
+
+      const finished = result.rows[0];
+
+      if (!finished) throw new LeaseLostError();
+
+      await client.query(
+        `
+          UPDATE monitoring_worker_leases
+          SET
+            owner_id = NULL,
+            acquired_at = NULL,
+            heartbeat_at = NULL,
+            expires_at = NULL
+          WHERE run_id = $1
+            AND owner_id = $2
+            AND generation = $3::bigint
+        `,
+        [lease.run_id, lease.owner_id, lease.generation],
+      );
+
+      return finished.status;
     });
   }
 
