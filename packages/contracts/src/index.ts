@@ -248,4 +248,5 @@ export const sessionCursor = z.strictObject({
 });
 export * from './chat';
 export * from './monitoring';
+export * from './saved-sessions';
 export * from './youtube-ingestion';

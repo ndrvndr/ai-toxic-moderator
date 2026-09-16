@@ -11,6 +11,7 @@ const {
   stopMonitoringResponse,
   monitoringStatusResponse,
   chatPage,
+  savedSessionsPage,
 } = require('@moderator/contracts');
 
 const schema = `monitoring_http_${randomUUID().replaceAll('-', '')}`;
@@ -527,4 +528,132 @@ test('start and stop publish events without duplicates from repeated requests', 
     { sequence: '1', event_type: 'monitoring.updated' },
     { sequence: '2', event_type: 'monitoring.updated' },
   ]);
+});
+
+test('saved sessions require authentication', async () => {
+  const response = await request('/v1/youtube/sessions', {
+    headers: { Cookie: '' },
+  });
+
+  assert.equal(response.status, 401);
+});
+
+test('saved sessions are readable with the runtime role and omit provider secrets', async () => {
+  const run = await startRun();
+
+  const response = await request('/v1/youtube/sessions?limit=50');
+
+  assert.equal(response.status, 200, await response.clone().text());
+
+  const body = await response.json();
+  const page = savedSessionsPage.parse(body);
+  const item = page.items.find((entry) => entry.session_id === run.session_id);
+
+  assert.ok(item);
+  assert.equal(item.channel_id, run.channel_id);
+  assert.equal(item.youtube_broadcast_id, run.youtube_broadcast_id);
+  assert.equal(item.latest_status, 'STARTING');
+  assert.equal('live_chat_id' in item, false);
+  assert.equal('credential_account_id' in item, false);
+
+  assert.equal(JSON.stringify(body).includes('access_token'), false);
+  assert.equal(JSON.stringify(body).includes('refresh_token'), false);
+});
+
+test('saved sessions exclude operator and removed memberships', async () => {
+  const run = await startRun();
+
+  await admin.query(
+    `
+      UPDATE channel_memberships
+      SET role = 'OPERATOR'
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [run.channel_id, accountId],
+  );
+
+  for (const remove of [false, true]) {
+    if (remove) {
+      await admin.query(
+        `
+          DELETE FROM channel_memberships
+          WHERE channel_id = $1 AND account_id = $2
+        `,
+        [run.channel_id, accountId],
+      );
+    }
+
+    const response = await request('/v1/youtube/sessions?limit=50');
+    assert.equal(response.status, 200);
+
+    const page = savedSessionsPage.parse(await response.json());
+
+    assert.equal(
+      page.items.some((entry) => entry.session_id === run.session_id),
+      false,
+    );
+  }
+});
+
+test('saved session pagination returns each accessible session once', async () => {
+  await startRun();
+  await startRun();
+
+  const expected = await admin.query(
+    `
+      SELECT s.id
+      FROM stream_sessions s
+      JOIN youtube_broadcasts b
+        ON b.session_id = s.id AND b.channel_id = s.channel_id
+      JOIN channel_memberships m
+        ON m.channel_id = s.channel_id
+      WHERE m.account_id = $1
+        AND m.role IN ('OWNER', 'MODERATOR')
+      ORDER BY s.created_at DESC, s.id DESC
+    `,
+    [accountId],
+  );
+
+  const collected = [];
+  let cursor = null;
+  let pages = 0;
+
+  do {
+    const query = new URLSearchParams({ limit: '2' });
+    if (cursor) query.set('cursor', cursor);
+
+    const response = await request(`/v1/youtube/sessions?${query}`);
+    assert.equal(response.status, 200);
+
+    const page = savedSessionsPage.parse(await response.json());
+
+    collected.push(...page.items.map((item) => item.session_id));
+    cursor = page.next_cursor;
+    pages += 1;
+
+    assert.ok(pages <= 100, 'Pagination must terminate.');
+  } while (cursor);
+
+  assert.deepEqual(
+    collected,
+    expected.rows.map((row) => row.id),
+  );
+});
+
+test('saved sessions reject malformed pagination and another account cursor', async () => {
+  assert.equal((await request('/v1/youtube/sessions?limit=51')).status, 422);
+
+  assert.equal((await request('/v1/youtube/sessions?cursor=invalid')).status, 400);
+
+  const cursor = Buffer.from(
+    JSON.stringify({
+      account_id: randomUUID(),
+      created_at: '2026-01-01T00:00:00.000000Z',
+      session_id: randomUUID(),
+    }),
+  ).toString('base64url');
+
+  const response = await request(`/v1/youtube/sessions?cursor=${encodeURIComponent(cursor)}`);
+
+  assert.equal(response.status, 400);
 });
