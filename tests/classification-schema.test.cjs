@@ -389,3 +389,167 @@ test('classification records are immutable', async () => {
     (error) => error.code === '23514',
   );
 });
+
+async function insertActionPlan(
+  f,
+  classificationId,
+  { policyVersion = 'actions-1', action = 'DELETE', durationSeconds = null } = {},
+) {
+  const id = randomUUID();
+
+  await client.query(
+    `
+      INSERT INTO youtube_moderation_action_plans(
+        id,
+        channel_id,
+        session_id,
+        classification_id,
+        policy_version,
+        action,
+        duration_seconds,
+        reason
+      )
+      VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+    `,
+    [
+      id,
+      f.channelId,
+      f.sessionId,
+      classificationId,
+      policyVersion,
+      action,
+      durationSeconds,
+      'The configured policy selected this action.',
+    ],
+  );
+
+  return id;
+}
+
+test('an action plan references a classification in the same session', async () => {
+  const f = await fixture();
+  const observationId = await insertObservation(f);
+  const classificationId = await insertClassification(f, observationId);
+  const planId = await insertActionPlan(f, classificationId);
+
+  const result = await client.query(
+    `
+      SELECT classification_id, action, policy_version
+      FROM youtube_moderation_action_plans
+      WHERE id = $1
+    `,
+    [planId],
+  );
+
+  assert.deepEqual(result.rows[0], {
+    classification_id: classificationId,
+    action: 'DELETE',
+    policy_version: 'actions-1',
+  });
+});
+
+test('duplicate plans for one classification and policy are rejected', async () => {
+  const f = await fixture();
+  const observationId = await insertObservation(f);
+  const classificationId = await insertClassification(f, observationId);
+
+  await insertActionPlan(f, classificationId);
+
+  await assert.rejects(insertActionPlan(f, classificationId), (error) => error.code === '23505');
+});
+
+test('different action policy versions preserve separate plans', async () => {
+  const f = await fixture();
+  const observationId = await insertObservation(f);
+  const classificationId = await insertClassification(f, observationId);
+
+  await insertActionPlan(f, classificationId);
+  await insertActionPlan(f, classificationId, {
+    policyVersion: 'actions-2',
+    action: 'NONE',
+  });
+
+  const result = await client.query(
+    `
+      SELECT count(*)::int AS total
+      FROM youtube_moderation_action_plans
+      WHERE classification_id = $1
+    `,
+    [classificationId],
+  );
+
+  assert.equal(result.rows[0].total, 2);
+});
+
+test('an action plan cannot substitute another classification scope', async () => {
+  const first = await fixture();
+  const second = await fixture();
+  const observationId = await insertObservation(first);
+  const classificationId = await insertClassification(first, observationId);
+
+  for (const scope of [
+    { ...first, channelId: second.channelId },
+    { ...first, sessionId: second.sessionId },
+  ]) {
+    await assert.rejects(
+      insertActionPlan(scope, classificationId),
+      (error) => error.code === '23503',
+    );
+  }
+});
+
+test('timeouts require a positive duration', async () => {
+  const f = await fixture();
+  const observationId = await insertObservation(f);
+  const classificationId = await insertClassification(f, observationId);
+
+  for (const durationSeconds of [null, 0, -1]) {
+    await assert.rejects(
+      insertActionPlan(f, classificationId, {
+        action: 'TIMEOUT',
+        durationSeconds,
+      }),
+      (error) => error.code === '23514',
+    );
+  }
+
+  await insertActionPlan(f, classificationId, {
+    action: 'TIMEOUT',
+    durationSeconds: 300,
+  });
+});
+
+test('non-timeout plans reject a duration', async () => {
+  const f = await fixture();
+  const observationId = await insertObservation(f);
+  const classificationId = await insertClassification(f, observationId);
+
+  for (const action of ['NONE', 'DELETE', 'BAN']) {
+    await assert.rejects(
+      insertActionPlan(f, classificationId, {
+        action,
+        durationSeconds: 300,
+      }),
+      (error) => error.code === '23514',
+    );
+  }
+});
+
+test('action plans cannot be rewritten', async () => {
+  const f = await fixture();
+  const observationId = await insertObservation(f);
+  const classificationId = await insertClassification(f, observationId);
+  const planId = await insertActionPlan(f, classificationId);
+
+  await assert.rejects(
+    client.query(
+      `
+        UPDATE youtube_moderation_action_plans
+        SET action = 'BAN'
+        WHERE id = $1
+      `,
+      [planId],
+    ),
+    (error) => error.code === '23514',
+  );
+});

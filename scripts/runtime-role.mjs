@@ -94,6 +94,9 @@ export async function provisionRuntimeRole(client, { role, password, schema = 'p
     await client.query(`GRANT SELECT ON ${schemaSql}.youtube_chat_observations TO ${roleSql}`);
     await client.query(`GRANT SELECT ON ${schemaSql}.youtube_chat_classifications TO ${roleSql}`);
     await client.query(
+      `GRANT SELECT ON ${schemaSql}.youtube_moderation_action_plans TO ${roleSql}`,
+    );
+    await client.query(
       `GRANT SELECT,INSERT,UPDATE ON ${schemaSql}.live_event_counters TO ${roleSql}`,
     );
 
