@@ -390,6 +390,188 @@ test('classification records are immutable', async () => {
   );
 });
 
+async function deleteFixture(action = 'DELETE') {
+  const f = await fixture();
+  const observationId = await insertObservation(f);
+  const classificationId = await insertClassification(f, observationId);
+  const planId = await insertActionPlan(f, classificationId, { action });
+  return {
+    ...f,
+    observationId,
+    classificationId,
+    planId,
+    externalMessageId: `message-${observationId}`,
+  };
+}
+
+async function insertExecution(f, overrides = {}) {
+  const row = { ...f, ...overrides };
+  const id = randomUUID();
+  await client.query(
+    `INSERT INTO youtube_delete_executions(id, plan_id, channel_id, session_id, external_message_id)
+     VALUES($1, $2, $3, $4, $5)`,
+    [id, row.planId, row.channelId, row.sessionId, row.externalMessageId],
+  );
+  return id;
+}
+
+async function insertAttempt(executionId, attemptNumber = 1) {
+  const id = randomUUID();
+  await client.query(
+    `INSERT INTO youtube_delete_attempts(id, execution_id, attempt_number, owner_id, started_at, deadline_at)
+     VALUES($1, $2, $3, $4, '2026-01-01T00:00:00Z', '2026-01-01T00:00:30Z')`,
+    [id, executionId, attemptNumber, randomUUID()],
+  );
+  return id;
+}
+
+async function finishAttempt(id, status, httpStatus, errorCode) {
+  await client.query(
+    `UPDATE youtube_delete_attempts
+     SET status = $2, http_status = $3, error_code = $4, finished_at = '2026-01-01T00:00:10Z'
+     WHERE id = $1`,
+    [id, status, httpStatus, errorCode],
+  );
+}
+
+test('deletion execution requires a DELETE plan and its original target', async () => {
+  const f = await deleteFixture();
+  await insertExecution(f);
+  for (const override of [
+    { externalMessageId: 'substituted-message' },
+    { channelId: randomUUID() },
+    { sessionId: randomUUID() },
+  ]) {
+    await assert.rejects(insertExecution(f, override), (error) => error.code === '23514');
+  }
+  const noAction = await deleteFixture('NONE');
+  await assert.rejects(insertExecution(noAction), (error) => error.code === '23514');
+});
+
+test('policy version changes cannot create a second deletion execution for the same message', async () => {
+  const f = await deleteFixture();
+  await insertExecution(f);
+  const anotherPlan = await insertActionPlan(f, f.classificationId, { policyVersion: 'actions-2' });
+  await assert.rejects(
+    insertExecution(f, { planId: anotherPlan }),
+    (error) => error.code === '23505',
+  );
+});
+
+test('execution identity is immutable', async () => {
+  const f = await deleteFixture();
+  const id = await insertExecution(f);
+  await assert.rejects(
+    client.query('UPDATE youtube_delete_executions SET external_message_id = $2 WHERE id = $1', [
+      id,
+      'another-message',
+    ]),
+    (error) => error.code === '23514',
+  );
+});
+
+test('a dispatched or unknown attempt blocks another dispatch', async () => {
+  const f = await deleteFixture();
+  const executionId = await insertExecution(f);
+  const attemptId = await insertAttempt(executionId);
+  await assert.rejects(insertAttempt(executionId, 2), (error) => error.code === '23514');
+  await finishAttempt(attemptId, 'UNKNOWN', null, 'REQUEST_INTERRUPTED');
+  await assert.rejects(insertAttempt(executionId, 2), (error) => error.code === '23514');
+});
+
+test('success requires HTTP 204 and blocks further attempts', async () => {
+  const executionId = await insertExecution(await deleteFixture());
+  const attemptId = await insertAttempt(executionId);
+  for (const status of [null, 200, 404]) {
+    await assert.rejects(
+      finishAttempt(attemptId, 'SUCCEEDED', status, null),
+      (error) => error.code === '23514',
+    );
+  }
+  await finishAttempt(attemptId, 'SUCCEEDED', 204, null);
+  await assert.rejects(insertAttempt(executionId, 2), (error) => error.code === '23514');
+  await assert.rejects(
+    finishAttempt(attemptId, 'UNKNOWN', null, 'REQUEST_INTERRUPTED'),
+    (error) => error.code === '23514',
+  );
+});
+
+test('a known rejection permits a separate sequential attempt without rewriting history', async () => {
+  const executionId = await insertExecution(await deleteFixture());
+  const first = await insertAttempt(executionId);
+  await finishAttempt(first, 'REJECTED', 429, 'YOUTUBE_RATE_LIMITED');
+  await assert.rejects(insertAttempt(executionId, 3), (error) => error.code === '23514');
+  await insertAttempt(executionId, 2);
+  const result = await client.query(
+    'SELECT attempt_number, status FROM youtube_delete_attempts WHERE execution_id = $1 ORDER BY attempt_number',
+    [executionId],
+  );
+  assert.deepEqual(result.rows, [
+    { attempt_number: 1, status: 'REJECTED' },
+    { attempt_number: 2, status: 'DISPATCHED' },
+  ]);
+});
+
+test('an unsent attempt cannot have a provider response and can be retried separately', async () => {
+  const executionId = await insertExecution(await deleteFixture());
+  const attemptId = await insertAttempt(executionId);
+  await assert.rejects(
+    finishAttempt(attemptId, 'NOT_SENT', 403, 'REQUEST_CANCELLED'),
+    (error) => error.code === '23514',
+  );
+  await finishAttempt(attemptId, 'NOT_SENT', null, 'REQUEST_CANCELLED');
+  await insertAttempt(executionId, 2);
+});
+
+test('attempt deadlines and completion timestamps must be valid', async () => {
+  const executionId = await insertExecution(await deleteFixture());
+  await assert.rejects(
+    client.query(
+      `INSERT INTO youtube_delete_attempts(id, execution_id, attempt_number, owner_id, started_at, deadline_at)
+       VALUES($1, $2, 1, $3, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+      [randomUUID(), executionId, randomUUID()],
+    ),
+    (error) => error.code === '23514',
+  );
+  const attemptId = await insertAttempt(executionId);
+  await assert.rejects(
+    client.query(
+      `UPDATE youtube_delete_attempts SET status = 'SUCCEEDED', http_status = 204 WHERE id = $1`,
+      [attemptId],
+    ),
+    (error) => error.code === '23514',
+  );
+  await assert.rejects(
+    client.query(
+      `UPDATE youtube_delete_attempts SET status = 'SUCCEEDED', http_status = 204,
+       finished_at = '2025-12-31T23:59:59Z' WHERE id = $1`,
+      [attemptId],
+    ),
+    (error) => error.code === '23514',
+  );
+});
+
+test('attempt owner and deadline cannot be replaced when recording a result', async () => {
+  const executionId = await insertExecution(await deleteFixture());
+  const attemptId = await insertAttempt(executionId);
+  await assert.rejects(
+    client.query(
+      `UPDATE youtube_delete_attempts SET owner_id = $2, status = 'UNKNOWN',
+       finished_at = '2026-01-01T00:00:10Z', error_code = 'REQUEST_INTERRUPTED' WHERE id = $1`,
+      [attemptId, randomUUID()],
+    ),
+    (error) => error.code === '23514',
+  );
+  await assert.rejects(
+    client.query(
+      `UPDATE youtube_delete_attempts SET deadline_at = '2026-01-01T00:00:40Z', status = 'UNKNOWN',
+       finished_at = '2026-01-01T00:00:10Z', error_code = 'REQUEST_INTERRUPTED' WHERE id = $1`,
+      [attemptId],
+    ),
+    (error) => error.code === '23514',
+  );
+});
+
 async function insertActionPlan(
   f,
   classificationId,
