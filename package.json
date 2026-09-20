@@ -40,6 +40,7 @@
     "test:moderation-action-contracts": "node --experimental-test-isolation=none --test tests/moderation-action-contracts.test.cjs",
     "test:action-planner": "node --experimental-test-isolation=none --test tests/action-planner.test.cjs",
     "test:action-plan-store": "node --experimental-test-isolation=none --test tests/action-plan-store.test.cjs",
+    "test:youtube-moderation": "node --experimental-test-isolation=none --test tests/youtube-moderation.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
