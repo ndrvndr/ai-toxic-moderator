@@ -30,6 +30,70 @@ const observation = {
   },
 };
 
+test('replayed classification plans from persisted signals using the same client', async () => {
+  const stored = {
+    id: '50000000-0000-4000-8000-000000000005',
+    outcome: 'ALLOW',
+    primary_category: null,
+    severity: 0,
+    reason_code: 'NO_RULE_MATCH',
+    reason: 'Previously evaluated message.',
+    signals: [],
+  };
+  let queries = 0;
+  let saves = 0;
+  const client = {
+    async query() {
+      queries++;
+      return { rows: queries === 1 ? [] : [stored] };
+    },
+  };
+  const expectedPlan = {
+    classification_id: stored.id,
+    channel_id: observation.channelId,
+    session_id: observation.sessionId,
+    policy_version: 'actions-1',
+    action: 'NONE',
+    reason: 'No action selected.',
+  };
+  const store = new ClassificationStore(
+    {
+      async detect() {
+        return [];
+      },
+    },
+    {
+      evaluate() {
+        return { ...stored, reason: 'New computation', signals: [{ rule_id: 'new-result' }] };
+      },
+    },
+    'rules-1',
+    'policy-1',
+    {
+      planner: {
+        plan(input) {
+          assert.equal(input.classification_id, stored.id);
+          assert.deepEqual(input.signals, []);
+          assert.equal(input.external_message_id, observation.externalMessageId);
+          return expectedPlan;
+        },
+      },
+      store: {
+        async save(receivedClient, plan) {
+          assert.equal(receivedClient, client);
+          assert.deepEqual(plan, expectedPlan);
+          saves++;
+        },
+      },
+    },
+  );
+  const result = await store.classify(client, observation);
+  assert.equal(result.classificationId, stored.id);
+  assert.equal(result.decision.reason, stored.reason);
+  assert.equal(queries, 2);
+  assert.equal(saves, 1);
+});
+
 test('YouTube payload is converted to MessageInput', () => {
   assert.deepEqual(toMessageInput(observation), {
     external_message_id: observation.externalMessageId,
@@ -61,7 +125,20 @@ test('classification is persisted with the selected versions', async () => {
   const client = {
     async query(sql, params) {
       queries.push({ sql, params });
-      return { rowCount: 1 };
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            id: params[0],
+            outcome: params[7],
+            primary_category: params[8],
+            severity: params[9],
+            reason_code: params[10],
+            reason: params[11],
+            signals: JSON.parse(params[12]),
+          },
+        ],
+      };
     },
   };
 
@@ -92,6 +169,7 @@ test('classification is persisted with the selected versions', async () => {
 
   assert.equal(result.classified, true);
   assert.equal(result.decision.outcome, 'ALLOW');
+  assert.equal(result.classificationId, queries[0].params[0]);
   assert.equal(queries.length, 1);
   assert.match(queries[0].sql, /ON CONFLICT\(observation_id, classifier_version, policy_version\)/);
   assert.equal(queries[0].params[5], 'rules-1');

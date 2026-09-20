@@ -2,10 +2,13 @@ import { messageInput, type MessageInput } from '@moderator/contracts';
 import {
   ModerationPolicy,
   RuleDetectionEngine,
+  type ActionPlanner,
   type PolicyDecision,
 } from '@moderator/moderation-core';
 import type { PoolClient } from '@moderator/persistence';
 import { randomUUID } from 'node:crypto';
+
+import type { ActionPlanStore } from './action-plan-store';
 
 export type ClassificationObservation = {
   channelId: string;
@@ -63,6 +66,10 @@ export class ClassificationStore {
     private readonly policy: Pick<ModerationPolicy, 'evaluate'>,
     private readonly classifierVersion: string,
     private readonly policyVersion: string,
+    private readonly actions?: {
+      planner: Pick<ActionPlanner, 'plan'>;
+      store: Pick<ActionPlanStore, 'save'>;
+    },
   ) {}
 
   async classify(
@@ -71,6 +78,7 @@ export class ClassificationStore {
   ): Promise<{
     classified: boolean;
     decision?: PolicyDecision;
+    classificationId?: string;
   }> {
     const input = toMessageInput(observation);
 
@@ -81,7 +89,7 @@ export class ClassificationStore {
     const signals = await this.engine.detect(input);
     const decision = this.policy.evaluate(signals);
 
-    await client.query(
+    const inserted = await client.query<PolicyDecision & { id: string }>(
       `
         INSERT INTO youtube_chat_classifications(
           id,
@@ -105,6 +113,7 @@ export class ClassificationStore {
         )
         ON CONFLICT(observation_id, classifier_version, policy_version)
         DO NOTHING
+        RETURNING id, outcome, primary_category, severity, reason_code, reason, signals
       `,
       [
         randomUUID(),
@@ -123,9 +132,52 @@ export class ClassificationStore {
       ],
     );
 
+    let stored = inserted.rows[0];
+
+    if (!stored) {
+      const existing = await client.query<PolicyDecision & { id: string }>(
+        `
+          SELECT id, outcome, primary_category, severity, reason_code, reason, signals
+          FROM youtube_chat_classifications
+          WHERE observation_id = $1
+            AND classifier_version = $2
+            AND policy_version = $3
+            AND channel_id = $4
+            AND session_id = $5
+        `,
+        [
+          observation.observationId,
+          this.classifierVersion,
+          this.policyVersion,
+          observation.channelId,
+          observation.sessionId,
+        ],
+      );
+      stored = existing.rows[0];
+    }
+
+    if (!stored) {
+      throw new Error('The classification could not be read after insertion.');
+    }
+
+    const { id: classificationId, ...persistedDecision } = stored;
+
+    // Use the persisted decision on replay, not a newly computed result.
+    if (this.actions) {
+      const plan = this.actions.planner.plan({
+        classification_id: classificationId,
+        channel_id: observation.channelId,
+        session_id: observation.sessionId,
+        external_message_id: observation.externalMessageId,
+        signals: persistedDecision.signals,
+      });
+      await this.actions.store.save(client, plan);
+    }
+
     return {
       classified: true,
-      decision,
+      classificationId,
+      decision: persistedDecision,
     };
   }
 }

@@ -23,9 +23,10 @@ const { BatchWriter } = require('../apps/worker/dist/ingestion/batch-writer');
 const { PollCycle } = require('../apps/worker/dist/ingestion/poll-cycle');
 const { RetryStore } = require('../apps/worker/dist/ingestion/retry-store');
 const { IngestionCoordinator } = require('../apps/worker/dist/ingestion/coordinator');
-const { ModerationPolicy, RuleDetectionEngine } = require('@moderator/moderation-core');
-const { ClassificationStore } = require('../apps/worker/dist/ingestion/classification-store');
-const { DEFAULT_RULES } = require('../apps/worker/dist/ingestion/default-rules');
+const {
+  createClassificationStore,
+} = require('../apps/worker/dist/ingestion/create-classification-store');
+const { ActionPlanStore } = require('../apps/worker/dist/ingestion/action-plan-store');
 
 const schema = `ingestion_integration_${randomUUID().replaceAll('-', '')}`;
 const runtimeRole = `atm_http_${randomUUID().replaceAll('-', '')}`;
@@ -212,14 +213,9 @@ function runPath(run) {
   return `/v1/channels/${run.channel_id}/monitoring/${run.id}`;
 }
 
-function createWorker() {
+function createWorker(actionPlans) {
   const leases = new LeaseStore(workerPool);
-  const classifications = new ClassificationStore(
-    new RuleDetectionEngine(DEFAULT_RULES),
-    new ModerationPolicy(),
-    'rules-1',
-    'policy-1',
-  );
+  const classifications = createClassificationStore(actionPlans);
   const writer = new BatchWriter(leases, classifications);
 
   const provider = new GoogleProvider(async (url, init) => {
@@ -280,6 +276,7 @@ function createWorker() {
 
   return {
     leases,
+    writer,
     coordinator: new IngestionCoordinator(workerPool, leases, cycle, new RetryStore(leases)),
   };
 }
@@ -309,6 +306,16 @@ async function makeDue(run) {
     `,
     [run.session_id],
   );
+}
+
+async function readPlans(run) {
+  const result = await admin.query(
+    `SELECT id, classification_id, action, policy_version
+     FROM youtube_moderation_action_plans
+     WHERE channel_id = $1 AND session_id = $2 ORDER BY id`,
+    [run.channel_id, run.session_id],
+  );
+  return result.rows;
 }
 
 test('HTTP start, scheduled ingestion and HTTP stop complete across runtime roles', async () => {
@@ -342,6 +349,10 @@ test('HTTP start, scheduled ingestion and HTTP stop complete across runtime role
   assert.equal(classificationsStored.rows[0].severity, 0);
   assert.equal(classificationsStored.rows[0].classifier_version, 'rules-1');
   assert.equal(classificationsStored.rows[0].policy_version, 'policy-1');
+  const firstPlans = await readPlans(run);
+  assert.equal(firstPlans.length, 1);
+  assert.equal(firstPlans[0].action, 'NONE');
+  assert.equal(firstPlans[0].policy_version, 'actions-1');
   assert.equal(refreshCalls, 1);
   assert.equal(chatCalls, 1);
 
@@ -368,6 +379,7 @@ test('HTTP start, scheduled ingestion and HTTP stop complete across runtime role
     [run.session_id],
   );
   assert.equal(stored.rows[0].total, 1);
+  assert.deepEqual(await readPlans(run), firstPlans);
 
   const stopping = await stopThroughApi(run);
   assert.equal(stopping.status, 'STOPPING');
@@ -431,8 +443,122 @@ test('a replacement coordinator recovers an expired lease without duplicate obse
     [run.session_id],
   );
   assert.equal(observations.rows.length, 1);
+  assert.equal((await readPlans(run)).length, 1);
 
   await stopThroughApi(run);
   assert.equal((await replacement.coordinator.tick()).kind, 'STOPPED');
   assert.equal((await replacement.coordinator.tick()).kind, 'IDLE');
+});
+
+test('action plan failure rolls back the entire ingestion batch and permits retry', async () => {
+  const failure = new Error('Injected action plan failure');
+  const realStore = new ActionPlanStore();
+  const worker = createWorker({
+    async save(client, plan) {
+      await realStore.save(client, plan);
+      throw failure;
+    },
+  });
+  const run = await startRun();
+  const lease = await worker.leases.claim(run.id, randomUUID());
+  assert.ok(lease);
+  const checkpoint = await worker.writer.checkpoint(lease);
+  const broadcast = broadcasts.get(run.youtube_broadcast_id);
+  const batch = {
+    expected_revision: checkpoint.revision,
+    request_page_token: checkpoint.next_page_token,
+    next_page_token: 'rollback-page-2',
+    polling_interval_ms: 60000,
+    items: [
+      {
+        id: 'rollback-message',
+        snippet: {
+          type: 'textMessageEvent',
+          liveChatId: broadcast.live_chat_id,
+          publishedAt: '2026-01-01T00:00:00Z',
+          textMessageDetails: { messageText: 'contoh kata idiot' },
+        },
+        authorDetails: { channelId: 'test-author', displayName: 'Test viewer' },
+      },
+    ],
+  };
+  const beforeEvents = await admin.query(
+    'SELECT sequence::text, event_type FROM live_events WHERE session_id = $1 ORDER BY sequence',
+    [run.session_id],
+  );
+  await assert.rejects(worker.writer.commit(lease, batch), (error) => error === failure);
+  for (const table of [
+    'youtube_chat_observations',
+    'youtube_chat_classifications',
+    'youtube_moderation_action_plans',
+  ]) {
+    const result = await admin.query(
+      `SELECT count(*)::int AS total FROM ${table} WHERE session_id = $1`,
+      [run.session_id],
+    );
+    assert.equal(result.rows[0].total, 0, table);
+  }
+  const afterCheckpoint = await worker.writer.checkpoint(lease);
+  assert.equal(afterCheckpoint.revision, checkpoint.revision);
+  assert.equal(afterCheckpoint.next_page_token, checkpoint.next_page_token);
+  assert.equal((await statusOf(run)).status, 'STARTING');
+  const afterEvents = await admin.query(
+    'SELECT sequence::text, event_type FROM live_events WHERE session_id = $1 ORDER BY sequence',
+    [run.session_id],
+  );
+  assert.deepEqual(afterEvents.rows, beforeEvents.rows);
+
+  const healthy = new BatchWriter(worker.leases, createClassificationStore());
+  assert.equal((await healthy.commit(lease, batch)).inserted, 1);
+  const plans = await readPlans(run);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].action, 'NONE');
+  const classified = await admin.query(
+    'SELECT outcome FROM youtube_chat_classifications WHERE session_id = $1',
+    [run.session_id],
+  );
+  assert.equal(classified.rows[0].outcome, 'REVIEW');
+  await worker.leases.finish(lease, 'STOPPED');
+});
+
+test('concurrent action plan saves reuse one row under the worker role', async () => {
+  const worker = createWorker();
+  const run = await startRun();
+  assert.equal((await worker.coordinator.tick()).kind, 'POLLED');
+  const [original] = await readPlans(run);
+  const plan = {
+    classification_id: original.classification_id,
+    channel_id: run.channel_id,
+    session_id: run.session_id,
+    policy_version: 'actions-concurrency-1',
+    action: 'NONE',
+    reason: 'Concurrent replay test.',
+  };
+  const save = async () => {
+    const client = await workerPool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await new ActionPlanStore().save(client, plan);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+  const settled = await Promise.allSettled([save(), save()]);
+  const results = settled.map((result) => {
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
+  });
+  assert.equal(results[0].id, results[1].id);
+  assert.deepEqual(results.map((result) => result.reused).sort(), [false, true]);
+  assert.equal(
+    (await readPlans(run)).filter((entry) => entry.policy_version === plan.policy_version).length,
+    1,
+  );
+  await stopThroughApi(run);
+  assert.equal((await worker.coordinator.tick()).kind, 'STOPPED');
 });
