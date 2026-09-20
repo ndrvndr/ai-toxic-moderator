@@ -31,10 +31,31 @@ Terminal attempts cannot be rewritten. Recovery must mark an expired dispatched
 attempt UNKNOWN, never reset it to pending. UNKNOWN currently remains blocked;
 reconciliation and any subsequent resolution require a separate audited design.
 
+## Execution store
+
+`DeleteExecutionStore` uses the worker database role and short transactions:
+
+- `ensure` derives the target from the persisted DELETE plan and reuses the
+  original execution across policy versions.
+- `claim` locks that execution and commits its first DISPATCHED attempt before
+  returning the owner, attempt ID, original target, and deadline.
+- `complete` records a result only for the matching owner and attempt before
+  the database deadline. A false return never permits another network request.
+- `recoverExpired` locks bounded batches with SKIP LOCKED and marks expired
+  attempts UNKNOWN. It leaves active and terminal attempts unchanged.
+
+The store currently refuses claims for any execution that already has an attempt,
+including REJECTED and NOT_SENT. Automatic retry eligibility is not implemented.
+Late completion cannot replace UNKNOWN; audited reconciliation remains separate.
+This store does not check current monitoring eligibility or Google authorization
+and is not yet connected to a provider-calling executor.
+
+Run `npm run test:delete-execution-store` for database-backed concurrency, ownership,
+deduplication, and deadline-recovery checks using the worker role.
+
 ## Remaining implementation
 
-- Execution store with transactional claim and owner-checked completion.
-- Deadline recovery and crash/concurrency tests with the worker database role.
+- Explicit retry eligibility and audited reconciliation.
 - Eligibility checks, credential resolution, and adapter invocation outside DB transactions.
 - Dashboard status delivery and controlled live verification.
 
