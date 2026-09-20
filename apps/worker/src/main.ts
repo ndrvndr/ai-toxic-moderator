@@ -4,11 +4,14 @@ import { Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { loadConfig } from '@moderator/config';
+import { ModerationPolicy, RuleDetectionEngine } from '@moderator/moderation-core';
 import { createPool } from '@moderator/persistence';
 import { GoogleProvider, GoogleTokenStore, YoutubeChatAdapter } from '@moderator/provider-adapters';
 
 import { BatchWriter } from './ingestion/batch-writer';
+import { ClassificationStore } from './ingestion/classification-store';
 import { IngestionCoordinator } from './ingestion/coordinator';
+import { DEFAULT_RULES } from './ingestion/default-rules';
 import { LeaseStore } from './ingestion/lease-store';
 import { PollCycle } from './ingestion/poll-cycle';
 import { RetryStore } from './ingestion/retry-store';
@@ -59,9 +62,16 @@ async function bootstrap() {
     }
 
     await pool.query('SELECT revision, chat_ended_at FROM youtube_chat_checkpoints LIMIT 0');
+    await pool.query('SELECT id FROM youtube_chat_classifications LIMIT 0');
 
     const leases = new LeaseStore(pool);
-    const writer = new BatchWriter(leases);
+    const classifications = new ClassificationStore(
+      new RuleDetectionEngine(DEFAULT_RULES),
+      new ModerationPolicy(),
+      'rules-1',
+      'policy-1',
+    );
+    const writer = new BatchWriter(leases, classifications);
     const tokens = new GoogleTokenStore(pool, config, new GoogleProvider());
     const cycle = new PollCycle(leases, writer, tokens, new YoutubeChatAdapter());
 

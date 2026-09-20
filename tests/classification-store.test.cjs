@@ -10,6 +10,7 @@ const observation = {
   channelId: '10000000-0000-4000-8000-000000000001',
   sessionId: '20000000-0000-4000-8000-000000000002',
   observationId: '30000000-0000-4000-8000-000000000003',
+  externalMessageId: 'external-message-1',
   runId: '40000000-0000-4000-8000-000000000004',
   publishedAt: '2026-09-20T00:00:00.000Z',
   payload: {
@@ -31,7 +32,7 @@ const observation = {
 
 test('YouTube payload is converted to MessageInput', () => {
   assert.deepEqual(toMessageInput(observation), {
-    external_message_id: observation.observationId,
+    external_message_id: observation.externalMessageId,
     author_external_id: 'viewer-1',
     author_display_name: 'Test viewer',
     raw_text: 'Hello viewer',

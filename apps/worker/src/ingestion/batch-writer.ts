@@ -2,6 +2,7 @@ import { youtubeIngestionBatch } from '@moderator/contracts';
 import { appendLiveEvent, type PoolClient } from '@moderator/persistence';
 import { createHash, randomUUID } from 'node:crypto';
 
+import { ClassificationStore } from './classification-store';
 import { LeaseStore, type WorkerLease } from './lease-store';
 
 export class StaleBatchError extends Error {
@@ -42,7 +43,10 @@ function canonicalJson(value: unknown): string {
 }
 
 export class BatchWriter {
-  constructor(private readonly leases: LeaseStore) {}
+  constructor(
+    private readonly leases: LeaseStore,
+    private readonly classifications?: Pick<ClassificationStore, 'classify'>,
+  ) {}
 
   async checkpoint(lease: WorkerLease) {
     return this.leases.withLease(lease, async (client) => {
@@ -126,6 +130,8 @@ export class BatchWriter {
       let inserted = 0;
 
       for (const item of batch.items) {
+        const observationId = randomUUID();
+
         if (item.snippet.liveChatId !== run.live_chat_id) {
           throw new Error('The chat resource belongs to another live chat.');
         }
@@ -151,7 +157,7 @@ export class BatchWriter {
             DO NOTHING
           `,
           [
-            randomUUID(),
+            observationId,
             run.channel_id,
             run.session_id,
             lease.run_id,
@@ -163,7 +169,20 @@ export class BatchWriter {
           ],
         );
 
-        inserted += result.rowCount ?? 0;
+        const insertedCount = result.rowCount ?? 0;
+        inserted += insertedCount;
+
+        if (insertedCount === 1 && this.classifications) {
+          await this.classifications.classify(client, {
+            channelId: run.channel_id,
+            sessionId: run.session_id,
+            observationId,
+            externalMessageId: item.id,
+            runId: lease.run_id,
+            publishedAt: item.snippet.publishedAt,
+            payload: item,
+          });
+        }
       }
 
       const chatEnded =

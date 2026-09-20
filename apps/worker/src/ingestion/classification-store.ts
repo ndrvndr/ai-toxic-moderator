@@ -11,6 +11,7 @@ export type ClassificationObservation = {
   channelId: string;
   sessionId: string;
   observationId: string;
+  externalMessageId: string;
   runId: string;
   publishedAt: string;
   payload: unknown;
@@ -48,7 +49,7 @@ export function toMessageInput(observation: ClassificationObservation): MessageI
       : 'Unknown viewer';
 
   return messageInput.parse({
-    external_message_id: observation.observationId,
+    external_message_id: observation.externalMessageId,
     author_external_id: authorId,
     author_display_name: displayName,
     raw_text: rawText,

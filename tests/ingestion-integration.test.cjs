@@ -23,6 +23,9 @@ const { BatchWriter } = require('../apps/worker/dist/ingestion/batch-writer');
 const { PollCycle } = require('../apps/worker/dist/ingestion/poll-cycle');
 const { RetryStore } = require('../apps/worker/dist/ingestion/retry-store');
 const { IngestionCoordinator } = require('../apps/worker/dist/ingestion/coordinator');
+const { ModerationPolicy, RuleDetectionEngine } = require('@moderator/moderation-core');
+const { ClassificationStore } = require('../apps/worker/dist/ingestion/classification-store');
+const { DEFAULT_RULES } = require('../apps/worker/dist/ingestion/default-rules');
 
 const schema = `ingestion_integration_${randomUUID().replaceAll('-', '')}`;
 const runtimeRole = `atm_http_${randomUUID().replaceAll('-', '')}`;
@@ -211,7 +214,13 @@ function runPath(run) {
 
 function createWorker() {
   const leases = new LeaseStore(workerPool);
-  const writer = new BatchWriter(leases);
+  const classifications = new ClassificationStore(
+    new RuleDetectionEngine(DEFAULT_RULES),
+    new ModerationPolicy(),
+    'rules-1',
+    'policy-1',
+  );
+  const writer = new BatchWriter(leases, classifications);
 
   const provider = new GoogleProvider(async (url, init) => {
     assert.equal(url, 'https://oauth2.googleapis.com/token');
@@ -313,6 +322,26 @@ test('HTTP start, scheduled ingestion and HTTP stop complete across runtime role
   const first = await worker.coordinator.tick();
   assert.equal(first.kind, 'POLLED');
   assert.equal(first.inserted, 1);
+  const classificationsStored = await admin.query(
+    `
+    SELECT
+      outcome,
+      primary_category,
+      severity,
+      classifier_version,
+      policy_version
+    FROM youtube_chat_classifications
+    WHERE session_id = $1
+  `,
+    [run.session_id],
+  );
+
+  assert.equal(classificationsStored.rows.length, 1);
+  assert.equal(classificationsStored.rows[0].outcome, 'ALLOW');
+  assert.equal(classificationsStored.rows[0].primary_category, null);
+  assert.equal(classificationsStored.rows[0].severity, 0);
+  assert.equal(classificationsStored.rows[0].classifier_version, 'rules-1');
+  assert.equal(classificationsStored.rows[0].policy_version, 'policy-1');
   assert.equal(refreshCalls, 1);
   assert.equal(chatCalls, 1);
 
