@@ -1,5 +1,7 @@
 import type { ChatObservation } from '@moderator/contracts';
 
+import { ChatEvaluation } from './chat-evaluation';
+
 const eventLabels: Record<string, string> = {
   textMessageEvent: 'Message',
   superChatEvent: 'Super Chat',
@@ -39,8 +41,9 @@ export function ChatMessage({ message }: { message: ChatObservation }) {
 
       <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
         <span className="rounded-md border px-2 py-1">{label}</span>
-        <span className="rounded-md bg-muted px-2 py-1">Not evaluated</span>
       </div>
+
+      <ChatEvaluation evaluation={message.evaluation} />
     </li>
   );
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { category, outcome } from './index';
+import { category, outcome } from './moderation-enums';
 
 export const chatQuery = z.strictObject({
   limit: z.coerce.number().int().min(1).max(100).default(50),
