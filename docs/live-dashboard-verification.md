@@ -27,3 +27,15 @@ are covered separately.
 
 Phase 6 implementation is complete.
 Manual browser verification is partially complete.
+
+## Chat Classification Verification
+
+Verified locally:
+
+- New chat messages appear automatically in the dashboard.
+- Unmatched messages display Allowed with severity 0/4.
+- Messages matching the insult rule display Flagged, HARASSMENT, and severity 2/4.
+- Classification reasons are visible.
+
+These checks verify rule-based classification delivery and display.
+Automatic deletion, timeout, and banning are not covered by this verification.
