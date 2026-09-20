@@ -82,6 +82,13 @@ class ChatController {
         display_text: string | null;
         author_channel_id: string | null;
         author_display_name: string | null;
+        evaluation_outcome: 'ALLOW' | 'REVIEW' | 'ACTION_REQUIRED' | 'ERROR' | null;
+        evaluation_primary_category: string | null;
+        evaluation_severity: number | null;
+        evaluation_reason_code: string | null;
+        evaluation_reason: string | null;
+        evaluation_classifier_version: string | null;
+        evaluation_policy_version: string | null;
       }>(
         `
           SELECT
@@ -104,8 +111,31 @@ class ChatController {
               payload #>> '{authorDetails,channelId}',
               payload #>> '{snippet,authorChannelId}'
             ) AS author_channel_id,
-            payload #>> '{authorDetails,displayName}' AS author_display_name
+            payload #>> '{authorDetails,displayName}' AS author_display_name,
+            evaluation.outcome AS evaluation_outcome,
+            evaluation.primary_category AS evaluation_primary_category,
+            evaluation.severity AS evaluation_severity,
+            evaluation.reason_code AS evaluation_reason_code,
+            evaluation.reason AS evaluation_reason,
+            evaluation.classifier_version AS evaluation_classifier_version,
+            evaluation.policy_version AS evaluation_policy_version
           FROM youtube_chat_observations
+          LEFT JOIN LATERAL (
+            SELECT
+              outcome,
+              primary_category,
+              severity,
+              reason_code,
+              reason,
+              classifier_version,
+              policy_version
+            FROM youtube_chat_classifications classification
+            WHERE classification.channel_id = youtube_chat_observations.channel_id
+              AND classification.session_id = youtube_chat_observations.session_id
+              AND classification.observation_id = youtube_chat_observations.id
+            ORDER BY classification.created_at DESC, classification.id DESC
+            LIMIT 1
+          ) evaluation ON true
           WHERE channel_id = $1
             AND session_id = $2
             AND (
@@ -136,8 +166,27 @@ class ChatController {
 
       return chatPage.parse({
         items: rows.map((row) => ({
-          ...row,
-          evaluation_status: 'NOT_EVALUATED',
+          id: row.id,
+          external_message_id: row.external_message_id,
+          event_type: row.event_type,
+          published_at: row.published_at,
+          received_at: row.received_at,
+          display_text: row.display_text,
+          author_channel_id: row.author_channel_id,
+          author_display_name: row.author_display_name,
+          evaluation_status: row.evaluation_outcome ?? 'NOT_EVALUATED',
+          evaluation:
+            row.evaluation_outcome === null
+              ? null
+              : {
+                  outcome: row.evaluation_outcome,
+                  primary_category: row.evaluation_primary_category,
+                  severity: row.evaluation_severity,
+                  reason_code: row.evaluation_reason_code!,
+                  reason: row.evaluation_reason!,
+                  classifier_version: row.evaluation_classifier_version!,
+                  policy_version: row.evaluation_policy_version!,
+                },
         })),
         next_cursor: nextCursor,
       });
