@@ -35,6 +35,7 @@
     "test:live-hooks": "npm run test:live-hooks --workspace @moderator/dashboard",
     "test:moderation-core": "node --experimental-test-isolation=none --test tests/moderation-core.test.cjs",
     "test:moderation-policy": "node --experimental-test-isolation=none --test tests/moderation-policy.test.cjs",
+    "test:classification-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/classification-schema.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
