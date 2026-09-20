@@ -3,4 +3,5 @@ import type { MessageInput, Signal } from '@moderator/contracts';
 export interface DetectionEngine {
   detect(message: MessageInput): Promise<readonly Signal[]>;
 }
+export * from './policy-evaluator';
 export * from './rule-engine';
