@@ -9,6 +9,7 @@
   "dependencies": {
     "@moderator/config": "0.1.0",
     "@moderator/contracts": "0.1.0",
+    "@moderator/moderation-core": "0.1.0",
     "@moderator/persistence": "0.1.0",
     "@moderator/provider-adapters": "^0.1.0",
     "@nestjs/bullmq": "12.0.0",
