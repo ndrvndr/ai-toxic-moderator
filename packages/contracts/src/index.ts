@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { category, outcome } from './moderation-enums';
 
 export * from './chat';
+export * from './moderation-action';
 export { category, outcome } from './moderation-enums';
 export * from './monitoring';
 export * from './saved-sessions';

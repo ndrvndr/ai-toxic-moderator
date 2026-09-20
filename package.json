@@ -37,6 +37,7 @@
     "test:moderation-policy": "node --experimental-test-isolation=none --test tests/moderation-policy.test.cjs",
     "test:classification-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/classification-schema.test.cjs",
     "test:classification-store": "node --experimental-test-isolation=none --test tests/classification-store.test.cjs",
+    "test:moderation-action-contracts": "node --experimental-test-isolation=none --test tests/moderation-action-contracts.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
