@@ -304,6 +304,76 @@ function chatPath(run) {
   return `/v1/channels/${run.channel_id}/sessions/${run.session_id}/chat`;
 }
 
+test('chat separates deletion results from classification and preserves uncertain outcomes', async () => {
+  for (const status of ['DISPATCHED', 'SUCCEEDED', 'REJECTED', 'NOT_SENT', 'UNKNOWN']) {
+    const run = await startRun();
+    const observationId = await insertChatObservation(run);
+    async function read() {
+      const response = await request(chatPath(run));
+      assert.equal(response.status, 200, await response.clone().text());
+      return chatPage.parse(await response.json()).items[0];
+    }
+    assert.equal((await read()).deletion, null);
+    const classificationId = randomUUID();
+    const planId = randomUUID();
+    const executionId = randomUUID();
+    const attemptId = randomUUID();
+    await admin.query(
+      `INSERT INTO youtube_chat_classifications(id, channel_id, session_id, observation_id, run_id,
+       classifier_version, policy_version, outcome, primary_category, severity, reason_code, reason, signals)
+       VALUES($1, $2, $3, $4, $5, 'test-rules', 'test-policy', 'REVIEW', 'HARASSMENT', 2,
+       'DIRECT_INSULT', 'Test classification.', '[]'::jsonb)`,
+      [classificationId, run.channel_id, run.session_id, observationId, run.id],
+    );
+    assert.equal((await read()).deletion, null);
+    await admin.query(
+      `INSERT INTO youtube_moderation_action_plans(id, channel_id, session_id, classification_id, policy_version, action, reason)
+       VALUES($1, $2, $3, $4, 'test-actions', 'DELETE', 'Test deletion plan.')`,
+      [planId, run.channel_id, run.session_id, classificationId],
+    );
+    assert.deepEqual((await read()).deletion, { action: 'DELETE', status: 'PENDING' });
+    await admin.query(
+      `INSERT INTO youtube_delete_executions(id, plan_id, channel_id, session_id, external_message_id)
+       VALUES($1, $2, $3, $4, $5)`,
+      [executionId, planId, run.channel_id, run.session_id, `message-${observationId}`],
+    );
+    await admin.query(
+      `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+       INSERT INTO youtube_delete_attempts(id, execution_id, attempt_number, owner_id, started_at, deadline_at)
+       SELECT $1, $2, 1, $3, at, at + interval '30 seconds' FROM moment`,
+      [attemptId, executionId, randomUUID()],
+    );
+    if (status !== 'DISPATCHED') {
+      await admin.query(
+        `UPDATE youtube_delete_attempts SET status = $2, finished_at = clock_timestamp(),
+         http_status = $3, error_code = $4 WHERE id = $1`,
+        [
+          attemptId,
+          status,
+          status === 'SUCCEEDED' ? 204 : status === 'REJECTED' ? 403 : null,
+          status === 'SUCCEEDED'
+            ? null
+            : status === 'REJECTED'
+              ? 'YOUTUBE_FORBIDDEN'
+              : status === 'NOT_SENT'
+                ? 'REQUEST_CANCELLED'
+                : 'EXECUTION_DEADLINE_EXCEEDED',
+        ],
+      );
+    }
+    const item = await read();
+    assert.equal(item.evaluation_status, 'REVIEW');
+    assert.deepEqual(item.deletion, { action: 'DELETE', status });
+    assert.equal('owner_id' in item.deletion, false);
+    assert.equal('error_code' in item.deletion, false);
+    const otherRun = await startRun();
+    await insertChatObservation(otherRun);
+    const otherResponse = await request(chatPath(otherRun));
+    assert.equal(otherResponse.status, 200);
+    assert.equal(chatPage.parse(await otherResponse.json()).items[0].deletion, null);
+  }
+});
+
 async function insertChatObservation(
   run,
   {

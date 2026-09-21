@@ -128,6 +128,19 @@ database-backed candidate discovery checks. These tests do not delete YouTube me
 
 ## Remaining implementation
 
+The chat API now returns a separate `deletion` field per observation. It is null
+without a DELETE plan, PENDING before an attempt, or the latest persisted attempt
+status. PENDING does not imply current eligibility, an enabled worker, or guaranteed
+dispatch. DISPATCHED does not confirm delivery, and UNKNOWN must never be displayed
+as success. Only SUCCEEDED records a confirmed HTTP 204. The field is optional in
+the shared parser for compatibility with older fixtures/responses; the API always
+includes it. Classification results remain independent of action execution results.
+Reads retain existing session and channel access checks and expose no attempt owner,
+credentials, or raw provider error details. HTTP tests cover all attempt statuses.
+
+At this stage, results are available on a fresh chat API read. Action-state changes
+do not yet publish a WebSocket refresh event, and dashboard rendering is still pending.
+
 - Explicit retry eligibility and audited reconciliation.
 - Dashboard status delivery and controlled live verification.
 

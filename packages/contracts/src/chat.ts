@@ -38,6 +38,11 @@ export const chatEvaluation = z.strictObject({
   policy_version: z.string().min(1).max(128),
 });
 
+export const chatDeletion = z.strictObject({
+  action: z.literal('DELETE'),
+  status: z.enum(['PENDING', 'DISPATCHED', 'SUCCEEDED', 'REJECTED', 'NOT_SENT', 'UNKNOWN']),
+});
+
 export const chatObservation = z.strictObject({
   id: z.uuid(),
   external_message_id: z.string().min(1).max(1024),
@@ -49,6 +54,7 @@ export const chatObservation = z.strictObject({
   author_display_name: z.string().nullable(),
   evaluation_status: z.enum(['NOT_EVALUATED', 'ALLOW', 'REVIEW', 'ACTION_REQUIRED', 'ERROR']),
   evaluation: chatEvaluation.nullable(),
+  deletion: chatDeletion.nullable().optional(),
 });
 
 export const chatPage = z.strictObject({
@@ -59,3 +65,4 @@ export const chatPage = z.strictObject({
 export type ChatObservation = z.infer<typeof chatObservation>;
 export type ChatPage = z.infer<typeof chatPage>;
 export type ChatEvaluation = z.infer<typeof chatEvaluation>;
+export type ChatDeletion = z.infer<typeof chatDeletion>;

@@ -89,6 +89,7 @@ class ChatController {
         evaluation_reason: string | null;
         evaluation_classifier_version: string | null;
         evaluation_policy_version: string | null;
+        deletion_status: string | null;
       }>(
         `
           SELECT
@@ -118,7 +119,8 @@ class ChatController {
             evaluation.reason_code AS evaluation_reason_code,
             evaluation.reason AS evaluation_reason,
             evaluation.classifier_version AS evaluation_classifier_version,
-            evaluation.policy_version AS evaluation_policy_version
+            evaluation.policy_version AS evaluation_policy_version,
+            deletion.deletion_status
           FROM youtube_chat_observations
           LEFT JOIN LATERAL (
             SELECT
@@ -136,6 +138,26 @@ class ChatController {
             ORDER BY classification.created_at DESC, classification.id DESC
             LIMIT 1
           ) evaluation ON true
+          LEFT JOIN LATERAL (
+            SELECT COALESCE((
+              SELECT a.status
+              FROM youtube_delete_executions e
+              JOIN youtube_delete_attempts a ON a.execution_id = e.id
+              WHERE e.channel_id = youtube_chat_observations.channel_id
+                AND e.session_id = youtube_chat_observations.session_id
+                AND e.external_message_id = youtube_chat_observations.external_message_id
+              ORDER BY a.attempt_number DESC LIMIT 1
+            ), 'PENDING') AS deletion_status
+            WHERE EXISTS (
+              SELECT 1 FROM youtube_moderation_action_plans p
+              JOIN youtube_chat_classifications c ON c.id = p.classification_id
+                AND c.channel_id = p.channel_id AND c.session_id = p.session_id
+              WHERE p.channel_id = youtube_chat_observations.channel_id
+                AND p.session_id = youtube_chat_observations.session_id
+                AND c.observation_id = youtube_chat_observations.id
+                AND p.action = 'DELETE'
+            )
+          ) deletion ON true
           WHERE channel_id = $1
             AND session_id = $2
             AND (
@@ -175,6 +197,8 @@ class ChatController {
           author_channel_id: row.author_channel_id,
           author_display_name: row.author_display_name,
           evaluation_status: row.evaluation_outcome ?? 'NOT_EVALUATED',
+          deletion:
+            row.deletion_status === null ? null : { action: 'DELETE', status: row.deletion_status },
           evaluation:
             row.evaluation_outcome === null
               ? null
