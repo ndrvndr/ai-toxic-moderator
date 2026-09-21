@@ -20,6 +20,7 @@ import { DeleteCoordinator } from './ingestion/delete-coordinator';
 import { DeleteEligibilityStore } from './ingestion/delete-eligibility-store';
 import { DeleteExecutionStore } from './ingestion/delete-execution-store';
 import { DeleteExecutor } from './ingestion/delete-executor';
+import { DeleteRecovery } from './ingestion/delete-recovery';
 import { LeaseStore } from './ingestion/lease-store';
 import { PollCycle } from './ingestion/poll-cycle';
 import { RetryStore } from './ingestion/retry-store';
@@ -72,6 +73,7 @@ async function bootstrap() {
     await pool.query('SELECT revision, chat_ended_at FROM youtube_chat_checkpoints LIMIT 0');
     await pool.query('SELECT id FROM youtube_chat_classifications LIMIT 0');
     await pool.query('SELECT id FROM youtube_moderation_action_plans LIMIT 0');
+    await pool.query('SELECT id, status, deadline_at FROM youtube_delete_attempts LIMIT 0');
 
     const leases = new LeaseStore(pool);
     const classifications = createClassificationStore();
@@ -80,17 +82,18 @@ async function bootstrap() {
     const cycle = new PollCycle(leases, writer, tokens, new YoutubeChatAdapter());
 
     const coordinator = new IngestionCoordinator(pool, leases, cycle, new RetryStore(leases));
+    const executions = new DeleteExecutionStore(pool);
+    const recovery = new DeleteRecovery(executions);
 
     let deletions: DeleteCoordinator | undefined;
     if (config.YOUTUBE_DELETE_ENABLED) {
       await pool.query('SELECT id FROM youtube_delete_executions LIMIT 0');
-      await pool.query('SELECT id FROM youtube_delete_attempts LIMIT 0');
       await pool.query('SELECT account_id, role FROM channel_memberships LIMIT 0');
       await pool.query('SELECT id, closed_at FROM stream_sessions LIMIT 0');
       const enabled = () =>
         config.WORKER_ENABLED && config.GOOGLE_AUTH_ENABLED && config.YOUTUBE_DELETE_ENABLED;
       const executor = new DeleteExecutor(
-        new DeleteExecutionStore(pool),
+        executions,
         new DeleteEligibilityStore(pool, enabled),
         tokens,
         new YoutubeModerationAdapter(),
@@ -98,7 +101,7 @@ async function bootstrap() {
       deletions = new DeleteCoordinator(new DeleteCandidateStore(pool), executor, enabled);
     }
 
-    runtime = new WorkerRuntime(coordinator, pool, deletions);
+    runtime = new WorkerRuntime(coordinator, pool, deletions, recovery);
 
     @Module({
       providers: [{ provide: WorkerRuntime, useValue: runtime }],

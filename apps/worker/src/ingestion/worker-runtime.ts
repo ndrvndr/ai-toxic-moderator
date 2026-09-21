@@ -14,6 +14,7 @@ export class WorkerRuntime {
     private readonly coordinator: Pick<IngestionCoordinator, 'tick'>,
     private readonly pool: Pick<DatabasePool, 'end'>,
     private readonly deletions?: { tick(signal: AbortSignal): Promise<unknown> },
+    private readonly recovery?: { tick(signal: AbortSignal): Promise<unknown> },
   ) {}
 
   start(): void {
@@ -25,7 +26,8 @@ export class WorkerRuntime {
   private async runLoops(): Promise<void> {
     const loops = [this.loop(this.coordinator, 'Ingestion')];
     if (this.deletions) loops.push(this.loop(this.deletions, 'Deletion'));
-    // Always drain both loops before the shared database pool can be closed.
+    if (this.recovery) loops.push(this.loop(this.recovery, 'Deletion recovery'));
+    // Always drain every loop before the shared database pool can be closed.
     const results = await Promise.allSettled(loops);
     if (results.some((result) => result.status === 'rejected')) {
       console.error('A worker loop stopped unexpectedly.');

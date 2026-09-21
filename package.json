@@ -44,6 +44,7 @@
     "test:delete-execution-store": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/delete-execution-store.test.cjs",
     "test:delete-executor": "node --experimental-test-isolation=none --test tests/delete-executor.test.cjs",
     "test:delete-coordinator": "node --experimental-test-isolation=none --test tests/delete-coordinator.test.cjs",
+    "test:delete-recovery": "node --experimental-test-isolation=none --test tests/delete-recovery.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",

@@ -103,19 +103,32 @@ a bounded round-robin scan, not chronological ordering or a guaranteed delivery 
 Eligibility is checked again by the executor. Multiple workers may discover the same
 plan; execution identity and claim transactions arbitrate dispatch ownership.
 
-Ingestion and deletion use independent loops with a one-second delay after each tick.
-Shutdown aborts both loops and waits for in-flight work before closing the shared pool.
-No automatic retries are scheduled. Recovery storage exists, but periodic recovery is
-not yet connected to the runtime; expired dispatches remain blocked until recovery runs.
+Ingestion, deletion dispatch, and deletion recovery use independent loops with a
+one-second delay after each tick. Shutdown aborts all loops and waits for in-flight
+work before closing the shared pool. No automatic retries are scheduled.
 
-Run `npm run test:delete-coordinator`, `npm run test:worker-runtime`, and
+Recovery starts with the worker even when `YOUTUBE_DELETE_ENABLED=false`, so disabling
+new dispatch does not leave expired attempts unresolved. Existing worker startup
+requirements still apply: the worker and Google authentication must be enabled, and
+migration 012 and worker role permissions must be present. No recovery runs while the
+worker process is stopped.
+
+Each recovery tick processes at most 100 expired DISPATCHED attempts using database
+time and SKIP LOCKED. Full batches continue on later ticks rather than blocking other
+loops. An in-flight update drains during shutdown. Database failures are logged with
+a generic message and retried on a later tick. Recovery calls no Google endpoint and
+requires no token refresh, membership, or active monitoring run. It only records
+UNKNOWN with EXECUTION_DEADLINE_EXCEEDED; it cannot establish whether deletion happened.
+Live attempts and terminal results remain unchanged, and recovered targets stay blocked
+from redispatch. Multiple workers may run recovery concurrently.
+
+Run `npm run test:delete-recovery`, `npm run test:delete-coordinator`, `npm run test:worker-runtime`, and
 `npm run test:delete-execution-store` for configuration, scheduling, shutdown, and
 database-backed candidate discovery checks. These tests do not delete YouTube messages.
 
 ## Remaining implementation
 
 - Explicit retry eligibility and audited reconciliation.
-- Periodic expired-attempt recovery in the worker runtime.
 - Dashboard status delivery and controlled live verification.
 
 Schema constraints prevent invalid records; they do not prove that a network
