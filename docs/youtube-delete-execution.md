@@ -48,15 +48,37 @@ The store currently refuses claims for any execution that already has an attempt
 including REJECTED and NOT_SENT. Automatic retry eligibility is not implemented.
 Late completion cannot replace UNKNOWN; audited reconciliation remains separate.
 This store does not check current monitoring eligibility or Google authorization
-and is not yet connected to a provider-calling executor.
+on its own. `DeleteExecutor` coordinates it with an injected eligibility resolver,
+token store, and deletion adapter, but is not wired into the running worker.
 
 Run `npm run test:delete-execution-store` for database-backed concurrency, ownership,
 deduplication, and deadline-recovery checks using the worker role.
 
+## Executor orchestration
+
+`DeleteExecutor` resolves eligibility using the original persisted execution,
+loads credentials for that account, and rechecks authorization after token refresh
+and after claiming. An account change or failed final check prevents dispatch.
+The resolver is mandatory; no allow-all default is provided. Its database-backed
+implementation is still pending, so runtime integration must remain disabled.
+
+Provider calls occur after the claim transaction commits. Cancellation before
+dispatch records NOT_SENT when a claim exists. Transport exceptions become UNKNOWN.
+Failed or expired result persistence returns RESULT_NOT_RECORDED, never confirmed
+success, and never triggers another request. Expired attempts remain recoverable
+through the store. The local abort deadline is a best-effort transport bound;
+database time remains authoritative for recording results.
+
+These checks cannot eliminate the race between the final authorization read and
+the external request. Stopping monitoring cannot retract a request already sent.
+Unit tests use injected dependencies and make no Google requests. Run
+`npm run test:delete-executor` to verify orchestration failure paths.
+
 ## Remaining implementation
 
 - Explicit retry eligibility and audited reconciliation.
-- Eligibility checks, credential resolution, and adapter invocation outside DB transactions.
+- Database-backed eligibility checks covering monitoring state, channel membership,
+  credential scope, and original run provenance; worker integration remains disabled.
 - Dashboard status delivery and controlled live verification.
 
 Schema constraints prevent invalid records; they do not prove that a network
