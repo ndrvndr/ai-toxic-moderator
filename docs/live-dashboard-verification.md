@@ -10,7 +10,6 @@
 
 ## Pending
 
-- Confirm the new chat message is rendered in the dashboard.
 - Reconnection after restarting the API.
 - Cursor replay after reconnect.
 - WebSocket cleanup after leaving the Live page.
@@ -39,3 +38,14 @@ Verified locally:
 
 These checks verify rule-based classification delivery and display.
 Automatic deletion, timeout, and banning are not covered by this verification.
+
+## Controlled Deletion Verification
+
+On 2026-09-21, the user reported that the exact controlled deletion marker was removed
+from YouTube and the dashboard displayed Deleted without a manual refresh. An ordinary
+message and a marker with additional text were not removed. The user also confirmed
+restoring the disabled test configuration.
+
+See [deletion integration verification](deletion-integration-verification.md) for
+evidence scope and remaining checks. This supplements the classification verification;
+TIMEOUT, BAN, and general production moderation accuracy remain unverified.

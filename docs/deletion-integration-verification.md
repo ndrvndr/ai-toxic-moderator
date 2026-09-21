@@ -1,5 +1,30 @@
 # Deletion integration verification
 
+## Controlled live verification: 2026-09-21
+
+Evidence source: user-reported observations from the local application and a real
+YouTube livestream, not independently inspected by the coding agent.
+
+| Check                                      | Reported result                                      |
+| ------------------------------------------ | ---------------------------------------------------- |
+| Exact marker `ATM_DELETE_TEST_V1`          | Message deleted on YouTube                           |
+| Ordinary message `Hello test`              | Not deleted                                          |
+| Extended marker `ATM_DELETE_TEST_V1 extra` | Not deleted                                          |
+| Dashboard result                           | Displayed Deleted without a manual refresh           |
+| Configuration cleanup                      | Deletion disabled and both test scope fields cleared |
+
+This verifies the controlled marker-to-deletion path and automatic dashboard updates
+for this reported scenario, not general toxicity detection accuracy.
+
+The setup response identified session `bf6a9adb-ffe0-4bce-becf-655ed5c00855` and
+broadcast `_OHmPrkqWFk`. It showed a STOPPED run before setup; it does not identify
+the run that performed the successful deletion. The successful attempt ID, active run
+ID, exact event cursor, and provider response were not supplied.
+
+Remaining manual checks include a marker from another viewer, live reconnect/replay,
+and confirmation of worker restart after configuration cleanup. Monitoring stop after
+the successful test was not explicitly confirmed.
+
 ## Automated coverage
 
 Run `npm run test:delete-execution-store` after building core packages. The suite
@@ -32,7 +57,7 @@ refresh, a process crash, live socket delivery, browser rendering, or real YouTu
 deletion. A fresh executor instance tests database-backed deduplication after loss
 of process-local state; it is not a full process-crash test.
 
-Keep `YOUTUBE_DELETE_ENABLED=false` until controlled live verification is prepared.
+Keep `YOUTUBE_DELETE_ENABLED=false` outside an explicitly scoped controlled test.
 The default deletion rule list remains empty. Do not describe phase 7 or end-to-end
 live deletion as verified solely from these automated tests.
 

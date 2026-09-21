@@ -129,7 +129,7 @@ Run `npm run test:delete-recovery`, `npm run test:delete-coordinator`, `npm run 
 `npm run test:delete-execution-store` for configuration, scheduling, shutdown, and
 database-backed candidate discovery checks. These tests do not delete YouTube messages.
 
-## Remaining implementation
+## API and dashboard delivery
 
 The chat API now returns a separate `deletion` field per observation. It is null
 without a DELETE plan, PENDING before an attempt, or the latest persisted attempt
@@ -157,11 +157,16 @@ descriptions. Observations without deletion data show no action panel. The origi
 message and classification remain visible for context after a confirmed deletion.
 Component tests cover every status and result updates without replacing classification.
 Run `npm run test:live-hooks` to execute both hook and component tests.
-Database-backed tests cover publication, concurrency, and rollback; browser verification
-remains a separate step.
+Database-backed tests cover publication, concurrency, and rollback. The user reported
+a successful controlled live deletion and automatic dashboard update on 2026-09-21.
+See [verification evidence](deletion-integration-verification.md) for limits.
 
-- Explicit retry eligibility and audited reconciliation.
-- Dashboard status delivery and controlled live verification.
+## Remaining implementation
+
+- Durable retry scheduling and audited reconciliation, subject to the
+  [retry policy](deletion-retry-policy.md). Automatic retries remain disabled.
+- Remaining live negative and recovery checks listed in the verification record.
+- TIMEOUT and BAN execution paths and their verification.
 
 Schema constraints prevent invalid records; they do not prove that a network
 request was sent exactly once.
