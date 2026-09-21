@@ -148,8 +148,14 @@ provenance rather than caller-supplied claim fields.
 The existing WebSocket feed delivers these committed events, and the dashboard's
 existing `chat.updated` handler refreshes the chat API. No new frame type or database
 migration is required. Events contain no provider response, credentials, or message text.
-Dashboard rendering of deletion badges is still pending. Database-backed tests cover
-publication, concurrency, and rollback; browser verification remains a separate step.
+The dashboard renders deletion results in a separate panel below classification.
+Only SUCCEEDED is labeled Deleted; uncertain and unconfirmed states have explicit
+descriptions. Observations without deletion data show no action panel. The original
+message and classification remain visible for context after a confirmed deletion.
+Component tests cover every status and result updates without replacing classification.
+Run `npm run test:live-hooks` to execute both hook and component tests.
+Database-backed tests cover publication, concurrency, and rollback; browser verification
+remains a separate step.
 
 - Explicit retry eligibility and audited reconciliation.
 - Dashboard status delivery and controlled live verification.

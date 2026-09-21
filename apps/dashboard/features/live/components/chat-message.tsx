@@ -1,5 +1,6 @@
 import type { ChatObservation } from '@moderator/contracts';
 
+import { ChatDeletion } from './chat-deletion';
 import { ChatEvaluation } from './chat-evaluation';
 
 const eventLabels: Record<string, string> = {
@@ -44,6 +45,7 @@ export function ChatMessage({ message }: { message: ChatObservation }) {
       </div>
 
       <ChatEvaluation evaluation={message.evaluation} />
+      <ChatDeletion deletion={message.deletion} />
     </li>
   );
 }
