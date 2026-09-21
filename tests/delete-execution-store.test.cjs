@@ -5,6 +5,7 @@ const { Client, Pool } = require('pg');
 const { source } = require('./helpers/source.cjs');
 
 const { DeleteExecutionStore } = source('apps/worker/src/ingestion/delete-execution-store.ts');
+const { BanExecutionStore } = source('apps/worker/src/ingestion/ban-execution-store.ts');
 const { DeleteCandidateStore } = source('apps/worker/src/ingestion/delete-candidate-store.ts');
 const { DeleteEligibilityStore } = source('apps/worker/src/ingestion/delete-eligibility-store.ts');
 const { DeleteExecutor } = source('apps/worker/src/ingestion/delete-executor.ts');
@@ -96,7 +97,7 @@ async function fixture(action = 'DELETE') {
   await admin.query(
     `INSERT INTO youtube_chat_observations(id, channel_id, session_id, first_observed_run_id,
       external_message_id, event_type, published_at, payload, payload_hash)
-     VALUES($1, $2, $3, $4, $5, 'textMessageEvent', clock_timestamp(), '{}'::jsonb, $6)`,
+     VALUES($1, $2, $3, $4, $5, 'textMessageEvent', clock_timestamp(), '{"authorDetails":{"channelId":"test-author"}}'::jsonb, $6)`,
     [f.observationId, f.channelId, f.sessionId, f.runId, f.externalMessageId, 'a'.repeat(64)],
   );
   await admin.query(
@@ -113,7 +114,7 @@ async function fixture(action = 'DELETE') {
 async function insertPlan(f, id, version, action = 'DELETE') {
   await admin.query(
     `INSERT INTO youtube_moderation_action_plans(id, channel_id, session_id, classification_id,
-      policy_version, action, reason) VALUES($1, $2, $3, $4, $5, $6, 'Deletion store fixture.')`,
+      policy_version, action, reason, duration_seconds) VALUES($1, $2, $3, $4, $5, $6, 'Deletion store fixture.', CASE WHEN $6 = 'TIMEOUT' THEN 300 ELSE NULL END)`,
     [id, f.channelId, f.sessionId, f.classificationId, version, action],
   );
 }
@@ -129,6 +130,128 @@ async function eventsFor(row) {
   );
   return result.rows;
 }
+
+test('ban store derives targets and reuses identical concurrent plans with worker permissions', async () => {
+  const f = await fixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const rows = await allResults([
+    bans.ensure(f.planId, f.channelId, f.sessionId),
+    bans.ensure(f.planId, f.channelId, f.sessionId),
+  ]);
+  assert.equal(rows[0].id, rows[1].id);
+  assert.equal(rows[0].author_channel_id, 'test-author');
+  assert.equal(rows[0].duration_seconds, '300');
+  const next = randomUUID();
+  await insertPlan(f, next, 'ban-store-policy-2', 'TIMEOUT');
+  assert.equal((await bans.ensure(next, f.channelId, f.sessionId)).plan_id, f.planId);
+  const escalation = randomUUID();
+  await insertPlan(f, escalation, 'ban-store-policy-3', 'BAN');
+  await assert.rejects(bans.ensure(escalation, f.channelId, f.sessionId), /incompatible/);
+  await assert.rejects(bans.ensure(f.planId, randomUUID(), f.sessionId), /scoped/);
+  const wrong = await fixture('DELETE');
+  await assert.rejects(bans.ensure(wrong.planId, wrong.channelId, wrong.sessionId), /scoped/);
+});
+
+test('ban store serializes claims and results and preserves provider ban identity', async () => {
+  const f = await fixture('BAN');
+  const bans = new BanExecutionStore(pool);
+  const row = await bans.ensure(f.planId, f.channelId, f.sessionId);
+  const claims = await allResults([
+    bans.claim(row.id, randomUUID()),
+    bans.claim(row.id, randomUUID()),
+  ]);
+  assert.equal(claims.filter(Boolean).length, 1);
+  const claim = claims.find(Boolean);
+  const success = { status: 'SUCCEEDED', http_status: 200, ban_id: 'provider-ban-1' };
+  assert.equal(await bans.complete({ ...claim, owner_id: randomUUID() }, success), false);
+  assert.equal(
+    await bans.complete({ ...claim, execution: { ...row, id: randomUUID() } }, success),
+    false,
+  );
+  assert.deepEqual(
+    (await allResults([bans.complete(claim, success), bans.complete(claim, success)])).sort(),
+    [false, true],
+  );
+  const result = await admin.query('SELECT status,ban_id FROM youtube_ban_attempts WHERE id=$1', [
+    claim.attempt_id,
+  ]);
+  assert.deepEqual(result.rows[0], { status: 'SUCCEEDED', ban_id: 'provider-ban-1' });
+  assert.equal(await bans.claim(row.id, randomUUID()), null);
+  assert.equal((await eventsFor(row)).length, 2);
+});
+
+test('timeout rejection cannot use DELETE rate-limit retry policy', async () => {
+  const f = await fixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const row = await bans.ensure(f.planId, f.channelId, f.sessionId);
+  const claim = await bans.claim(row.id, randomUUID());
+  await bans.complete(claim, {
+    status: 'REJECTED',
+    http_status: 429,
+    code: 'YOUTUBE_RATE_LIMITED',
+  });
+  assert.equal(await new BanExecutionStore(pool).claim(row.id, randomUUID()), null);
+});
+
+test('ban recovery records unknown once and rejects late completion', async () => {
+  const f = await fixture('BAN');
+  const bans = new BanExecutionStore(pool);
+  const row = await bans.ensure(f.planId, f.channelId, f.sessionId);
+  const claim = {
+    execution: row,
+    attempt_id: randomUUID(),
+    owner_id: randomUUID(),
+    deadline_at: '2020-01-01T00:00:30Z',
+  };
+  await admin.query(
+    `INSERT INTO youtube_ban_attempts(id,execution_id,owner_id,started_at,deadline_at)
+     VALUES($1,$2,$3,'2020-01-01T00:00:00Z','2020-01-01T00:00:30Z')`,
+    [claim.attempt_id, row.id, claim.owner_id],
+  );
+  const success = { status: 'SUCCEEDED', http_status: 200, ban_id: 'late-ban' };
+  assert.equal(await bans.complete(claim, success), false);
+  const counts = await allResults([bans.recoverExpired(), bans.recoverExpired()]);
+  assert.equal(
+    counts.reduce((sum, n) => sum + n, 0),
+    1,
+  );
+  assert.equal(await bans.complete(claim, success), false);
+  assert.equal(await bans.claim(row.id, randomUUID()), null);
+  const result = await admin.query(
+    'SELECT status,ban_id,error_code FROM youtube_ban_attempts WHERE id=$1',
+    [claim.attempt_id],
+  );
+  assert.deepEqual(result.rows[0], {
+    status: 'UNKNOWN',
+    ban_id: null,
+    error_code: 'EXECUTION_DEADLINE_EXCEEDED',
+  });
+  assert.equal((await eventsFor(row)).length, 1);
+});
+
+test('ban result publication failure rolls back status and provider identity', async () => {
+  const f = await fixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const row = await bans.ensure(f.planId, f.channelId, f.sessionId);
+  const claim = await bans.claim(row.id, randomUUID(), 300);
+  const success = { status: 'SUCCEEDED', http_status: 200, ban_id: 'rollback-ban' };
+  await admin.query(`REVOKE INSERT ON ${schema}.live_events FROM ${role}`);
+  try {
+    await assert.rejects(bans.complete(claim, success), { code: '42501' });
+  } finally {
+    await admin.query(`GRANT INSERT ON ${schema}.live_events TO ${role}`);
+  }
+  const result = await admin.query('SELECT status,ban_id FROM youtube_ban_attempts WHERE id=$1', [
+    claim.attempt_id,
+  ]);
+  assert.deepEqual(result.rows[0], { status: 'DISPATCHED', ban_id: null });
+  assert.equal((await eventsFor(row)).length, 1);
+  assert.equal(await bans.complete(claim, success), true);
+  assert.deepEqual(
+    (await eventsFor(row)).map((event) => event.sequence),
+    ['1', '2'],
+  );
+});
 
 async function seedPastRateLimit(row, number) {
   const id = randomUUID();
