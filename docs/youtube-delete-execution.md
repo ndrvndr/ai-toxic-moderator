@@ -37,15 +37,16 @@ reconciliation and any subsequent resolution require a separate audited design.
 
 - `ensure` derives the target from the persisted DELETE plan and reuses the
   original execution across policy versions.
-- `claim` locks that execution and commits its first DISPATCHED attempt before
+- `claim` locks that execution and commits an eligible DISPATCHED attempt before
   returning the owner, attempt ID, original target, and deadline.
 - `complete` records a result only for the matching owner and attempt before
   the database deadline. A false return never permits another network request.
 - `recoverExpired` locks bounded batches with SKIP LOCKED and marks expired
   attempts UNKNOWN. It leaves active and terminal attempts unchanged.
 
-The store currently refuses claims for any execution that already has an attempt,
-including REJECTED and NOT_SENT. Automatic retry eligibility is not implemented.
+The store permits retries only for explicit HTTP 429 rate-limit rejections: three
+total attempts, with minimum delays of 60 and 120 seconds from persisted results.
+All other attempted executions remain blocked. See the [retry policy](deletion-retry-policy.md).
 Late completion cannot replace UNKNOWN; audited reconciliation remains separate.
 This store does not check current monitoring eligibility or Google authorization
 on its own. `DeleteExecutor` coordinates it with an injected eligibility resolver,
@@ -100,15 +101,15 @@ DELETE plans whose original monitoring runs are still eligible.
 
 When enabled, the worker validates access to execution and authorization tables and
 constructs the candidate store, eligibility store, executor, and coordinator. Each tick
-discovers at most one DELETE plan from a RUNNING run without an existing attempt for
-the target. A UUID cursor advances past skipped plans and wraps on exhaustion. This is
+discovers at most one DELETE plan from a RUNNING run with no prior attempt or a due
+rate-limit retry. A UUID cursor advances past skipped plans and wraps on exhaustion. This is
 a bounded round-robin scan, not chronological ordering or a guaranteed delivery latency.
 Eligibility is checked again by the executor. Multiple workers may discover the same
 plan; execution identity and claim transactions arbitrate dispatch ownership.
 
 Ingestion, deletion dispatch, and deletion recovery use independent loops with a
 one-second delay after each tick. Shutdown aborts all loops and waits for in-flight
-work before closing the shared pool. No automatic retries are scheduled.
+work before closing the shared pool. Only bounded HTTP 429 retries are scheduled.
 
 Recovery starts with the worker even when `YOUTUBE_DELETE_ENABLED=false`, so disabling
 new dispatch does not leave expired attempts unresolved. Existing worker startup
@@ -163,8 +164,8 @@ See [verification evidence](deletion-integration-verification.md) for limits.
 
 ## Remaining implementation
 
-- Durable retry scheduling and audited reconciliation, subject to the
-  [retry policy](deletion-retry-policy.md). Automatic retries remain disabled.
+- Additional retry categories and audited reconciliation, subject to the
+  [retry policy](deletion-retry-policy.md). UNKNOWN remains blocked.
 - Remaining live negative and recovery checks listed in the verification record.
 - TIMEOUT and BAN execution paths and their verification.
 

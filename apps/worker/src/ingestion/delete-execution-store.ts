@@ -7,6 +7,7 @@ import {
 } from '@moderator/persistence';
 import type { YoutubeDeleteResult } from '@moderator/provider-adapters';
 import { randomUUID } from 'node:crypto';
+import { DELETE_RETRY_DUE_SQL } from './delete-retry-policy';
 
 type DatabasePool = ReturnType<typeof createPool>;
 
@@ -83,12 +84,16 @@ export class DeleteExecutionStore {
       const execution = locked.rows[0];
       if (!execution) return null;
 
-      // Retries require a separate eligibility policy. Never redispatch from this method.
-      const previous = await client.query(
-        'SELECT id FROM youtube_delete_attempts WHERE execution_id = $1 LIMIT 1',
+      // The execution lock serializes budget and due-time checks with attempt creation.
+      const previous = await client.query<{ attempt_number: number; retry_due: boolean }>(
+        `SELECT a.attempt_number, ${DELETE_RETRY_DUE_SQL} AS retry_due
+         FROM youtube_delete_attempts a WHERE a.execution_id = $1
+         ORDER BY a.attempt_number DESC LIMIT 1`,
         [executionId],
       );
-      if (previous.rows.length) return null;
+      const last = previous.rows[0];
+      if (last && !last.retry_due) return null;
+      const attemptNumber = (last?.attempt_number ?? 0) + 1;
 
       const attemptId = randomUUID();
       const inserted = await client.query<{ deadline_at: Date }>(
@@ -96,9 +101,9 @@ export class DeleteExecutionStore {
          INSERT INTO youtube_delete_attempts(
            id, execution_id, attempt_number, owner_id, started_at, deadline_at
          )
-         SELECT $1, $2, 1, $3, at, at + $4 * interval '1 second' FROM moment
+         SELECT $1, $2, $5, $3, at, at + $4 * interval '1 second' FROM moment
          RETURNING deadline_at`,
-        [attemptId, executionId, ownerId, timeoutSeconds],
+        [attemptId, executionId, ownerId, timeoutSeconds, attemptNumber],
       );
       await this.publishChatUpdates(client, [executionId]);
       return Object.freeze({

@@ -130,6 +130,158 @@ async function eventsFor(row) {
   return result.rows;
 }
 
+async function seedPastRateLimit(row, number) {
+  const id = randomUUID();
+  await admin.query(
+    `INSERT INTO youtube_delete_attempts(id, execution_id, attempt_number, owner_id, started_at, deadline_at)
+     VALUES($1, $2, $3, $4, '2020-01-01T00:00:00Z', '2020-01-01T00:00:30Z')`,
+    [id, row.id, number, randomUUID()],
+  );
+  await admin.query(
+    `UPDATE youtube_delete_attempts SET status = 'REJECTED', http_status = 429,
+     error_code = 'YOUTUBE_RATE_LIMITED', finished_at = '2020-01-01T00:00:01Z' WHERE id = $1`,
+    [id],
+  );
+}
+
+test('retry backoff distinguishes attempts one and two and rejects mismatched outcomes', async () => {
+  const { DELETE_RETRY_DUE_SQL } = source('apps/worker/src/ingestion/delete-retry-policy.ts');
+  for (const [number, seconds, status, http, code, expected] of [
+    [1, 30, 'REJECTED', 429, 'YOUTUBE_RATE_LIMITED', false],
+    [1, 90, 'REJECTED', 429, 'YOUTUBE_RATE_LIMITED', true],
+    [2, 90, 'REJECTED', 429, 'YOUTUBE_RATE_LIMITED', false],
+    [2, 180, 'REJECTED', 429, 'YOUTUBE_RATE_LIMITED', true],
+    [3, 180, 'REJECTED', 429, 'YOUTUBE_RATE_LIMITED', false],
+    [1, 180, 'UNKNOWN', 429, 'YOUTUBE_RATE_LIMITED', false],
+    [1, 180, 'REJECTED', 403, 'YOUTUBE_RATE_LIMITED', false],
+    [1, 180, 'REJECTED', 429, 'YOUTUBE_FORBIDDEN', false],
+  ]) {
+    const result = await pool.query(
+      `SELECT ${DELETE_RETRY_DUE_SQL} AS due FROM (
+        SELECT $1::integer AS attempt_number, clock_timestamp() - $2::integer * interval '1 second' AS finished_at,
+        $3::text AS status, $4::integer AS http_status, $5::text AS error_code
+      ) a`,
+      [number, seconds, status, http, code],
+    );
+    assert.equal(result.rows[0].due, expected);
+  }
+});
+
+test('a due retry traverses the real executor and preserves the prior rejection', async () => {
+  const f = await eligibleFixture();
+  await seedPastRateLimit(f.execution, 1);
+  let sends = 0;
+  const result = await integratedExecutor(f, async () => {
+    sends++;
+    return new Response(null, { status: 204 });
+  }).execute(executeInput(f));
+  assert.equal(result.status, 'RECORDED');
+  assert.equal(result.result.status, 'SUCCEEDED');
+  assert.equal(sends, 1);
+  const attempts = await admin.query(
+    'SELECT attempt_number, status FROM youtube_delete_attempts WHERE execution_id = $1 ORDER BY attempt_number',
+    [f.execution.id],
+  );
+  assert.deepEqual(attempts.rows, [
+    { attempt_number: 1, status: 'REJECTED' },
+    { attempt_number: 2, status: 'SUCCEEDED' },
+  ]);
+  assert.equal((await eventsFor(f.execution)).length, 2);
+});
+
+test('fresh rate-limit rejection is not immediately redispatched', async () => {
+  const f = await eligibleFixture();
+  const claim = await store.claim(f.execution.id, randomUUID());
+  await store.complete(claim, {
+    status: 'REJECTED',
+    http_status: 429,
+    code: 'YOUTUBE_RATE_LIMITED',
+  });
+  assert.equal(await new DeleteExecutionStore(pool).claim(f.execution.id, randomUUID()), null);
+});
+
+test('due retry discovery and concurrent claims share the persisted budget', async () => {
+  const f = await eligibleFixture();
+  await seedPastRateLimit(f.execution, 1);
+  const candidates = new DeleteCandidateStore(pool);
+  let cursor = null;
+  let found = false;
+  for (;;) {
+    const candidate = await candidates.next(cursor);
+    if (!candidate) break;
+    cursor = candidate.planId;
+    if (candidate.planId === f.planId) found = true;
+  }
+  assert.equal(found, true);
+  const claims = await allResults([
+    new DeleteExecutionStore(pool).claim(f.execution.id, randomUUID()),
+    new DeleteExecutionStore(pool).claim(f.execution.id, randomUUID()),
+  ]);
+  assert.equal(claims.filter(Boolean).length, 1);
+  const claim = claims.find(Boolean);
+  const attempt = await admin.query(
+    'SELECT attempt_number FROM youtube_delete_attempts WHERE id = $1',
+    [claim.attempt_id],
+  );
+  assert.equal(attempt.rows[0].attempt_number, 2);
+  await store.complete(claim, { status: 'SUCCEEDED', http_status: 204 });
+  assert.equal(await store.claim(f.execution.id, randomUUID()), null);
+});
+
+test('three rate-limit rejections exhaust the budget across restarts and policy versions', async () => {
+  const f = await eligibleFixture();
+  for (let n = 1; n <= 3; n++) await seedPastRateLimit(f.execution, n);
+  const nextPlan = randomUUID();
+  await insertPlan(f, nextPlan, 'retry-policy-version-2');
+  const fresh = new DeleteExecutionStore(pool);
+  const reused = await fresh.ensure(nextPlan, f.channelId, f.sessionId);
+  assert.equal(reused.id, f.execution.id);
+  assert.equal(await fresh.claim(reused.id, randomUUID()), null);
+});
+
+test('an eligible third attempt is numbered three and cannot be followed by a fourth', async () => {
+  const f = await eligibleFixture();
+  await seedPastRateLimit(f.execution, 1);
+  await seedPastRateLimit(f.execution, 2);
+  const claim = await store.claim(f.execution.id, randomUUID());
+  assert.ok(claim);
+  const stored = await admin.query(
+    'SELECT attempt_number FROM youtube_delete_attempts WHERE id = $1',
+    [claim.attempt_id],
+  );
+  assert.equal(stored.rows[0].attempt_number, 3);
+  await store.complete(claim, {
+    status: 'REJECTED',
+    http_status: 429,
+    code: 'YOUTUBE_RATE_LIMITED',
+  });
+  assert.equal(await store.claim(f.execution.id, randomUUID()), null);
+});
+
+test('a due retry still requires current monitoring authorization', async () => {
+  const f = await eligibleFixture();
+  await seedPastRateLimit(f.execution, 1);
+  await admin.query(
+    "UPDATE monitoring_runs SET status = 'STOPPING', stop_requested_at = clock_timestamp() WHERE id = $1",
+    [f.runId],
+  );
+  let sends = 0;
+  const executor = integratedExecutor(f, async () => {
+    sends++;
+    return new Response(null, { status: 204 });
+  });
+  assert.deepEqual(await executor.execute(executeInput(f)), {
+    status: 'SKIPPED',
+    reason: 'INELIGIBLE',
+  });
+  assert.equal(sends, 0);
+  const attempts = await admin.query(
+    'SELECT id FROM youtube_delete_attempts WHERE execution_id = $1',
+    [f.execution.id],
+  );
+  assert.equal(attempts.rows.length, 1);
+});
+
 async function allResults(promises) {
   const settled = await Promise.allSettled(promises);
   return settled.map((result) => {
