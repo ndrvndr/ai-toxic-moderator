@@ -7,6 +7,10 @@ const { source } = require('./helpers/source.cjs');
 const { DeleteExecutionStore } = source('apps/worker/src/ingestion/delete-execution-store.ts');
 const { DeleteCandidateStore } = source('apps/worker/src/ingestion/delete-candidate-store.ts');
 const { DeleteEligibilityStore } = source('apps/worker/src/ingestion/delete-eligibility-store.ts');
+const { DeleteExecutor } = source('apps/worker/src/ingestion/delete-executor.ts');
+const { YoutubeModerationAdapter } = source('packages/provider-adapters/src/youtube-moderation.ts');
+const { readLiveEvents } = source('packages/persistence/src/live-events.ts');
+const { consumeLiveFrame } = source('apps/dashboard/features/live/lib/live-event-protocol.ts');
 const schema = `delete_store_${randomUUID().replaceAll('-', '')}`;
 const role = `delete_worker_${randomUUID().replaceAll('-', '')}`;
 let admin;
@@ -152,6 +156,141 @@ async function eligibleFixture() {
   );
   return { ...f, execution: await execution(f) };
 }
+
+function integratedExecutor(f, transport, tokenHook = async () => {}) {
+  return new DeleteExecutor(
+    new DeleteExecutionStore(pool),
+    new DeleteEligibilityStore(pool, () => true),
+    {
+      async accessToken(accountId) {
+        assert.equal(accountId, f.accountId);
+        await tokenHook();
+        return 'test-access-token';
+      },
+    },
+    new YoutubeModerationAdapter(transport),
+  );
+}
+
+function executeInput(f) {
+  return {
+    planId: f.planId,
+    channelId: f.channelId,
+    sessionId: f.sessionId,
+    ownerId: randomUUID(),
+  };
+}
+
+test('integration: competing executors send once after commit and publish replayable chat updates', async () => {
+  const f = await eligibleFixture();
+  const requests = [];
+  const transport = async (url, options) => {
+    // A separate connection must already see the claim before the provider boundary is called.
+    const persisted = await admin.query(
+      'SELECT status FROM youtube_delete_attempts WHERE execution_id = $1',
+      [f.execution.id],
+    );
+    requests.push({ url, options, statuses: persisted.rows.map((row) => row.status) });
+    return new Response(null, { status: 204 });
+  };
+  const results = await allResults([
+    integratedExecutor(f, transport).execute(executeInput(f)),
+    integratedExecutor(f, transport).execute(executeInput(f)),
+  ]);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].statuses, ['DISPATCHED']);
+  assert.equal(requests[0].options.method, 'DELETE');
+  assert.equal(new URL(requests[0].url).searchParams.get('id'), f.externalMessageId);
+  assert.equal(results.filter((result) => result.status === 'RECORDED').length, 1);
+  assert.equal(results.find((result) => result.status === 'RECORDED').result.status, 'SUCCEEDED');
+  assert.equal(results.find((result) => result.status === 'SKIPPED').reason, 'ALREADY_ATTEMPTED');
+
+  const client = await pool.connect();
+  let page;
+  try {
+    page = await readLiveEvents(client, {
+      channelId: f.channelId,
+      sessionId: f.sessionId,
+      after: '0',
+    });
+  } finally {
+    client.release();
+  }
+  assert.deepEqual(page.items, [
+    { sequence: '1', event_type: 'chat.updated', run_id: f.runId },
+    { sequence: '2', event_type: 'chat.updated', run_id: f.runId },
+  ]);
+  const position = consumeLiveFrame(
+    JSON.stringify({
+      type: 'events',
+      channel_id: f.channelId,
+      session_id: f.sessionId,
+      cursor: page.next_cursor,
+      items: page.items,
+    }),
+    { channelId: f.channelId, sessionId: f.sessionId },
+    { cursor: '0', ready: true },
+  );
+  assert.equal(position.refreshChat, true);
+  assert.equal(position.refreshMonitoring, false);
+  assert.equal(position.cursor, '2');
+  // A fresh executor instance models lost process-local state; the database still blocks redispatch.
+  const restarted = await integratedExecutor(f, transport).execute(executeInput(f));
+  assert.equal(restarted.reason, 'ALREADY_ATTEMPTED');
+  assert.equal(requests.length, 1);
+});
+
+test('integration: lost transport response persists UNKNOWN and remains blocked after restart', async () => {
+  const f = await eligibleFixture();
+  let sends = 0;
+  const transport = async () => {
+    sends++;
+    throw Error('Simulated lost response');
+  };
+  const first = await integratedExecutor(f, transport).execute(executeInput(f));
+  assert.equal(first.status, 'RECORDED');
+  assert.equal(first.result.status, 'UNKNOWN');
+  const stored = await admin.query(
+    'SELECT status, error_code FROM youtube_delete_attempts WHERE execution_id = $1',
+    [f.execution.id],
+  );
+  assert.deepEqual(stored.rows, [{ status: 'UNKNOWN', error_code: 'TRANSPORT_ERROR' }]);
+  assert.equal(
+    (await integratedExecutor(f, transport).execute(executeInput(f))).reason,
+    'ALREADY_ATTEMPTED',
+  );
+  assert.equal(sends, 1);
+  assert.equal((await eventsFor(f.execution)).length, 2);
+});
+
+test('integration: monitoring stopped during token acquisition never reaches the provider', async () => {
+  const f = await eligibleFixture();
+  let sends = 0;
+  const executor = integratedExecutor(
+    f,
+    async () => {
+      sends++;
+      return new Response(null, { status: 204 });
+    },
+    async () => {
+      await admin.query(
+        "UPDATE monitoring_runs SET status = 'STOPPING', stop_requested_at = clock_timestamp() WHERE id = $1",
+        [f.runId],
+      );
+    },
+  );
+  assert.deepEqual(await executor.execute(executeInput(f)), {
+    status: 'SKIPPED',
+    reason: 'INELIGIBLE',
+  });
+  assert.equal(sends, 0);
+  const attempts = await admin.query(
+    'SELECT id FROM youtube_delete_attempts WHERE execution_id = $1',
+    [f.execution.id],
+  );
+  assert.equal(attempts.rows.length, 0);
+  assert.equal((await eventsFor(f.execution)).length, 0);
+});
 
 test('candidate discovery uses worker permissions and excludes attempted targets across policy versions', async () => {
   const f = await eligibleFixture();
