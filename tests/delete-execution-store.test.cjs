@@ -5,6 +5,7 @@ const { Client, Pool } = require('pg');
 const { source } = require('./helpers/source.cjs');
 
 const { DeleteExecutionStore } = source('apps/worker/src/ingestion/delete-execution-store.ts');
+const { DeleteEligibilityStore } = source('apps/worker/src/ingestion/delete-eligibility-store.ts');
 const schema = `delete_store_${randomUUID().replaceAll('-', '')}`;
 const role = `delete_worker_${randomUUID().replaceAll('-', '')}`;
 let admin;
@@ -123,6 +124,138 @@ async function allResults(promises) {
     return result.value;
   });
 }
+
+async function eligibleFixture() {
+  const f = await fixture();
+  await admin.query(
+    "UPDATE monitoring_runs SET status = 'RUNNING', started_at = clock_timestamp() WHERE id = $1",
+    [f.runId],
+  );
+  await admin.query(
+    "INSERT INTO channel_memberships(channel_id, account_id, role) VALUES($1, $2, 'OWNER')",
+    [f.channelId, f.accountId],
+  );
+  await admin.query('INSERT INTO youtube_chat_checkpoints(session_id) VALUES($1)', [f.sessionId]);
+  await admin.query(
+    `INSERT INTO google_credentials(account_id, access_token_ciphertext, refresh_token_ciphertext, expires_at, scopes)
+     VALUES($1, 'test-only', 'test-only', clock_timestamp() - interval '1 hour', $2)`,
+    [f.accountId, 'openid https://www.googleapis.com/auth/youtube.force-ssl'],
+  );
+  return { ...f, execution: await execution(f) };
+}
+
+test('eligibility resolves original credentials with the worker role and allows token refresh', async () => {
+  const f = await eligibleFixture();
+  const eligibility = new DeleteEligibilityStore(pool, () => true);
+  assert.deepEqual(await eligibility.resolve(f.execution), { accountId: f.accountId });
+  await admin.query("UPDATE channel_memberships SET role = 'MODERATOR' WHERE channel_id = $1", [
+    f.channelId,
+  ]);
+  assert.deepEqual(await eligibility.resolve(f.execution), { accountId: f.accountId });
+  assert.equal(await new DeleteEligibilityStore(pool, () => false).resolve(f.execution), null);
+});
+
+test('eligibility rejects substituted execution provenance and target', async () => {
+  const f = await eligibleFixture();
+  const eligibility = new DeleteEligibilityStore(pool, () => true);
+  for (const key of ['id', 'plan_id', 'channel_id', 'session_id', 'external_message_id']) {
+    assert.equal(await eligibility.resolve({ ...f.execution, [key]: randomUUID() }), null);
+  }
+});
+
+test('membership revocation and operator access are enforced on subsequent checks', async () => {
+  const f = await eligibleFixture();
+  const eligibility = new DeleteEligibilityStore(pool, () => true);
+  await admin.query("UPDATE channel_memberships SET role = 'OPERATOR' WHERE channel_id = $1", [
+    f.channelId,
+  ]);
+  assert.equal(await eligibility.resolve(f.execution), null);
+  await admin.query('DELETE FROM channel_memberships WHERE channel_id = $1', [f.channelId]);
+  assert.equal(await eligibility.resolve(f.execution), null);
+});
+
+test('the original requester also needs current channel access', async () => {
+  const f = await eligibleFixture();
+  const requester = randomUUID();
+  await admin.query("INSERT INTO accounts(id, display_name) VALUES($1, 'Other requester')", [
+    requester,
+  ]);
+  await admin.query('UPDATE monitoring_runs SET requested_by_account_id = $1 WHERE id = $2', [
+    requester,
+    f.runId,
+  ]);
+  const eligibility = new DeleteEligibilityStore(pool, () => true);
+  assert.equal(await eligibility.resolve(f.execution), null);
+  await admin.query(
+    "INSERT INTO channel_memberships(channel_id, account_id, role) VALUES($1, $2, 'MODERATOR')",
+    [f.channelId, requester],
+  );
+  assert.deepEqual(await eligibility.resolve(f.execution), { accountId: f.accountId });
+});
+
+test('scope tokens must match exactly and missing credentials deny execution', async () => {
+  const f = await eligibleFixture();
+  const eligibility = new DeleteEligibilityStore(pool, () => true);
+  for (const scope of [
+    'https://www.googleapis.com/auth/youtube.readonly',
+    'https://www.googleapis.com/auth/youtube.force-ssl.invalid',
+    '',
+  ]) {
+    await admin.query('UPDATE google_credentials SET scopes = $1 WHERE account_id = $2', [
+      scope,
+      f.accountId,
+    ]);
+    assert.equal(await eligibility.resolve(f.execution), null);
+  }
+  await admin.query('UPDATE google_credentials SET scopes = $1 WHERE account_id = $2', [
+    'openid\nhttps://www.googleapis.com/auth/youtube',
+    f.accountId,
+  ]);
+  assert.deepEqual(await eligibility.resolve(f.execution), { accountId: f.accountId });
+  await admin.query('DELETE FROM google_credentials WHERE account_id = $1', [f.accountId]);
+  assert.equal(await eligibility.resolve(f.execution), null);
+});
+
+test('missing checkpoints, ended chats, and closed sessions block deletion', async () => {
+  const f = await eligibleFixture();
+  const eligibility = new DeleteEligibilityStore(pool, () => true);
+  await admin.query('DELETE FROM youtube_chat_checkpoints WHERE session_id = $1', [f.sessionId]);
+  assert.equal(await eligibility.resolve(f.execution), null);
+  await admin.query(
+    'INSERT INTO youtube_chat_checkpoints(session_id, chat_ended_at) VALUES($1, clock_timestamp())',
+    [f.sessionId],
+  );
+  assert.equal(await eligibility.resolve(f.execution), null);
+  await admin.query(
+    'UPDATE youtube_chat_checkpoints SET chat_ended_at = NULL WHERE session_id = $1',
+    [f.sessionId],
+  );
+  await admin.query('UPDATE stream_sessions SET closed_at = clock_timestamp() WHERE id = $1', [
+    f.sessionId,
+  ]);
+  assert.equal(await eligibility.resolve(f.execution), null);
+});
+
+test('stopped original runs cannot borrow eligibility from a restarted run', async () => {
+  const f = await eligibleFixture();
+  const eligibility = new DeleteEligibilityStore(pool, () => true);
+  await admin.query(
+    "UPDATE monitoring_runs SET status = 'STOPPING', stop_requested_at = clock_timestamp() WHERE id = $1",
+    [f.runId],
+  );
+  assert.equal(await eligibility.resolve(f.execution), null);
+  await admin.query(
+    "UPDATE monitoring_runs SET status = 'STOPPED', finished_at = clock_timestamp() WHERE id = $1",
+    [f.runId],
+  );
+  await admin.query(
+    `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+     INSERT INTO monitoring_runs(id, channel_id, session_id, requested_by_account_id, credential_account_id,
+      status, requested_at, started_at) SELECT $1, $2, $3, $4, $4, 'RUNNING', at, at FROM moment`,
+    [randomUUID(), f.channelId, f.sessionId, f.accountId],
+  );
+  assert.equal(await eligibility.resolve(f.execution), null);
+});
 
 test('concurrent creation and another policy version reuse one execution under worker permissions', async () => {
   const f = await fixture();

@@ -48,7 +48,12 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     await client.query(`REVOKE ALL ON SCHEMA ${schemaSql} FROM ${roleSql}`);
     await client.query(`GRANT USAGE ON SCHEMA ${schemaSql} TO ${roleSql}`);
     await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA ${schemaSql} FROM ${roleSql}`);
-    for (const table of ['monitoring_runs', 'youtube_broadcasts']) {
+    for (const table of [
+      'monitoring_runs',
+      'youtube_broadcasts',
+      'channel_memberships',
+      'stream_sessions',
+    ]) {
       await client.query(`GRANT SELECT ON ${schemaSql}.${identifier(table)} TO ${roleSql}`);
     }
 

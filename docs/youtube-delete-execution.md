@@ -59,8 +59,20 @@ deduplication, and deadline-recovery checks using the worker role.
 `DeleteExecutor` resolves eligibility using the original persisted execution,
 loads credentials for that account, and rechecks authorization after token refresh
 and after claiming. An account change or failed final check prevents dispatch.
-The resolver is mandatory; no allow-all default is provided. Its database-backed
-implementation is still pending, so runtime integration must remain disabled.
+The resolver is mandatory; no allow-all default is provided.
+
+`DeleteEligibilityStore` checks persisted execution identity, original classification
+run, text-message target, RUNNING status without a stop request, an open YouTube
+session, and a checkpoint without chat completion. Both the original requester and
+credential account must still hold OWNER or MODERATOR membership in the channel.
+Credentials must contain an exact YouTube write scope; expired access tokens are
+allowed here because the token store refreshes them before dispatch. Local membership
+and stored scopes do not prove current YouTube permissions; provider rejection remains
+possible. No token ciphertext is read by the eligibility query.
+
+The required enable callback must reflect Google authentication and deletion feature
+configuration. Worker runtime wiring is still pending; deletion remains disabled.
+Database-backed eligibility tests run with `npm run test:delete-execution-store`.
 
 Provider calls occur after the claim transaction commits. Cancellation before
 dispatch records NOT_SENT when a claim exists. Transport exceptions become UNKNOWN.
@@ -77,8 +89,7 @@ Unit tests use injected dependencies and make no Google requests. Run
 ## Remaining implementation
 
 - Explicit retry eligibility and audited reconciliation.
-- Database-backed eligibility checks covering monitoring state, channel membership,
-  credential scope, and original run provenance; worker integration remains disabled.
+- Worker integration, explicit feature configuration, and dispatch scheduling.
 - Dashboard status delivery and controlled live verification.
 
 Schema constraints prevent invalid records; they do not prove that a network
