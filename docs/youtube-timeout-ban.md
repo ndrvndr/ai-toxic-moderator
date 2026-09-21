@@ -21,13 +21,27 @@ network failures and ambiguous responses become UNKNOWN and are never retried he
 Confirmation requires HTTP 200 or 201 and a valid ban resource with a nonempty ban ID,
 matching live chat, author, ban type, and timeout duration. A mismatched or unreadable
 success body remains UNKNOWN because the request may already have changed YouTube.
-The returned ban ID must eventually be persisted with the attempt result.
+The execution store persists the returned ban ID with a confirmed attempt result.
 
 The transport has a ten-second abort deadline and rejects redirects. It does not
 validate channel membership, resolve credentials, enforce policy, or deduplicate
-targets; those responsibilities belong to the future executor and persistence layer.
+targets; those responsibilities belong to the executor and persistence layer.
 
 ## Verification and remaining work
+
+`BanEligibilityStore` checks the original run, requester and credential memberships,
+write scope, open session/checkpoint, and exact persisted target, action, and duration.
+An explicit enable callback is required. It reads no token ciphertext.
+
+`BanExecutor` resolves tokens for the authorized account and rechecks eligibility
+after token acquisition and claim creation. Provider calls occur outside execution
+transactions. Failed final checks or cancellation prevent dispatch; transport uncertainty
+records UNKNOWN. A failed result commit returns RESULT_NOT_RECORDED and never authorizes
+redispatch. Stopping monitoring cannot retract a request already sent.
+
+Run `npm run test:ban-executor` for lifecycle tests. The shared database suite also
+composes real eligibility, store, executor, and adapter with mocked transport for
+TIMEOUT and BAN. These tests contact no Google endpoint.
 
 `BanExecutionStore` now provides database-backed `ensure`, `claim`, `complete`, and
 `recoverExpired` operations. It derives the author, live chat, action, and duration
@@ -43,7 +57,7 @@ recovery. No status, including a 429 rejection, permits another attempt.
 Claims, terminal results, and recovery publish `chat.updated` in the same transaction.
 Publication failure rolls back the state change. The event scope is derived from
 persisted provenance. The store does not contact YouTube, check current authorization,
-or run automatically; executor and runtime wiring are still pending.
+or run automatically. Executor and eligibility are available; runtime wiring remains pending.
 
 Database tests for both execution stores currently share the isolated fixture suite
 run by `npm run test:delete-execution-store`. Ban cases cover target derivation,
@@ -70,7 +84,7 @@ Run `npm run test:youtube-ban` for mock-transport tests. No test contacts YouTub
 The tests cover request construction, strict input validation, response matching,
 cancellation, transport failure, and safe rejection handling.
 
-Remaining work includes authorization and executor integration, periodic recovery wiring,
-scheduling, timeout/ban conflicts for the same author, transactional live events,
+Remaining work includes runtime scheduling and enable configuration, periodic recovery wiring,
+future escalation policy for conflicting author actions,
 dashboard status, and controlled live verification. DELETE retry rules must not be
 reused implicitly: repeating a timeout may change how long the user is restricted.

@@ -42,6 +42,7 @@
     "test:action-plan-store": "node --experimental-test-isolation=none --test tests/action-plan-store.test.cjs",
     "test:youtube-moderation": "node --experimental-test-isolation=none --test tests/youtube-moderation.test.cjs",
     "test:youtube-ban": "node --experimental-test-isolation=none --test tests/youtube-ban.test.cjs",
+    "test:ban-executor": "node --experimental-test-isolation=none --test tests/ban-executor.test.cjs",
     "test:delete-execution-store": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/delete-execution-store.test.cjs",
     "test:delete-executor": "node --experimental-test-isolation=none --test tests/delete-executor.test.cjs",
     "test:delete-coordinator": "node --experimental-test-isolation=none --test tests/delete-coordinator.test.cjs",

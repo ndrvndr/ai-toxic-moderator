@@ -6,6 +6,9 @@ const { source } = require('./helpers/source.cjs');
 
 const { DeleteExecutionStore } = source('apps/worker/src/ingestion/delete-execution-store.ts');
 const { BanExecutionStore } = source('apps/worker/src/ingestion/ban-execution-store.ts');
+const { BanEligibilityStore } = source('apps/worker/src/ingestion/ban-eligibility-store.ts');
+const { BanExecutor } = source('apps/worker/src/ingestion/ban-executor.ts');
+const { YoutubeBanAdapter } = source('packages/provider-adapters/src/youtube-ban.ts');
 const { DeleteCandidateStore } = source('apps/worker/src/ingestion/delete-candidate-store.ts');
 const { DeleteEligibilityStore } = source('apps/worker/src/ingestion/delete-eligibility-store.ts');
 const { DeleteExecutor } = source('apps/worker/src/ingestion/delete-executor.ts');
@@ -413,8 +416,8 @@ async function allResults(promises) {
   });
 }
 
-async function eligibleFixture() {
-  const f = await fixture();
+async function eligibleFixture(action = 'DELETE') {
+  const f = await fixture(action);
   await admin.query(
     "UPDATE monitoring_runs SET status = 'RUNNING', started_at = clock_timestamp() WHERE id = $1",
     [f.runId],
@@ -429,8 +432,104 @@ async function eligibleFixture() {
      VALUES($1, 'test-only', 'test-only', clock_timestamp() - interval '1 hour', $2)`,
     [f.accountId, 'openid https://www.googleapis.com/auth/youtube.force-ssl'],
   );
-  return { ...f, execution: await execution(f) };
+  return {
+    ...f,
+    execution:
+      action === 'DELETE'
+        ? await execution(f)
+        : await new BanExecutionStore(pool).ensure(f.planId, f.channelId, f.sessionId),
+  };
 }
+
+test('ban eligibility validates target fields, memberships, scope, and active original run', async () => {
+  for (const action of ['TIMEOUT', 'BAN']) {
+    const f = await eligibleFixture(action);
+    const eligibility = new BanEligibilityStore(pool, () => true);
+    assert.deepEqual(await eligibility.resolve(f.execution), { accountId: f.accountId });
+    assert.equal(await new BanEligibilityStore(pool, () => false).resolve(f.execution), null);
+    for (const change of [
+      { id: randomUUID() },
+      { plan_id: randomUUID() },
+      { channel_id: randomUUID() },
+      { session_id: randomUUID() },
+      { live_chat_id: 'other' },
+      { author_channel_id: 'other' },
+      { action: action === 'BAN' ? 'TIMEOUT' : 'BAN' },
+      { duration_seconds: '10' },
+    ]) {
+      assert.equal(await eligibility.resolve({ ...f.execution, ...change }), null);
+    }
+    await admin.query(
+      "UPDATE google_credentials SET scopes='https://www.googleapis.com/auth/youtube.readonly' WHERE account_id=$1",
+      [f.accountId],
+    );
+    assert.equal(await eligibility.resolve(f.execution), null);
+    await admin.query(
+      "UPDATE google_credentials SET scopes='https://www.googleapis.com/auth/youtube.force-ssl' WHERE account_id=$1",
+      [f.accountId],
+    );
+    await admin.query("UPDATE channel_memberships SET role='OPERATOR' WHERE channel_id=$1", [
+      f.channelId,
+    ]);
+    assert.equal(await eligibility.resolve(f.execution), null);
+    await admin.query("UPDATE channel_memberships SET role='OWNER' WHERE channel_id=$1", [
+      f.channelId,
+    ]);
+    await admin.query(
+      'UPDATE youtube_chat_checkpoints SET chat_ended_at=clock_timestamp() WHERE session_id=$1',
+      [f.sessionId],
+    );
+    assert.equal(await eligibility.resolve(f.execution), null);
+    await admin.query(
+      'UPDATE youtube_chat_checkpoints SET chat_ended_at=NULL WHERE session_id=$1',
+      [f.sessionId],
+    );
+    await admin.query(
+      "UPDATE monitoring_runs SET status='STOPPING', stop_requested_at=clock_timestamp() WHERE id=$1",
+      [f.runId],
+    );
+    assert.equal(await eligibility.resolve(f.execution), null);
+  }
+});
+
+test('ban executor integration persists confirmed targets and never redispatches', async () => {
+  for (const action of ['TIMEOUT', 'BAN']) {
+    const f = await eligibleFixture(action);
+    const requests = [];
+    const executor = new BanExecutor(
+      new BanExecutionStore(pool),
+      new BanEligibilityStore(pool, () => true),
+      {
+        async accessToken(accountId) {
+          assert.equal(accountId, f.accountId);
+          return 'test-token';
+        },
+      },
+      new YoutubeBanAdapter(async (_url, init) => {
+        const body = JSON.parse(init.body);
+        requests.push(body);
+        return Response.json({
+          kind: 'youtube#liveChatBan',
+          id: 'confirmed-ban',
+          snippet: body.snippet,
+        });
+      }),
+    );
+    const result = await executor.execute(executeInput(f));
+    assert.equal(result.status, 'RECORDED');
+    assert.equal(result.result.ban_id, 'confirmed-ban');
+    assert.equal(requests[0].snippet.liveChatId, f.execution.live_chat_id);
+    assert.equal(requests[0].snippet.bannedUserDetails.channelId, 'test-author');
+    assert.equal(requests[0].snippet.banDurationSeconds, action === 'TIMEOUT' ? 300 : undefined);
+    const stored = await admin.query(
+      'SELECT ban_id,status FROM youtube_ban_attempts WHERE execution_id=$1',
+      [f.execution.id],
+    );
+    assert.deepEqual(stored.rows[0], { ban_id: 'confirmed-ban', status: 'SUCCEEDED' });
+    assert.equal((await executor.execute(executeInput(f))).reason, 'ALREADY_ATTEMPTED');
+    assert.equal(requests.length, 1);
+  }
+});
 
 function integratedExecutor(f, transport, tokenHook = async () => {}) {
   return new DeleteExecutor(
