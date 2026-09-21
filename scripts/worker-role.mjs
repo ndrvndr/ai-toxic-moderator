@@ -81,11 +81,20 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     await client.query(
       `GRANT SELECT,INSERT ON ${schemaSql}.youtube_moderation_action_plans TO ${roleSql}`,
     );
-    for (const table of ['youtube_delete_executions', 'youtube_delete_attempts']) {
+    for (const table of [
+      'youtube_delete_executions',
+      'youtube_delete_attempts',
+      'youtube_ban_executions',
+      'youtube_ban_attempts',
+    ]) {
       await client.query(`GRANT SELECT,INSERT ON ${schemaSql}.${identifier(table)} TO ${roleSql}`);
     }
     // Row locking the execution serializes attempt creation. Identity changes remain forbidden.
     await client.query(`GRANT UPDATE(id) ON ${schemaSql}.youtube_delete_executions TO ${roleSql}`);
+    await client.query(`GRANT UPDATE(id) ON ${schemaSql}.youtube_ban_executions TO ${roleSql}`);
+    await client.query(
+      `GRANT UPDATE(status, finished_at, http_status, error_code, ban_id) ON ${schemaSql}.youtube_ban_attempts TO ${roleSql}`,
+    );
     await client.query(
       `GRANT UPDATE(status, finished_at, http_status, error_code)
        ON ${schemaSql}.youtube_delete_attempts TO ${roleSql}`,

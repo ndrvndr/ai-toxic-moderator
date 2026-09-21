@@ -111,6 +111,7 @@ async function fixture() {
 
 async function insertObservation(f, id = randomUUID()) {
   const payload = {
+    authorDetails: { channelId: 'test-viewer-channel' },
     snippet: {
       type: 'textMessageEvent',
       liveChatId: 'test-live-chat',
@@ -607,6 +608,137 @@ async function insertActionPlan(
 
   return id;
 }
+
+async function banFixture(action = 'TIMEOUT') {
+  const f = await fixture();
+  const observationId = await insertObservation(f);
+  const classificationId = await insertClassification(f, observationId);
+  const durationSeconds = action === 'TIMEOUT' ? 300 : null;
+  const planId = await insertActionPlan(f, classificationId, { action, durationSeconds });
+  const broadcast = await client.query(
+    'SELECT live_chat_id FROM youtube_broadcasts WHERE session_id = $1',
+    [f.sessionId],
+  );
+  return {
+    ...f,
+    classificationId,
+    planId,
+    action,
+    durationSeconds,
+    liveChatId: broadcast.rows[0].live_chat_id,
+    authorId: 'test-viewer-channel',
+  };
+}
+
+async function insertBanExecution(f) {
+  const id = randomUUID();
+  await client.query(
+    `INSERT INTO youtube_ban_executions(id, plan_id, channel_id, session_id, live_chat_id, author_channel_id, action, duration_seconds)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [id, f.planId, f.channelId, f.sessionId, f.liveChatId, f.authorId, f.action, f.durationSeconds],
+  );
+  return id;
+}
+
+async function insertBanAttempt(executionId) {
+  const id = randomUUID();
+  await client.query(
+    `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+     INSERT INTO youtube_ban_attempts(id, execution_id, owner_id, started_at, deadline_at)
+     SELECT $1,$2,$3,at,at + interval '30 seconds' FROM moment`,
+    [id, executionId, randomUUID()],
+  );
+  return id;
+}
+
+test('ban execution migration is repeatable and accepts TIMEOUT and BAN provenance', async () => {
+  await migrate(client);
+  for (const action of ['TIMEOUT', 'BAN']) {
+    const f = await banFixture(action);
+    const id = await insertBanExecution(f);
+    const stored = await client.query(
+      'SELECT action, duration_seconds::text FROM youtube_ban_executions WHERE id = $1',
+      [id],
+    );
+    assert.deepEqual(stored.rows[0], {
+      action,
+      duration_seconds: action === 'TIMEOUT' ? '300' : null,
+    });
+  }
+});
+
+test('ban execution rejects substituted target, scope, duration, live chat, and action', async () => {
+  const f = await banFixture();
+  const other = await fixture();
+  for (const change of [
+    { authorId: 'other' },
+    { liveChatId: 'other-chat' },
+    { channelId: other.channelId },
+    { sessionId: other.sessionId },
+    { durationSeconds: 60 },
+    { action: 'BAN', durationSeconds: null },
+  ]) {
+    await assert.rejects(insertBanExecution({ ...f, ...change }), { code: '23514' });
+  }
+  await assert.rejects(insertBanExecution(await banFixture('DELETE')), { code: '23514' });
+});
+
+test('a second action or policy cannot replace the first author execution', async () => {
+  const f = await banFixture();
+  const id = await insertBanExecution(f);
+  const banPlan = await insertActionPlan(f, f.classificationId, {
+    policyVersion: 'ban-escalation',
+    action: 'BAN',
+  });
+  await assert.rejects(
+    insertBanExecution({ ...f, planId: banPlan, action: 'BAN', durationSeconds: null }),
+    { code: '23505' },
+  );
+  await assert.rejects(
+    client.query('UPDATE youtube_ban_executions SET duration_seconds = 60 WHERE id = $1', [id]),
+  );
+});
+
+test('ban attempt success requires a provider ban ID and terminal records are immutable', async () => {
+  const id = await insertBanAttempt(await insertBanExecution(await banFixture('BAN')));
+  await assert.rejects(
+    client.query(
+      "UPDATE youtube_ban_attempts SET status = 'SUCCEEDED', http_status = 200, finished_at = clock_timestamp() WHERE id = $1",
+      [id],
+    ),
+    { code: '23514' },
+  );
+  await assert.rejects(
+    client.query('UPDATE youtube_ban_attempts SET owner_id = $2 WHERE id = $1', [id, randomUUID()]),
+    { code: '23514' },
+  );
+  await client.query(
+    "UPDATE youtube_ban_attempts SET status = 'SUCCEEDED', http_status = 200, ban_id = 'provider-ban-id', finished_at = clock_timestamp() WHERE id = $1",
+    [id],
+  );
+  await assert.rejects(
+    client.query("UPDATE youtube_ban_attempts SET ban_id = 'changed' WHERE id = $1", [id]),
+    { code: '23514' },
+  );
+});
+
+test('all terminal ban outcomes block another attempt, including rate limits and unknown results', async () => {
+  for (const [status, http, code, banId] of [
+    ['SUCCEEDED', 201, null, 'ban-1'],
+    ['REJECTED', 429, 'YOUTUBE_RATE_LIMITED', null],
+    ['NOT_SENT', null, 'REQUEST_CANCELLED', null],
+    ['UNKNOWN', 200, 'UNEXPECTED_RESPONSE', null],
+  ]) {
+    const executionId = await insertBanExecution(await banFixture());
+    const id = await insertBanAttempt(executionId);
+    await assert.rejects(insertBanAttempt(executionId), { code: '23505' });
+    await client.query(
+      'UPDATE youtube_ban_attempts SET status=$2,http_status=$3,error_code=$4,ban_id=$5,finished_at=clock_timestamp() WHERE id=$1',
+      [id, status, http, code, banId],
+    );
+    await assert.rejects(insertBanAttempt(executionId), { code: '23505' });
+  }
+});
 
 test('an action plan references a classification in the same session', async () => {
   const f = await fixture();

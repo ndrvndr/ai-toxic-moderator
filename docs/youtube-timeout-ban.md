@@ -29,11 +29,27 @@ targets; those responsibilities belong to the future executor and persistence la
 
 ## Verification and remaining work
 
+Migration `013_youtube_ban_execution.sql` adds immutable execution identity and
+single-attempt history. The database validates the original plan, scoped author,
+live chat, action, and duration. One execution per channel/session/author prevents
+competing TIMEOUT and BAN actions or policy versions from silently replacing each
+other. This initial lifecycle does not support repeated timeouts or escalation.
+
+Attempts begin DISPATCHED and accept one terminal result. SUCCEEDED requires the
+provider ban ID and HTTP 200 or 201; malformed success responses can remain UNKNOWN.
+Every prior attempt blocks another one, including rate-limit rejections. DELETE retry
+rules do not apply. Worker permissions allow insert/read, execution row locking, and
+result-column updates; the API role has read-only access to these two tables.
+
+Run `npm run test:classification-schema` for scope, identity, duration, result-shape,
+and immutability checks. Apply migrations before reprovisioning runtime/worker roles.
+No worker executor or live action is enabled by this schema.
+
 Run `npm run test:youtube-ban` for mock-transport tests. No test contacts YouTube.
 The tests cover request construction, strict input validation, response matching,
 cancellation, transport failure, and safe rejection handling.
 
-Remaining work includes execution identity and attempt storage, authorization,
+Remaining work includes the execution store and recovery, authorization,
 scheduling, timeout/ban conflicts for the same author, transactional live events,
 dashboard status, and controlled live verification. DELETE retry rules must not be
 reused implicitly: repeating a timeout may change how long the user is restricted.
