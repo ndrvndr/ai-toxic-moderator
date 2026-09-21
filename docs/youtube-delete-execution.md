@@ -138,8 +138,18 @@ includes it. Classification results remain independent of action execution resul
 Reads retain existing session and channel access checks and expose no attempt owner,
 credentials, or raw provider error details. HTTP tests cover all attempt statuses.
 
-At this stage, results are available on a fresh chat API read. Action-state changes
-do not yet publish a WebSocket refresh event, and dashboard rendering is still pending.
+Deletion claims, terminal results, and expired-attempt recovery now append `chat.updated`
+inside the same transaction as the state change. Failed publication rolls back both
+the state change and sequence counter. Repeated or rejected transitions publish no event.
+Recovery coalesces updates per channel, session, and original classification run, acquiring
+feed counters in consistent scope order. Scope is resolved from persisted execution
+provenance rather than caller-supplied claim fields.
+
+The existing WebSocket feed delivers these committed events, and the dashboard's
+existing `chat.updated` handler refreshes the chat API. No new frame type or database
+migration is required. Events contain no provider response, credentials, or message text.
+Dashboard rendering of deletion badges is still pending. Database-backed tests cover
+publication, concurrency, and rollback; browser verification remains a separate step.
 
 - Explicit retry eligibility and audited reconciliation.
 - Dashboard status delivery and controlled live verification.

@@ -118,6 +118,14 @@ async function execution(f) {
   return store.ensure(f.planId, f.channelId, f.sessionId);
 }
 
+async function eventsFor(row) {
+  const result = await admin.query(
+    'SELECT sequence::text, event_type, run_id FROM live_events WHERE channel_id = $1 AND session_id = $2 ORDER BY sequence',
+    [row.channel_id, row.session_id],
+  );
+  return result.rows;
+}
+
 async function allResults(promises) {
   const settled = await Promise.allSettled(promises);
   return settled.map((result) => {
@@ -306,7 +314,8 @@ test('NONE plans and substituted scopes cannot create executions', async () => {
 });
 
 test('only one concurrent owner receives a durable dispatch claim', async () => {
-  const row = await execution(await fixture());
+  const f = await fixture();
+  const row = await execution(f);
   const claims = await allResults([
     store.claim(row.id, randomUUID()),
     store.claim(row.id, randomUUID()),
@@ -320,6 +329,10 @@ test('only one concurrent owner receives a durable dispatch claim', async () => 
   assert.deepEqual(stored.rows[0], { owner_id: claim.owner_id, status: 'DISPATCHED' });
   assert.equal(await store.complete(claim, { status: 'SUCCEEDED', http_status: 204 }), true);
   assert.equal(await store.claim(row.id, randomUUID()), null);
+  assert.deepEqual(await eventsFor(row), [
+    { sequence: '1', event_type: 'chat.updated', run_id: f.runId },
+    { sequence: '2', event_type: 'chat.updated', run_id: f.runId },
+  ]);
 });
 
 test('wrong owners and substituted attempts cannot complete a claim', async () => {
@@ -344,6 +357,7 @@ test('concurrent completion records only one terminal result', async () => {
     store.complete(claim, success),
   ]);
   assert.deepEqual(results.sort(), [false, true]);
+  assert.equal((await eventsFor(claim.execution)).length, 2);
 });
 
 for (const result of [
@@ -401,4 +415,68 @@ test('crash recovery marks expired attempts unknown and rejects late completion'
   assert.equal(await store.claim(row.id, randomUUID()), null);
   assert.equal(await store.complete(lateClaim, { status: 'SUCCEEDED', http_status: 204 }), false);
   assert.equal(await store.complete(live, { status: 'NOT_SENT', code: 'REQUEST_CANCELLED' }), true);
+  assert.equal((await eventsFor(row)).length, 1);
+  assert.equal((await eventsFor(row))[0].event_type, 'chat.updated');
+});
+
+test('event publication failure rolls back claims and terminal results without cursor gaps', async () => {
+  const row = await execution(await fixture());
+  async function withoutEventPermission(work) {
+    await admin.query(`REVOKE INSERT ON ${schema}.live_events FROM ${role}`);
+    try {
+      await work();
+    } finally {
+      await admin.query(`GRANT INSERT ON ${schema}.live_events TO ${role}`);
+    }
+  }
+  await withoutEventPermission(async () => {
+    await assert.rejects(store.claim(row.id, randomUUID()), { code: '42501' });
+  });
+  assert.equal((await eventsFor(row)).length, 0);
+  const attempts = await admin.query(
+    'SELECT id FROM youtube_delete_attempts WHERE execution_id = $1',
+    [row.id],
+  );
+  assert.equal(attempts.rows.length, 0);
+  const claim = await store.claim(row.id, randomUUID(), 300);
+  const success = { status: 'SUCCEEDED', http_status: 204 };
+  await withoutEventPermission(async () => {
+    await assert.rejects(store.complete(claim, success), { code: '42501' });
+  });
+  const attempt = await admin.query('SELECT status FROM youtube_delete_attempts WHERE id = $1', [
+    claim.attempt_id,
+  ]);
+  assert.equal(attempt.rows[0].status, 'DISPATCHED');
+  assert.equal((await eventsFor(row)).length, 1);
+  assert.equal(await store.complete(claim, success), true);
+  assert.deepEqual(
+    (await eventsFor(row)).map((event) => event.sequence),
+    ['1', '2'],
+  );
+});
+
+test('recovery and its refresh event roll back together on publication failure', async () => {
+  const row = await execution(await fixture());
+  const id = randomUUID();
+  await admin.query(
+    `INSERT INTO youtube_delete_attempts(id, execution_id, attempt_number, owner_id, started_at, deadline_at)
+     VALUES($1, $2, 1, $3, '2020-01-01T00:00:00Z', '2020-01-01T00:00:30Z')`,
+    [id, row.id, randomUUID()],
+  );
+  await admin.query(`REVOKE INSERT ON ${schema}.live_events FROM ${role}`);
+  try {
+    await assert.rejects(store.recoverExpired(), { code: '42501' });
+  } finally {
+    await admin.query(`GRANT INSERT ON ${schema}.live_events TO ${role}`);
+  }
+  const attempt = await admin.query('SELECT status FROM youtube_delete_attempts WHERE id = $1', [
+    id,
+  ]);
+  assert.equal(attempt.rows[0].status, 'DISPATCHED');
+  assert.equal((await eventsFor(row)).length, 0);
+  await store.recoverExpired();
+  assert.deepEqual(
+    (await eventsFor(row)).map((event) => event.sequence),
+    ['1'],
+  );
 });

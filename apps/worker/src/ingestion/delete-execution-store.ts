@@ -1,5 +1,10 @@
 import { uuid } from '@moderator/contracts';
-import { transaction, type createPool } from '@moderator/persistence';
+import {
+  appendLiveEvent,
+  transaction,
+  type createPool,
+  type PoolClient,
+} from '@moderator/persistence';
 import type { YoutubeDeleteResult } from '@moderator/provider-adapters';
 import { randomUUID } from 'node:crypto';
 
@@ -95,6 +100,7 @@ export class DeleteExecutionStore {
          RETURNING deadline_at`,
         [attemptId, executionId, ownerId, timeoutSeconds],
       );
+      await this.publishChatUpdates(client, [executionId]);
       return Object.freeze({
         execution,
         attempt_id: attemptId,
@@ -133,7 +139,9 @@ export class DeleteExecutionStore {
           result.status === 'SUCCEEDED' ? null : result.code,
         ],
       );
-      return response.rowCount === 1;
+      if (response.rowCount !== 1) return false;
+      await this.publishChatUpdates(client, [claim.execution.id]);
+      return true;
     });
   }
 
@@ -142,8 +150,9 @@ export class DeleteExecutionStore {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
       throw new Error('Recovery batch size must be between 1 and 1000.');
     }
-    const result = await this.pool.query(
-      `WITH expired AS (
+    return transaction(this.pool, async (client) => {
+      const result = await client.query<{ execution_id: string }>(
+        `WITH expired AS (
          SELECT id FROM youtube_delete_attempts
          WHERE status = 'DISPATCHED' AND deadline_at <= clock_timestamp()
          ORDER BY deadline_at, id LIMIT $1 FOR UPDATE SKIP LOCKED
@@ -152,9 +161,39 @@ export class DeleteExecutionStore {
        SET status = 'UNKNOWN', error_code = 'EXECUTION_DEADLINE_EXCEEDED',
            finished_at = GREATEST(clock_timestamp(), a.started_at)
        FROM expired WHERE a.id = expired.id AND a.status = 'DISPATCHED'
-       RETURNING a.id`,
-      [limit],
+       RETURNING a.execution_id`,
+        [limit],
+      );
+      await this.publishChatUpdates(
+        client,
+        result.rows.map((row) => row.execution_id),
+      );
+      return result.rowCount ?? 0;
+    });
+  }
+
+  private async publishChatUpdates(client: PoolClient, executionIds: string[]): Promise<void> {
+    if (!executionIds.length) return;
+    // Resolve scope from persisted provenance, not from the caller's claim object.
+    // Consistent counter lock order avoids cycles between concurrent recovery batches.
+    const scopes = await client.query<{ channel_id: string; session_id: string; run_id: string }>(
+      `SELECT DISTINCT e.channel_id, e.session_id, c.run_id
+       FROM youtube_delete_executions e
+       JOIN youtube_moderation_action_plans p ON p.id = e.plan_id
+         AND p.channel_id = e.channel_id AND p.session_id = e.session_id
+       JOIN youtube_chat_classifications c ON c.id = p.classification_id
+         AND c.channel_id = p.channel_id AND c.session_id = p.session_id
+       WHERE e.id = ANY($1::uuid[])
+       ORDER BY e.channel_id, e.session_id, c.run_id`,
+      [executionIds],
     );
-    return result.rowCount ?? 0;
+    for (const scope of scopes.rows) {
+      await appendLiveEvent(client, {
+        channelId: scope.channel_id,
+        sessionId: scope.session_id,
+        runId: scope.run_id,
+        type: 'chat.updated',
+      });
+    }
   }
 }
