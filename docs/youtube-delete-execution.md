@@ -92,6 +92,9 @@ Unit tests use injected dependencies and make no Google requests. Run
 and `GOOGLE_AUTH_ENABLED`. Leave it false while completing the remaining verification.
 Configuration is loaded at startup; changing an environment file requires a worker restart.
 The existing default action policy still has an empty deletion rule list and produces NONE.
+An optional [controlled deletion test policy](controlled-deletion-test.md) can be enabled
+for one internal session and one test viewer using an exact marker. It is separate from
+the default policy and is not evidence of production moderation accuracy.
 Enabling the executor does not change that policy, but it can process already persisted
 DELETE plans whose original monitoring runs are still eligible.
 

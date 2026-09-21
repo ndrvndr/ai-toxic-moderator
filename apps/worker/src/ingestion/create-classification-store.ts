@@ -2,18 +2,21 @@ import { ActionPlanner, ModerationPolicy, RuleDetectionEngine } from '@moderator
 
 import { ActionPlanStore } from './action-plan-store';
 import { ClassificationStore } from './classification-store';
+import { controlledDeletePolicy, type ControlledDeleteScope } from './controlled-delete-policy';
 import { DEFAULT_RULES } from './default-rules';
 
 export function createClassificationStore(
   actionPlans: Pick<ActionPlanStore, 'save'> = new ActionPlanStore(),
+  testScope?: ControlledDeleteScope,
 ) {
+  const controlled = testScope ? controlledDeletePolicy(testScope) : undefined;
   return new ClassificationStore(
-    new RuleDetectionEngine(DEFAULT_RULES),
+    controlled?.engine ?? new RuleDetectionEngine(DEFAULT_RULES),
     new ModerationPolicy(),
-    'rules-1',
+    controlled?.version ?? 'rules-1',
     'policy-1',
     {
-      planner: new ActionPlanner({ version: 'actions-1', delete_rules: [] }),
+      planner: controlled?.planner ?? new ActionPlanner({ version: 'actions-1', delete_rules: [] }),
       store: actionPlans,
     },
   );

@@ -8,6 +8,7 @@ export class DeleteEligibilityStore implements DeleteEligibility {
   constructor(
     private readonly pool: ReturnType<typeof createPool>,
     private readonly isEnabled: () => boolean,
+    private readonly allowedTestPolicyVersion: string | null = null,
   ) {}
 
   async resolve(execution: Readonly<DeleteExecution>): Promise<{ accountId: string } | null> {
@@ -41,6 +42,7 @@ export class DeleteEligibilityStore implements DeleteEligibility {
        WHERE e.id = $1 AND e.plan_id = $2 AND e.channel_id = $3 AND e.session_id = $4
          AND e.external_message_id = $5 AND o.external_message_id = e.external_message_id
          AND p.action = 'DELETE' AND o.event_type = 'textMessageEvent'
+         AND (p.policy_version NOT LIKE 'delete-test-%' OR p.policy_version = $6)
          AND r.status = 'RUNNING' AND r.stop_requested_at IS NULL AND r.finished_at IS NULL
          AND s.source = 'YOUTUBE' AND s.closed_at IS NULL AND cp.chat_ended_at IS NULL
          AND credential_member.role IN ('OWNER', 'MODERATOR')
@@ -55,6 +57,7 @@ export class DeleteEligibilityStore implements DeleteEligibility {
         execution.channel_id,
         execution.session_id,
         execution.external_message_id,
+        this.allowedTestPolicyVersion,
       ],
     );
     // Configuration may have changed while the database request was in flight.

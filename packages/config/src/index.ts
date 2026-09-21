@@ -25,6 +25,11 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  YOUTUBE_DELETE_TEST_SESSION_ID: z.union([z.literal(''), z.uuid()]).default(''),
+  YOUTUBE_DELETE_TEST_AUTHOR_ID: z
+    .string()
+    .regex(/^(?:UC[A-Za-z0-9_-]{22})?$/)
+    .default(''),
   DEV_ACCOUNT_ID: z.uuid().default('10000000-0000-4000-8000-000000000001'),
   DASHBOARD_ORIGIN: z
     .url()
@@ -58,6 +63,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         result.error.issues.map((i) => i.path.join('.')).join(', '),
     );
   const host = new URL(result.data.DATABASE_URL).hostname;
+  if (
+    Boolean(result.data.YOUTUBE_DELETE_TEST_SESSION_ID) !==
+    Boolean(result.data.YOUTUBE_DELETE_TEST_AUTHOR_ID)
+  ) {
+    throw new Error('Controlled deletion requires both a test session and a test author channel.');
+  }
   if (
     result.data.YOUTUBE_DELETE_ENABLED &&
     (!result.data.WORKER_ENABLED || !result.data.GOOGLE_AUTH_ENABLED)

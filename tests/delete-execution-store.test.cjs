@@ -331,6 +331,24 @@ test('eligibility resolves original credentials with the worker role and allows 
   assert.equal(await new DeleteEligibilityStore(pool, () => false).resolve(f.execution), null);
 });
 
+test('controlled test plans require the currently enabled policy scope', async () => {
+  const f = await eligibleFixture();
+  const planId = randomUUID();
+  await insertPlan(f, planId, 'delete-test-fixture');
+  // Use a fresh target so the execution retains the controlled plan as its original provenance.
+  await admin.query('DELETE FROM youtube_delete_executions WHERE id = $1', [f.execution.id]);
+  const row = await store.ensure(planId, f.channelId, f.sessionId);
+  assert.equal(await new DeleteEligibilityStore(pool, () => true).resolve(row), null);
+  assert.equal(
+    await new DeleteEligibilityStore(pool, () => true, 'delete-test-other').resolve(row),
+    null,
+  );
+  assert.deepEqual(
+    await new DeleteEligibilityStore(pool, () => true, 'delete-test-fixture').resolve(row),
+    { accountId: f.accountId },
+  );
+});
+
 test('eligibility rejects substituted execution provenance and target', async () => {
   const f = await eligibleFixture();
   const eligibility = new DeleteEligibilityStore(pool, () => true);

@@ -13,6 +13,7 @@ import {
 } from '@moderator/provider-adapters';
 
 import { BatchWriter } from './ingestion/batch-writer';
+import { controlledDeleteVersion } from './ingestion/controlled-delete-policy';
 import { IngestionCoordinator } from './ingestion/coordinator';
 import { createClassificationStore } from './ingestion/create-classification-store';
 import { DeleteCandidateStore } from './ingestion/delete-candidate-store';
@@ -76,7 +77,14 @@ async function bootstrap() {
     await pool.query('SELECT id, status, deadline_at FROM youtube_delete_attempts LIMIT 0');
 
     const leases = new LeaseStore(pool);
-    const classifications = createClassificationStore();
+    const testScope =
+      config.YOUTUBE_DELETE_ENABLED && config.YOUTUBE_DELETE_TEST_SESSION_ID
+        ? {
+            sessionId: config.YOUTUBE_DELETE_TEST_SESSION_ID,
+            authorChannelId: config.YOUTUBE_DELETE_TEST_AUTHOR_ID,
+          }
+        : undefined;
+    const classifications = createClassificationStore(undefined, testScope);
     const writer = new BatchWriter(leases, classifications);
     const tokens = new GoogleTokenStore(pool, config, new GoogleProvider());
     const cycle = new PollCycle(leases, writer, tokens, new YoutubeChatAdapter());
@@ -94,7 +102,11 @@ async function bootstrap() {
         config.WORKER_ENABLED && config.GOOGLE_AUTH_ENABLED && config.YOUTUBE_DELETE_ENABLED;
       const executor = new DeleteExecutor(
         executions,
-        new DeleteEligibilityStore(pool, enabled),
+        new DeleteEligibilityStore(
+          pool,
+          enabled,
+          testScope ? controlledDeleteVersion(testScope) : null,
+        ),
         tokens,
         new YoutubeModerationAdapter(),
       );
