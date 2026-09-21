@@ -17,6 +17,10 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  YOUTUBE_DELETE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   DEV_AUTH_ENABLED: z
     .enum(['true', 'false'])
     .default('false')
@@ -54,6 +58,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         result.error.issues.map((i) => i.path.join('.')).join(', '),
     );
   const host = new URL(result.data.DATABASE_URL).hostname;
+  if (
+    result.data.YOUTUBE_DELETE_ENABLED &&
+    (!result.data.WORKER_ENABLED || !result.data.GOOGLE_AUTH_ENABLED)
+  ) {
+    throw new Error('YouTube deletion requires the worker and Google authentication.');
+  }
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(host))
     throw new Error('Foundation database must be local');
   if (result.data.GOOGLE_AUTH_ENABLED) {

@@ -18,7 +18,7 @@ export type DeleteExecutorResult =
   | { status: 'RECORDED'; attemptId: string; result: YoutubeDeleteResult }
   | { status: 'RESULT_NOT_RECORDED'; attemptId: string };
 
-/** One attempt only. Runtime wiring requires a database-backed eligibility implementation. */
+/** One attempt only. Runtime uses database-backed eligibility before dispatch. */
 export class DeleteExecutor {
   constructor(
     private readonly store: Pick<DeleteExecutionStore, 'ensure' | 'claim' | 'complete'>,

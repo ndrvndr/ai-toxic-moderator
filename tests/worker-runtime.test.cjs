@@ -4,6 +4,32 @@ const { source } = require('./helpers/source.cjs');
 
 const { WorkerRuntime } = source('apps/worker/src/ingestion/worker-runtime.ts');
 
+test('ingestion and deletion run independently and both drain before the pool closes', async () => {
+  const events = [];
+  const cycle = (name) => ({
+    async tick(signal) {
+      events.push(`${name}-started`);
+      await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+      events.push(`${name}-finished`);
+    },
+  });
+  const runtime = new WorkerRuntime(
+    cycle('ingestion'),
+    {
+      async end() {
+        events.push('pool-closed');
+      },
+    },
+    cycle('deletion'),
+  );
+  runtime.start();
+  assert.deepEqual(events, ['ingestion-started', 'deletion-started']);
+  await runtime.onApplicationShutdown();
+  assert.equal(events.at(-1), 'pool-closed');
+  assert.ok(events.includes('ingestion-finished'));
+  assert.ok(events.includes('deletion-finished'));
+});
+
 test('shutdown cancels the current cycle before closing the pool', async () => {
   const events = [];
 

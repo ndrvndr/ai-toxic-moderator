@@ -5,11 +5,21 @@ import { NestFactory } from '@nestjs/core';
 
 import { loadConfig } from '@moderator/config';
 import { createPool } from '@moderator/persistence';
-import { GoogleProvider, GoogleTokenStore, YoutubeChatAdapter } from '@moderator/provider-adapters';
+import {
+  GoogleProvider,
+  GoogleTokenStore,
+  YoutubeChatAdapter,
+  YoutubeModerationAdapter,
+} from '@moderator/provider-adapters';
 
 import { BatchWriter } from './ingestion/batch-writer';
 import { IngestionCoordinator } from './ingestion/coordinator';
 import { createClassificationStore } from './ingestion/create-classification-store';
+import { DeleteCandidateStore } from './ingestion/delete-candidate-store';
+import { DeleteCoordinator } from './ingestion/delete-coordinator';
+import { DeleteEligibilityStore } from './ingestion/delete-eligibility-store';
+import { DeleteExecutionStore } from './ingestion/delete-execution-store';
+import { DeleteExecutor } from './ingestion/delete-executor';
 import { LeaseStore } from './ingestion/lease-store';
 import { PollCycle } from './ingestion/poll-cycle';
 import { RetryStore } from './ingestion/retry-store';
@@ -71,7 +81,24 @@ async function bootstrap() {
 
     const coordinator = new IngestionCoordinator(pool, leases, cycle, new RetryStore(leases));
 
-    runtime = new WorkerRuntime(coordinator, pool);
+    let deletions: DeleteCoordinator | undefined;
+    if (config.YOUTUBE_DELETE_ENABLED) {
+      await pool.query('SELECT id FROM youtube_delete_executions LIMIT 0');
+      await pool.query('SELECT id FROM youtube_delete_attempts LIMIT 0');
+      await pool.query('SELECT account_id, role FROM channel_memberships LIMIT 0');
+      await pool.query('SELECT id, closed_at FROM stream_sessions LIMIT 0');
+      const enabled = () =>
+        config.WORKER_ENABLED && config.GOOGLE_AUTH_ENABLED && config.YOUTUBE_DELETE_ENABLED;
+      const executor = new DeleteExecutor(
+        new DeleteExecutionStore(pool),
+        new DeleteEligibilityStore(pool, enabled),
+        tokens,
+        new YoutubeModerationAdapter(),
+      );
+      deletions = new DeleteCoordinator(new DeleteCandidateStore(pool), executor, enabled);
+    }
+
+    runtime = new WorkerRuntime(coordinator, pool, deletions);
 
     @Module({
       providers: [{ provide: WorkerRuntime, useValue: runtime }],

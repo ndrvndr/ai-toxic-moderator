@@ -5,6 +5,7 @@ const { Client, Pool } = require('pg');
 const { source } = require('./helpers/source.cjs');
 
 const { DeleteExecutionStore } = source('apps/worker/src/ingestion/delete-execution-store.ts');
+const { DeleteCandidateStore } = source('apps/worker/src/ingestion/delete-candidate-store.ts');
 const { DeleteEligibilityStore } = source('apps/worker/src/ingestion/delete-eligibility-store.ts');
 const schema = `delete_store_${randomUUID().replaceAll('-', '')}`;
 const role = `delete_worker_${randomUUID().replaceAll('-', '')}`;
@@ -143,6 +144,34 @@ async function eligibleFixture() {
   );
   return { ...f, execution: await execution(f) };
 }
+
+test('candidate discovery uses worker permissions and excludes attempted targets across policy versions', async () => {
+  const f = await eligibleFixture();
+  const otherPlan = randomUUID();
+  await insertPlan(f, otherPlan, 'candidate-actions-2');
+  const starting = await fixture();
+  const candidates = new DeleteCandidateStore(pool);
+  async function scan() {
+    const ids = [];
+    let cursor = null;
+    for (;;) {
+      const row = await candidates.next(cursor);
+      if (!row) return ids;
+      assert.ok(!ids.includes(row.planId), 'The cursor must advance.');
+      ids.push(row.planId);
+      cursor = row.planId;
+    }
+  }
+  const before = await scan();
+  assert.ok(before.includes(f.planId));
+  assert.ok(before.includes(otherPlan));
+  assert.ok(!before.includes(starting.planId));
+  const claim = await store.claim(f.execution.id, randomUUID());
+  const after = await scan();
+  assert.ok(!after.includes(f.planId));
+  assert.ok(!after.includes(otherPlan));
+  await store.complete(claim, { status: 'NOT_SENT', code: 'REQUEST_CANCELLED' });
+});
 
 test('eligibility resolves original credentials with the worker role and allows token refresh', async () => {
   const f = await eligibleFixture();
