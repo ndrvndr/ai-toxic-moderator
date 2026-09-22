@@ -1,5 +1,5 @@
 import { chatCursor, chatPage, chatQuery, uuid } from '@moderator/contracts';
-import { transaction } from '@moderator/persistence';
+import { BAN_DISPATCH_BLOCK_REASON_SQL, transaction } from '@moderator/persistence';
 import { Controller, Get, Module, Param, Query, Req } from '@nestjs/common';
 
 import { DatabaseService } from '../database.module';
@@ -93,6 +93,7 @@ class ChatController {
         author_action_type: 'TIMEOUT' | 'BAN' | null;
         author_action_status: string | null;
         author_action_duration: string | null;
+        author_action_block_reason: string | null;
       }>(
         `
           SELECT
@@ -126,7 +127,8 @@ class ChatController {
             deletion.deletion_status,
             author_action.author_action_type,
             author_action.author_action_status,
-            author_action.author_action_duration
+            author_action.author_action_duration,
+            author_action.author_action_block_reason
           FROM youtube_chat_observations
           LEFT JOIN LATERAL (
             SELECT
@@ -167,10 +169,27 @@ class ChatController {
            LEFT JOIN LATERAL (
   SELECT
     e.action AS author_action_type,
-    COALESCE(a.status, 'PENDING') AS author_action_status,
-    e.duration_seconds::text AS author_action_duration
+    CASE
+      WHEN a.id IS NOT NULL THEN a.status
+      WHEN decision.reason = 'MESSAGE_BEFORE_TIMEOUT_END' THEN 'SUPPRESSED'
+      WHEN decision.reason IS NOT NULL THEN 'BLOCKED'
+      ELSE 'PENDING'
+    END AS author_action_status,
+    e.duration_seconds::text AS author_action_duration,
+    CASE
+      WHEN a.id IS NULL THEN decision.reason
+      ELSE NULL
+    END AS author_action_block_reason
   FROM youtube_ban_executions e
   LEFT JOIN youtube_ban_attempts a ON a.execution_id = e.id
+  LEFT JOIN LATERAL (
+    SELECT ${BAN_DISPATCH_BLOCK_REASON_SQL} AS reason
+    FROM youtube_chat_observations o
+    WHERE o.id = e.observation_id
+      AND o.channel_id = e.channel_id
+      AND o.session_id = e.session_id
+      AND a.id IS NULL
+  ) decision ON true
   WHERE e.channel_id = youtube_chat_observations.channel_id
     AND e.session_id = youtube_chat_observations.session_id
     AND e.observation_id = youtube_chat_observations.id
@@ -222,6 +241,9 @@ class ChatController {
               : {
                   action: row.author_action_type,
                   status: row.author_action_status,
+                  ...(row.author_action_block_reason === null
+                    ? {}
+                    : { block_reason: row.author_action_block_reason }),
                   duration_seconds:
                     row.author_action_duration === null ? null : Number(row.author_action_duration),
                 },

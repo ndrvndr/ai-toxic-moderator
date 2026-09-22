@@ -1,4 +1,8 @@
-import type { ChatAuthorAction as AuthorAction, ChatObservation } from '@moderator/contracts';
+import {
+  chatAuthorAction,
+  type ChatAuthorAction as AuthorAction,
+  type ChatObservation,
+} from '@moderator/contracts';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -42,7 +46,7 @@ describe('chat author action results', () => {
       const panel = within(screen.getByRole('group', { name: 'Author action result' }));
 
       expect(panel.getByText(`${label} ${suffix}`)).toBeTruthy();
-      expect(panel.getByText(/This execution was triggered by this message/)).toBeTruthy();
+      expect(panel.getByText(/This execution belongs to this message/)).toBeTruthy();
 
       if (status !== 'SUCCEEDED') {
         expect(panel.queryByText(`${label} confirmed`)).toBeNull();
@@ -110,5 +114,50 @@ describe('chat author action results', () => {
     expect(screen.getByText('Flagged')).toBeTruthy();
     expect(screen.getByText('A direct insult was detected.')).toBeTruthy();
     expect(screen.getByText('Original viewer message')).toBeTruthy();
+  });
+});
+
+describe('author dispatch blocking', () => {
+  const cases = [
+    ['PREVIOUS_OUTCOME_UNKNOWN', 'BLOCKED', 'blocked', /uncertain outcome/],
+    ['AUTHOR_ALREADY_BANNED', 'BLOCKED', 'blocked', /permanent ban was previously confirmed/],
+    ['MESSAGE_BEFORE_TIMEOUT_END', 'SUPPRESSED', 'suppressed', /will not trigger a delayed action/],
+    ['AUTHOR_ACTION_IN_PROGRESS', 'BLOCKED', 'blocked', /awaiting a result/],
+    ['TIMEOUT_WINDOW_ACTIVE', 'BLOCKED', 'blocked', /scheduling window has not ended/],
+  ] as const;
+
+  it.each(cases)('explains %s without implying success', (reason, status, label, description) => {
+    const action = chatAuthorAction.parse({
+      action: 'TIMEOUT',
+      status,
+      block_reason: reason,
+      duration_seconds: 30,
+    });
+
+    render(createElement(ChatAuthorAction, { action }));
+
+    const panel = within(screen.getByRole('group', { name: 'Author action result' }));
+
+    expect(panel.getByText(`Timeout ${label}`)).toBeTruthy();
+    expect(panel.getByText(description)).toBeTruthy();
+    expect(panel.queryByText('Timeout confirmed')).toBeNull();
+  });
+
+  it('rejects inconsistent blocking metadata', () => {
+    for (const fields of [
+      { status: 'BLOCKED' },
+      { status: 'SUPPRESSED' },
+      { status: 'SUCCEEDED', block_reason: 'AUTHOR_ALREADY_BANNED' },
+      { status: 'BLOCKED', block_reason: 'MESSAGE_BEFORE_TIMEOUT_END' },
+      { status: 'SUPPRESSED', block_reason: 'PREVIOUS_OUTCOME_UNKNOWN' },
+    ]) {
+      expect(
+        chatAuthorAction.safeParse({
+          action: 'TIMEOUT',
+          duration_seconds: 30,
+          ...fields,
+        }).success,
+      ).toBe(false);
+    }
   });
 });

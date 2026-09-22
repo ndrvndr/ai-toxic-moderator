@@ -43,18 +43,48 @@ export const chatDeletion = z.strictObject({
   status: z.enum(['PENDING', 'DISPATCHED', 'SUCCEEDED', 'REJECTED', 'NOT_SENT', 'UNKNOWN']),
 });
 
-export const chatAuthorAction = z.discriminatedUnion('action', [
-  z.strictObject({
-    action: z.literal('TIMEOUT'),
-    status: chatDeletion.shape.status,
-    duration_seconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  }),
-  z.strictObject({
-    action: z.literal('BAN'),
-    status: chatDeletion.shape.status,
-    duration_seconds: z.null(),
-  }),
+export const authorActionBlockReason = z.enum([
+  'PREVIOUS_OUTCOME_UNKNOWN',
+  'AUTHOR_ALREADY_BANNED',
+  'MESSAGE_BEFORE_TIMEOUT_END',
+  'AUTHOR_ACTION_IN_PROGRESS',
+  'TIMEOUT_WINDOW_ACTIVE',
 ]);
+
+const authorActionFields = {
+  status: z.enum([...chatDeletion.shape.status.options, 'BLOCKED', 'SUPPRESSED']),
+  block_reason: authorActionBlockReason.optional(),
+};
+
+export const chatAuthorAction = z
+  .discriminatedUnion('action', [
+    z.strictObject({
+      ...authorActionFields,
+      action: z.literal('TIMEOUT'),
+      duration_seconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.strictObject({
+      ...authorActionFields,
+      action: z.literal('BAN'),
+      duration_seconds: z.null(),
+    }),
+  ])
+  .superRefine((value, context) => {
+    const valid =
+      value.status === 'SUPPRESSED'
+        ? value.block_reason === 'MESSAGE_BEFORE_TIMEOUT_END'
+        : value.status === 'BLOCKED'
+          ? value.block_reason !== undefined && value.block_reason !== 'MESSAGE_BEFORE_TIMEOUT_END'
+          : value.block_reason === undefined;
+
+    if (!valid) {
+      context.addIssue({
+        code: 'custom',
+        path: ['block_reason'],
+        message: 'The blocking reason must match the action status.',
+      });
+    }
+  });
 
 export const chatObservation = z.strictObject({
   id: z.uuid(),

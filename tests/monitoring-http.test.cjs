@@ -904,3 +904,142 @@ test('chat exposes author action results only on their triggering messages', asy
     }
   }
 });
+
+async function createAuthorExecution(run, observationId, action = 'TIMEOUT') {
+  const classificationId = randomUUID();
+  const planId = randomUUID();
+  const executionId = randomUUID();
+
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_classifications(
+        id, channel_id, session_id, observation_id, run_id,
+        classifier_version, policy_version, outcome,
+        primary_category, severity, reason_code, reason, signals
+      )
+      VALUES(
+        $1, $2, $3, $4, $5,
+        'blocking-test', 'blocking-test', 'REVIEW',
+        'HARASSMENT', 2, 'DIRECT_INSULT', 'Test classification.', '[]'::jsonb
+      )
+    `,
+    [classificationId, run.channel_id, run.session_id, observationId, run.id],
+  );
+
+  await admin.query(
+    `
+      INSERT INTO youtube_moderation_action_plans(
+        id, channel_id, session_id, classification_id,
+        policy_version, action, duration_seconds, reason
+      )
+      VALUES(
+        $1, $2, $3, $4, 'blocking-test', $5,
+        CASE WHEN $5 = 'TIMEOUT' THEN 30 ELSE NULL END,
+        'Test author action.'
+      )
+    `,
+    [planId, run.channel_id, run.session_id, classificationId, action],
+  );
+
+  await admin.query(
+    `
+      INSERT INTO youtube_ban_executions(
+        id, plan_id, channel_id, session_id,
+        live_chat_id, author_channel_id, action, duration_seconds
+      )
+      SELECT
+        $1, $2, channel_id, session_id,
+        live_chat_id, 'viewer-channel', $5,
+        CASE WHEN $5 = 'TIMEOUT' THEN 30 ELSE NULL END
+      FROM youtube_broadcasts
+      WHERE channel_id = $3 AND session_id = $4
+    `,
+    [executionId, planId, run.channel_id, run.session_id, action],
+  );
+
+  return executionId;
+}
+
+test('chat distinguishes blocked executions from their original attempt results', async () => {
+  for (const [priorAction, priorStatus, reason, expectedStatus] of [
+    ['TIMEOUT', 'DISPATCHED', 'AUTHOR_ACTION_IN_PROGRESS', 'BLOCKED'],
+    ['TIMEOUT', 'UNKNOWN', 'PREVIOUS_OUTCOME_UNKNOWN', 'BLOCKED'],
+    ['BAN', 'SUCCEEDED', 'AUTHOR_ALREADY_BANNED', 'BLOCKED'],
+    ['TIMEOUT', 'SUCCEEDED', 'MESSAGE_BEFORE_TIMEOUT_END', 'SUPPRESSED'],
+  ]) {
+    const run = await startRun();
+    const firstId = await insertChatObservation(run);
+    const secondId = await insertChatObservation(run);
+
+    const firstExecution = await createAuthorExecution(run, firstId, priorAction);
+    await createAuthorExecution(run, secondId);
+    const attemptId = randomUUID();
+
+    await admin.query(
+      `
+        WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+        INSERT INTO youtube_ban_attempts(
+          id, execution_id, owner_id, started_at, deadline_at
+        )
+        SELECT $1, $2, $3, at, at + interval '30 seconds'
+        FROM moment
+      `,
+      [attemptId, firstExecution, randomUUID()],
+    );
+
+    if (priorStatus !== 'DISPATCHED') {
+      await admin.query(
+        `
+          UPDATE youtube_ban_attempts
+          SET status = $2,
+              finished_at = clock_timestamp(),
+              http_status = $3,
+              error_code = $4,
+              ban_id = $5
+          WHERE id = $1
+        `,
+        [
+          attemptId,
+          priorStatus,
+          priorStatus === 'SUCCEEDED' ? 200 : null,
+          priorStatus === 'UNKNOWN' ? 'REQUEST_INTERRUPTED' : null,
+          priorStatus === 'SUCCEEDED' ? 'provider-test-ban' : null,
+        ],
+      );
+    }
+
+    const response = await request(chatPath(run));
+    assert.equal(response.status, 200, await response.clone().text());
+
+    const page = chatPage.parse(await response.json());
+    const first = page.items.find((item) => item.id === firstId);
+    const second = page.items.find((item) => item.id === secondId);
+
+    assert.ok(first);
+    assert.ok(second);
+
+    // An existing attempt must retain its own status.
+    assert.equal(first.author_action.status, priorStatus);
+    assert.equal('block_reason' in first.author_action, false);
+
+    assert.deepEqual(second.author_action, {
+      action: 'TIMEOUT',
+      status: expectedStatus,
+      duration_seconds: 30,
+      block_reason: reason,
+    });
+
+    const attempts = await admin.query(
+      `
+        SELECT count(*)::int AS count
+        FROM youtube_ban_attempts a
+        JOIN youtube_ban_executions e ON e.id = a.execution_id
+        WHERE e.session_id = $1
+      `,
+      [run.session_id],
+    );
+
+    // Reading the API must not create or rewrite attempts.
+    assert.equal(attempts.rows[0].count, 1);
+  }
+});

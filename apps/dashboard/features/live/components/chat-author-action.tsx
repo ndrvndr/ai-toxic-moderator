@@ -7,12 +7,27 @@ const statusLabels: Record<AuthorAction['status'], string> = {
   REJECTED: 'rejected',
   NOT_SENT: 'not sent',
   UNKNOWN: 'outcome unknown',
+  BLOCKED: 'blocked',
+  SUPPRESSED: 'suppressed',
+};
+
+const blockDescriptions: Record<NonNullable<AuthorAction['block_reason']>, string> = {
+  PREVIOUS_OUTCOME_UNKNOWN:
+    'A previous action has an uncertain outcome. Further actions for this author are blocked pending reconciliation.',
+  AUTHOR_ALREADY_BANNED:
+    'A permanent ban was previously confirmed for this author in this session. Another action will not be sent.',
+  MESSAGE_BEFORE_TIMEOUT_END:
+    'This message was published before the previous timeout scheduling window ended. It will not trigger a delayed action.',
+  AUTHOR_ACTION_IN_PROGRESS:
+    'Another action for this author is awaiting a result. This execution has not been sent.',
+  TIMEOUT_WINDOW_ACTIVE:
+    'The previous timeout scheduling window has not ended. This execution has not been sent.',
 };
 
 function describeAction(action: AuthorAction): string {
   switch (action.status) {
     case 'PENDING':
-      return 'An execution record exists. No attempt has started yet.';
+      return 'An execution record exists, but no attempt has started. Dispatch still depends on worker configuration and current authorization.';
     case 'DISPATCHED':
       return 'An attempt has started. YouTube has not confirmed the result.';
     case 'SUCCEEDED':
@@ -25,6 +40,11 @@ function describeAction(action: AuthorAction): string {
       return 'The request was not sent to YouTube.';
     case 'UNKNOWN':
       return 'The action may or may not have taken effect. No automatic retry will be made.';
+    case 'BLOCKED':
+    case 'SUPPRESSED':
+      return action.block_reason
+        ? blockDescriptions[action.block_reason]
+        : 'This execution has not been sent.';
   }
 }
 
@@ -45,8 +65,8 @@ export function ChatAuthorAction({ action }: { action?: AuthorAction | null }) {
       <p className="text-xs text-muted-foreground">{describeAction(action)}</p>
 
       <p className="text-xs text-muted-foreground">
-        This execution was triggered by this message and targeted its author. The result records a
-        past attempt, not the author's current restriction status.
+        This execution belongs to this message and targets its author. Execution status does not
+        describe the author's current restriction on YouTube.
       </p>
     </div>
   );
