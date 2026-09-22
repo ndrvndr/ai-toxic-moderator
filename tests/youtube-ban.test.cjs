@@ -245,6 +245,9 @@ test('invalid confirmation reports safe field checks without raw provider data',
         schema_valid: true,
         kind_matches: true,
         ban_id_valid: true,
+        live_chat_present: true,
+        live_chat_type: 'string',
+        live_chat_valid: true,
         live_chat_matches: false,
         author_matches: true,
         ban_type_matches: true,
@@ -314,4 +317,29 @@ test('valid confirmation does not emit a failure diagnostic', async () => {
 
   assert.equal((await adapter.banUser(timeout)).status, 'SUCCEEDED');
   assert.deepEqual(diagnostics, []);
+});
+
+test('diagnostics distinguish omitted live chat fields from mismatched targets', async () => {
+  const diagnostics = [];
+  const body = resource(timeout);
+
+  delete body.snippet.liveChatId;
+  delete body.snippet.banDurationSeconds;
+
+  const adapter = new YoutubeBanAdapter(
+    async () => Response.json(body),
+    (value) => diagnostics.push(value),
+  );
+
+  assert.equal((await adapter.banUser(timeout)).status, 'UNKNOWN');
+  assert.equal(diagnostics.length, 1);
+
+  const checks = diagnostics[0].checks;
+  assert.equal(checks.live_chat_present, false);
+  assert.equal(checks.live_chat_type, 'undefined');
+  assert.equal(checks.live_chat_valid, false);
+  assert.equal(checks.live_chat_matches, false);
+  assert.equal(checks.duration_type, 'undefined');
+  assert.equal(checks.author_matches, true);
+  assert.equal(checks.ban_type_matches, true);
 });
