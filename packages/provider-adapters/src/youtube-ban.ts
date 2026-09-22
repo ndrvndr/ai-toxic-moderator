@@ -59,9 +59,54 @@ const resourceSchema = z.object({
   }),
 });
 
+function responseObject(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function responseDiagnostics(body: unknown, request: z.infer<typeof requestSchema>) {
+  const root = responseObject(body);
+  const snippet = responseObject(root.snippet);
+  const user = responseObject(snippet.bannedUserDetails);
+  const duration = responseDuration.safeParse(snippet.banDurationSeconds);
+
+  return {
+    schema_valid: resourceSchema.safeParse(body).success,
+    kind_matches: root.kind === 'youtube#liveChatBan',
+    ban_id_valid: identifier.safeParse(root.id).success,
+    live_chat_matches: snippet.liveChatId === request.liveChatId,
+    author_matches: user.channelId === request.authorChannelId,
+    ban_type_matches: snippet.type === (request.action === 'TIMEOUT' ? 'temporary' : 'permanent'),
+    duration_type: snippet.banDurationSeconds === null ? 'null' : typeof snippet.banDurationSeconds,
+    duration_valid: duration.success,
+    duration_matches:
+      request.action === 'TIMEOUT'
+        ? duration.success && duration.data === request.durationSeconds
+        : null,
+  };
+}
+
+type BanResponseDiagnostic = {
+  stage: 'BODY_READ_FAILED' | 'CONFIRMATION_INVALID';
+  http_status: number;
+  checks?: ReturnType<typeof responseDiagnostics>;
+};
+
 /** One transport attempt only. No runtime scheduling or retry is performed here. */
 export class YoutubeBanAdapter {
-  constructor(private readonly transport: typeof fetch = fetch) {}
+  constructor(
+    private readonly transport: typeof fetch = fetch,
+    private readonly onDiagnostic: (value: BanResponseDiagnostic) => void = () => {},
+  ) {}
+
+  private reportDiagnostic(value: BanResponseDiagnostic): void {
+    try {
+      this.onDiagnostic(value);
+    } catch {
+      // Diagnostic failures must not change execution results.
+    }
+  }
 
   async banUser(input: YoutubeBanInput): Promise<YoutubeBanResult> {
     const { signal: requestedSignal, ...raw } = input;
@@ -105,26 +150,51 @@ export class YoutubeBanAdapter {
     }
 
     if (response.status === 200 || response.status === 201) {
+      let body: unknown;
+
       try {
-        const resource = resourceSchema.safeParse(await response.json());
-        if (
-          resource.success &&
-          resource.data.snippet.liveChatId === request.liveChatId &&
-          resource.data.snippet.type === type &&
-          resource.data.snippet.bannedUserDetails.channelId === request.authorChannelId &&
-          (request.action !== 'TIMEOUT' ||
-            resource.data.snippet.banDurationSeconds === request.durationSeconds)
-        ) {
-          return { status: 'SUCCEEDED', http_status: response.status, ban_id: resource.data.id };
-        }
+        body = await response.json();
       } catch {
+        this.reportDiagnostic({
+          stage: 'BODY_READ_FAILED',
+          http_status: response.status,
+        });
+
         return {
           status: 'UNKNOWN',
           http_status: response.status,
           code: signal.aborted ? 'REQUEST_INTERRUPTED' : 'UNEXPECTED_RESPONSE',
         };
       }
-      return { status: 'UNKNOWN', http_status: response.status, code: 'UNEXPECTED_RESPONSE' };
+
+      const resource = resourceSchema.safeParse(body);
+
+      if (
+        resource.success &&
+        resource.data.snippet.liveChatId === request.liveChatId &&
+        resource.data.snippet.type === type &&
+        resource.data.snippet.bannedUserDetails.channelId === request.authorChannelId &&
+        (request.action !== 'TIMEOUT' ||
+          resource.data.snippet.banDurationSeconds === request.durationSeconds)
+      ) {
+        return {
+          status: 'SUCCEEDED',
+          http_status: response.status,
+          ban_id: resource.data.id,
+        };
+      }
+
+      this.reportDiagnostic({
+        stage: 'CONFIRMATION_INVALID',
+        http_status: response.status,
+        checks: responseDiagnostics(body, request),
+      });
+
+      return {
+        status: 'UNKNOWN',
+        http_status: response.status,
+        code: 'UNEXPECTED_RESPONSE',
+      };
     }
 
     void response.body?.cancel().catch(() => undefined);

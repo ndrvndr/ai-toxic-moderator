@@ -216,3 +216,102 @@ test('invalid or mismatched response durations remain UNKNOWN', async () => {
     });
   }
 });
+
+test('invalid confirmation reports safe field checks without raw provider data', async () => {
+  const diagnostics = [];
+  const input = { ...timeout, durationSeconds: 30 };
+  const body = resource(input);
+
+  body.snippet.liveChatId = 'private-wrong-chat';
+  body.snippet.banDurationSeconds = '30';
+  body.privateField = 'private-provider-value';
+
+  const adapter = new YoutubeBanAdapter(
+    async () => Response.json(body),
+    (value) => diagnostics.push(value),
+  );
+
+  assert.deepEqual(await adapter.banUser(input), {
+    status: 'UNKNOWN',
+    http_status: 200,
+    code: 'UNEXPECTED_RESPONSE',
+  });
+
+  assert.deepEqual(diagnostics, [
+    {
+      stage: 'CONFIRMATION_INVALID',
+      http_status: 200,
+      checks: {
+        schema_valid: true,
+        kind_matches: true,
+        ban_id_valid: true,
+        live_chat_matches: false,
+        author_matches: true,
+        ban_type_matches: true,
+        duration_type: 'string',
+        duration_valid: true,
+        duration_matches: true,
+      },
+    },
+  ]);
+
+  const logged = JSON.stringify(diagnostics);
+
+  for (const value of [
+    input.accessToken,
+    input.authorChannelId,
+    'private-wrong-chat',
+    'private-provider-value',
+    'ban-id',
+  ]) {
+    assert.equal(logged.includes(value), false);
+  }
+});
+
+test('response body failures emit a safe diagnostic', async () => {
+  const diagnostics = [];
+  const adapter = new YoutubeBanAdapter(
+    async () => ({
+      status: 200,
+      async json() {
+        throw Error('private-response-content');
+      },
+    }),
+    (value) => diagnostics.push(value),
+  );
+
+  assert.equal((await adapter.banUser(timeout)).status, 'UNKNOWN');
+
+  assert.deepEqual(diagnostics, [{ stage: 'BODY_READ_FAILED', http_status: 200 }]);
+});
+
+test('diagnostic callback failure does not change the result or retry', async () => {
+  let calls = 0;
+  const adapter = new YoutubeBanAdapter(
+    async () => {
+      calls++;
+      return Response.json({});
+    },
+    () => {
+      throw Error('Diagnostic sink unavailable');
+    },
+  );
+
+  assert.deepEqual(await adapter.banUser(timeout), {
+    status: 'UNKNOWN',
+    http_status: 200,
+    code: 'UNEXPECTED_RESPONSE',
+  });
+  assert.equal(calls, 1);
+});
+
+test('valid confirmation does not emit a failure diagnostic', async () => {
+  const diagnostics = [];
+  const adapter = new YoutubeBanAdapter(
+    async () => Response.json(resource(timeout)),
+    (value) => diagnostics.push(value),
+  );
+
+  assert.equal((await adapter.banUser(timeout)).status, 'SUCCEEDED');
+  assert.deepEqual(diagnostics, []);
+});

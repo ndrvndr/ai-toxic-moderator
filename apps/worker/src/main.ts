@@ -155,7 +155,9 @@ async function bootstrap() {
           banTestScope ? controlledBanVersion(banTestScope) : null,
         ),
         tokens,
-        new YoutubeBanAdapter(),
+        new YoutubeBanAdapter(fetch, (diagnostic) => {
+          console.warn('YouTube ban response validation failed.', diagnostic);
+        }),
       );
 
       bans = new BanCoordinator(new BanCandidateStore(pool), banExecutor, enabled);
