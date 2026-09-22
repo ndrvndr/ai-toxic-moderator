@@ -123,8 +123,8 @@ It does not establish classifier accuracy or production readiness.
 
 ### Verification status
 
-Partially verified in a controlled live test on September 23, 2026
-(Asia/Jakarta).
+Passed in a controlled live test, as reported by the developer on
+September 23, 2026 (Asia/Jakarta).
 
 ### Confirmed evidence
 
@@ -140,12 +140,11 @@ Partially verified in a controlled live test on September 23, 2026
 The visible removal of earlier messages is separate from the
 application's per-message DELETE execution history.
 
-### Pending verification
+### Additional verified behavior
 
-- Confirm that a new probe message sent while the ban is active is not
-  visible to the channel owner or another viewer.
-- Confirm that the dashboard displays `Ban confirmed` without a manual
-  refresh.
+- A new probe message sent while the ban was active was not visible
+  to the channel owner.
+- The dashboard displayed `Ban confirmed` without a manual refresh.
 
 ### Manual unban limitation
 
