@@ -17,10 +17,19 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  YOUTUBE_DELETE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   DEV_AUTH_ENABLED: z
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  YOUTUBE_DELETE_TEST_SESSION_ID: z.union([z.literal(''), z.uuid()]).default(''),
+  YOUTUBE_DELETE_TEST_AUTHOR_ID: z
+    .string()
+    .regex(/^(?:UC[A-Za-z0-9_-]{22})?$/)
+    .default(''),
   DEV_ACCOUNT_ID: z.uuid().default('10000000-0000-4000-8000-000000000001'),
   DASHBOARD_ORIGIN: z
     .url()
@@ -44,6 +53,16 @@ const schema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().default(''),
   GOOGLE_REDIRECT_URI: z.string().default('http://127.0.0.1:3001/v1/auth/google/callback'),
   TOKEN_ENCRYPTION_KEY: z.string().default(''),
+  YOUTUBE_BAN_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  YOUTUBE_BAN_TEST_SESSION_ID: z.union([z.literal(''), z.uuid()]).default(''),
+  YOUTUBE_BAN_TEST_AUTHOR_ID: z
+    .string()
+    .regex(/^(?:UC[A-Za-z0-9_-]{22})?$/)
+    .default(''),
+  YOUTUBE_BAN_TEST_ACTION: z.enum(['', 'TIMEOUT', 'BAN']).default(''),
 });
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
@@ -54,6 +73,46 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         result.error.issues.map((i) => i.path.join('.')).join(', '),
     );
   const host = new URL(result.data.DATABASE_URL).hostname;
+  const banTestFields = [
+    result.data.YOUTUBE_BAN_TEST_SESSION_ID,
+    result.data.YOUTUBE_BAN_TEST_AUTHOR_ID,
+    result.data.YOUTUBE_BAN_TEST_ACTION,
+  ];
+
+  const hasBanTestScope = banTestFields.some(Boolean);
+
+  if (hasBanTestScope && !banTestFields.every(Boolean)) {
+    throw new Error(
+      'Controlled timeout and ban require a test session, author channel, and action.',
+    );
+  }
+
+  if (
+    hasBanTestScope &&
+    result.data.YOUTUBE_BAN_ENABLED &&
+    result.data.YOUTUBE_DELETE_ENABLED &&
+    result.data.YOUTUBE_DELETE_TEST_SESSION_ID
+  ) {
+    throw new Error('Controlled deletion and controlled author actions cannot run simultaneously.');
+  }
+  if (
+    Boolean(result.data.YOUTUBE_DELETE_TEST_SESSION_ID) !==
+    Boolean(result.data.YOUTUBE_DELETE_TEST_AUTHOR_ID)
+  ) {
+    throw new Error('Controlled deletion requires both a test session and a test author channel.');
+  }
+  if (
+    result.data.YOUTUBE_DELETE_ENABLED &&
+    (!result.data.WORKER_ENABLED || !result.data.GOOGLE_AUTH_ENABLED)
+  ) {
+    throw new Error('YouTube deletion requires the worker and Google authentication.');
+  }
+  if (
+    result.data.YOUTUBE_BAN_ENABLED &&
+    (!result.data.WORKER_ENABLED || !result.data.GOOGLE_AUTH_ENABLED)
+  ) {
+    throw new Error('YouTube timeout and ban require the worker and Google authentication.');
+  }
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(host))
     throw new Error('Foundation database must be local');
   if (result.data.GOOGLE_AUTH_ENABLED) {

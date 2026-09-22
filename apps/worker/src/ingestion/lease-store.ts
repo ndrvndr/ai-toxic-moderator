@@ -1,4 +1,9 @@
-import { transaction, type createPool, type PoolClient } from '@moderator/persistence';
+import {
+  appendLiveEvent,
+  transaction,
+  type createPool,
+  type PoolClient,
+} from '@moderator/persistence';
 
 type DatabasePool = ReturnType<typeof createPool>;
 
@@ -141,7 +146,11 @@ export class LeaseStore {
     return transaction(this.pool, async (client) => {
       await this.assertOwned(client, lease);
 
-      const result = await client.query<{ status: 'STOPPED' | 'FAILED' }>(
+      const result = await client.query<{
+        status: 'STOPPED' | 'FAILED';
+        channel_id: string;
+        session_id: string;
+      }>(
         `
           UPDATE monitoring_runs AS run
           SET
@@ -166,7 +175,7 @@ export class LeaseStore {
             AND lease.generation = $3::bigint
             AND lease.expires_at > clock_timestamp()
             AND run.status IN ('STARTING', 'RUNNING', 'STOPPING')
-          RETURNING run.status
+          RETURNING run.status, run.channel_id, run.session_id
         `,
         [lease.run_id, lease.owner_id, lease.generation, status, errorCode],
       );
@@ -189,6 +198,13 @@ export class LeaseStore {
         `,
         [lease.run_id, lease.owner_id, lease.generation],
       );
+
+      await appendLiveEvent(client, {
+        channelId: finished.channel_id,
+        sessionId: finished.session_id,
+        runId: lease.run_id,
+        type: 'monitoring.updated',
+      });
 
       return finished.status;
     });

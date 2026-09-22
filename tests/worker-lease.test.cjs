@@ -1176,3 +1176,74 @@ test('worker role cannot access login sessions or modify historical observations
     await assert.rejects(pool.query(sql), (error) => error.code === '42501');
   }
 });
+
+test('worker publishes chat and lifecycle changes without duplicate chat events', async () => {
+  const f = await batchFixture();
+  const retries = new RetryStore(store);
+
+  await f.writer.commit(f.lease, f.batch);
+
+  await f.writer.commit(f.lease, {
+    ...f.batch,
+    expected_revision: '1',
+    request_page_token: 'page-2',
+    next_page_token: 'page-3',
+  });
+
+  await retries.schedule(f.lease, 'YOUTUBE_UNAVAILABLE');
+
+  await f.writer.commit(f.lease, {
+    ...f.batch,
+    expected_revision: '3',
+    request_page_token: 'page-3',
+    next_page_token: 'page-4',
+  });
+
+  await store.finish(f.lease, 'STOPPED');
+
+  const events = await admin.query(
+    `
+      SELECT sequence::text, event_type
+      FROM live_events
+      WHERE session_id = $1
+      ORDER BY sequence
+    `,
+    [f.sessionId],
+  );
+
+  assert.deepEqual(events.rows, [
+    { sequence: '1', event_type: 'chat.updated' },
+    { sequence: '2', event_type: 'monitoring.updated' },
+    { sequence: '3', event_type: 'monitoring.updated' },
+    { sequence: '4', event_type: 'monitoring.updated' },
+    { sequence: '5', event_type: 'monitoring.updated' },
+  ]);
+});
+
+test('rolled-back batches do not publish events', async () => {
+  const f = await batchFixture();
+
+  await assert.rejects(
+    f.writer.commit(f.lease, {
+      ...f.batch,
+      items: [
+        f.item,
+        {
+          ...f.item,
+          id: 'wrong-chat-message',
+          snippet: {
+            ...f.item.snippet,
+            liveChatId: 'another-live-chat',
+          },
+        },
+      ],
+    }),
+    /another live chat/,
+  );
+
+  const events = await admin.query('SELECT sequence FROM live_events WHERE session_id = $1', [
+    f.sessionId,
+  ]);
+
+  assert.equal(events.rows.length, 0);
+});

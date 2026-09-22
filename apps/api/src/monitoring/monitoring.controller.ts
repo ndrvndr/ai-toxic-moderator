@@ -38,4 +38,9 @@ export class MonitoringController {
   ) {
     return this.monitoring.stop(request.account!.id, channelId, runId, body);
   }
+
+  @Get('youtube/broadcasts/:broadcast_id/monitoring')
+  latest(@Param('broadcast_id') broadcastId: string, @Req() request: ApiRequest) {
+    return this.monitoring.latest(request.account!.id, broadcastId);
+  }
 }

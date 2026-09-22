@@ -91,6 +91,24 @@ export async function provisionRuntimeRole(client, { role, password, schema = 'p
     await client.query(
       `GRANT SELECT,INSERT ON ${schemaSql}.monitoring_start_requests TO ${roleSql}`,
     );
+    await client.query(`GRANT SELECT ON ${schemaSql}.youtube_chat_observations TO ${roleSql}`);
+    await client.query(`GRANT SELECT ON ${schemaSql}.youtube_chat_classifications TO ${roleSql}`);
+    await client.query(
+      `GRANT SELECT ON ${schemaSql}.youtube_moderation_action_plans TO ${roleSql}`,
+    );
+    for (const table of [
+      'youtube_delete_executions',
+      'youtube_delete_attempts',
+      'youtube_ban_executions',
+      'youtube_ban_attempts',
+    ]) {
+      await client.query(`GRANT SELECT ON ${schemaSql}.${identifier(table)} TO ${roleSql}`);
+    }
+    await client.query(
+      `GRANT SELECT,INSERT,UPDATE ON ${schemaSql}.live_event_counters TO ${roleSql}`,
+    );
+
+    await client.query(`GRANT SELECT,INSERT ON ${schemaSql}.live_events TO ${roleSql}`);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

@@ -1,11 +1,9 @@
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 import type { Broadcast } from '../api/broadcasts-api';
+import { MonitoringControls } from './monitoring-controls';
 
 export function BroadcastCard({ broadcast }: { broadcast: Broadcast }) {
-  const descriptionId = `monitoring-${broadcast.youtube_broadcast_id}`;
-
   return (
     <Card>
       <CardHeader>
@@ -23,13 +21,10 @@ export function BroadcastCard({ broadcast }: { broadcast: Broadcast }) {
             : 'Live chat is unavailable for this broadcast.'}
         </p>
 
-        <Button disabled aria-describedby={descriptionId}>
-          Start Monitoring
-        </Button>
-
-        <p id={descriptionId} className="text-xs leading-5 text-muted-foreground">
-          Automatic monitoring is not available yet.
-        </p>
+        <MonitoringControls
+          broadcastId={broadcast.youtube_broadcast_id}
+          liveChatAvailable={broadcast.live_chat_available}
+        />
       </CardContent>
     </Card>
   );

@@ -4,6 +4,68 @@ const { source } = require('./helpers/source.cjs');
 
 const { WorkerRuntime } = source('apps/worker/src/ingestion/worker-runtime.ts');
 
+test('recovery runs without deletion dispatch and shutdown waits for its database update', async () => {
+  let release;
+  let recoverySignal;
+  let closed = false;
+  const runtime = new WorkerRuntime(
+    {
+      async tick() {
+        return { kind: 'IDLE' };
+      },
+    },
+    {
+      async end() {
+        closed = true;
+      },
+    },
+    undefined,
+    {
+      async tick(signal) {
+        recoverySignal = signal;
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      },
+    },
+  );
+  runtime.start();
+  assert.ok(recoverySignal);
+  const stopped = runtime.onApplicationShutdown();
+  assert.equal(recoverySignal.aborted, true);
+  await Promise.resolve();
+  assert.equal(closed, false);
+  release();
+  await stopped;
+  assert.equal(closed, true);
+});
+
+test('ingestion and deletion run independently and both drain before the pool closes', async () => {
+  const events = [];
+  const cycle = (name) => ({
+    async tick(signal) {
+      events.push(`${name}-started`);
+      await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+      events.push(`${name}-finished`);
+    },
+  });
+  const runtime = new WorkerRuntime(
+    cycle('ingestion'),
+    {
+      async end() {
+        events.push('pool-closed');
+      },
+    },
+    cycle('deletion'),
+  );
+  runtime.start();
+  assert.deepEqual(events, ['ingestion-started', 'deletion-started']);
+  await runtime.onApplicationShutdown();
+  assert.equal(events.at(-1), 'pool-closed');
+  assert.ok(events.includes('ingestion-finished'));
+  assert.ok(events.includes('deletion-finished'));
+});
+
 test('shutdown cancels the current cycle before closing the pool', async () => {
   const events = [];
 

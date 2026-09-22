@@ -48,7 +48,12 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     await client.query(`REVOKE ALL ON SCHEMA ${schemaSql} FROM ${roleSql}`);
     await client.query(`GRANT USAGE ON SCHEMA ${schemaSql} TO ${roleSql}`);
     await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA ${schemaSql} FROM ${roleSql}`);
-    for (const table of ['monitoring_runs', 'youtube_broadcasts']) {
+    for (const table of [
+      'monitoring_runs',
+      'youtube_broadcasts',
+      'channel_memberships',
+      'stream_sessions',
+    ]) {
       await client.query(`GRANT SELECT ON ${schemaSql}.${identifier(table)} TO ${roleSql}`);
     }
 
@@ -70,6 +75,30 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     await client.query(
       `GRANT SELECT,INSERT ON ${schemaSql}.youtube_chat_observations TO ${roleSql}`,
     );
+    await client.query(
+      `GRANT SELECT,INSERT ON ${schemaSql}.youtube_chat_classifications TO ${roleSql}`,
+    );
+    await client.query(
+      `GRANT SELECT,INSERT ON ${schemaSql}.youtube_moderation_action_plans TO ${roleSql}`,
+    );
+    for (const table of [
+      'youtube_delete_executions',
+      'youtube_delete_attempts',
+      'youtube_ban_executions',
+      'youtube_ban_attempts',
+    ]) {
+      await client.query(`GRANT SELECT,INSERT ON ${schemaSql}.${identifier(table)} TO ${roleSql}`);
+    }
+    // Row locking the execution serializes attempt creation. Identity changes remain forbidden.
+    await client.query(`GRANT UPDATE(id) ON ${schemaSql}.youtube_delete_executions TO ${roleSql}`);
+    await client.query(`GRANT UPDATE(id) ON ${schemaSql}.youtube_ban_executions TO ${roleSql}`);
+    await client.query(
+      `GRANT UPDATE(status, finished_at, http_status, error_code, ban_id) ON ${schemaSql}.youtube_ban_attempts TO ${roleSql}`,
+    );
+    await client.query(
+      `GRANT UPDATE(status, finished_at, http_status, error_code)
+       ON ${schemaSql}.youtube_delete_attempts TO ${roleSql}`,
+    );
 
     await client.query(`GRANT SELECT ON ${schemaSql}.google_credentials TO ${roleSql}`);
 
@@ -81,6 +110,11 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     updated_at
   ) ON ${schemaSql}.google_credentials TO ${roleSql}`,
     );
+    await client.query(
+      `GRANT SELECT,INSERT,UPDATE ON ${schemaSql}.live_event_counters TO ${roleSql}`,
+    );
+
+    await client.query(`GRANT SELECT,INSERT ON ${schemaSql}.live_events TO ${roleSql}`);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

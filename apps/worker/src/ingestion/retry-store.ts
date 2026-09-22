@@ -1,3 +1,4 @@
+import { appendLiveEvent } from '@moderator/persistence';
 import { MonitoringNotIngestingError } from './batch-writer';
 import { LeaseStore, type WorkerLease } from './lease-store';
 
@@ -23,9 +24,12 @@ export class RetryStore {
 
     return this.leases.withLease(lease, async (client) => {
       const result = await client.query<{
+        channel_id: string;
         session_id: string;
         status: string;
-      }>('SELECT session_id, status FROM monitoring_runs WHERE id = $1', [lease.run_id]);
+      }>('SELECT channel_id, session_id, status FROM monitoring_runs WHERE id = $1', [
+        lease.run_id,
+      ]);
 
       const run = result.rows[0];
 
@@ -88,6 +92,13 @@ export class RetryStore {
         lease.run_id,
         code,
       ]);
+
+      await appendLiveEvent(client, {
+        channelId: run.channel_id,
+        sessionId: run.session_id,
+        runId: lease.run_id,
+        type: 'monitoring.updated',
+      });
 
       const row = updated.rows[0]!;
 

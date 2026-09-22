@@ -5,10 +5,31 @@ import { NestFactory } from '@nestjs/core';
 
 import { loadConfig } from '@moderator/config';
 import { createPool } from '@moderator/persistence';
-import { GoogleProvider, GoogleTokenStore, YoutubeChatAdapter } from '@moderator/provider-adapters';
+import {
+  GoogleProvider,
+  GoogleTokenStore,
+  YoutubeBanAdapter,
+  YoutubeChatAdapter,
+  YoutubeModerationAdapter,
+} from '@moderator/provider-adapters';
 
+import { BanCandidateStore } from './ingestion/ban-candidate-store';
+import { BanCoordinator } from './ingestion/ban-coordinator';
+import { BanEligibilityStore } from './ingestion/ban-eligibility-store';
+import { BanExecutionStore } from './ingestion/ban-execution-store';
+import { BanExecutor } from './ingestion/ban-executor';
+import { BanRecovery } from './ingestion/ban-recovery';
 import { BatchWriter } from './ingestion/batch-writer';
+import { ControlledBanScope, controlledBanVersion } from './ingestion/controlled-ban-policy';
+import { controlledDeleteVersion } from './ingestion/controlled-delete-policy';
 import { IngestionCoordinator } from './ingestion/coordinator';
+import { createClassificationStore } from './ingestion/create-classification-store';
+import { DeleteCandidateStore } from './ingestion/delete-candidate-store';
+import { DeleteCoordinator } from './ingestion/delete-coordinator';
+import { DeleteEligibilityStore } from './ingestion/delete-eligibility-store';
+import { DeleteExecutionStore } from './ingestion/delete-execution-store';
+import { DeleteExecutor } from './ingestion/delete-executor';
+import { DeleteRecovery } from './ingestion/delete-recovery';
 import { LeaseStore } from './ingestion/lease-store';
 import { PollCycle } from './ingestion/poll-cycle';
 import { RetryStore } from './ingestion/retry-store';
@@ -59,15 +80,93 @@ async function bootstrap() {
     }
 
     await pool.query('SELECT revision, chat_ended_at FROM youtube_chat_checkpoints LIMIT 0');
+    await pool.query('SELECT id FROM youtube_chat_classifications LIMIT 0');
+    await pool.query('SELECT id FROM youtube_moderation_action_plans LIMIT 0');
+    await pool.query('SELECT id, status, deadline_at FROM youtube_delete_attempts LIMIT 0');
+    await pool.query('SELECT id FROM youtube_ban_executions LIMIT 0');
+    await pool.query('SELECT id, status, deadline_at, ban_id FROM youtube_ban_attempts LIMIT 0');
 
     const leases = new LeaseStore(pool);
-    const writer = new BatchWriter(leases);
+    const testScope =
+      config.YOUTUBE_DELETE_ENABLED && config.YOUTUBE_DELETE_TEST_SESSION_ID
+        ? {
+            sessionId: config.YOUTUBE_DELETE_TEST_SESSION_ID,
+            authorChannelId: config.YOUTUBE_DELETE_TEST_AUTHOR_ID,
+          }
+        : undefined;
+    const banTestScope: ControlledBanScope | undefined =
+      config.YOUTUBE_BAN_ENABLED &&
+      config.YOUTUBE_BAN_TEST_SESSION_ID &&
+      config.YOUTUBE_BAN_TEST_AUTHOR_ID &&
+      config.YOUTUBE_BAN_TEST_ACTION
+        ? {
+            sessionId: config.YOUTUBE_BAN_TEST_SESSION_ID,
+            authorChannelId: config.YOUTUBE_BAN_TEST_AUTHOR_ID,
+            action: config.YOUTUBE_BAN_TEST_ACTION,
+          }
+        : undefined;
+
+    const classifications = createClassificationStore(undefined, testScope, banTestScope);
+    const writer = new BatchWriter(leases, classifications);
     const tokens = new GoogleTokenStore(pool, config, new GoogleProvider());
     const cycle = new PollCycle(leases, writer, tokens, new YoutubeChatAdapter());
 
     const coordinator = new IngestionCoordinator(pool, leases, cycle, new RetryStore(leases));
+    const executions = new DeleteExecutionStore(pool);
+    const recovery = new DeleteRecovery(executions);
 
-    runtime = new WorkerRuntime(coordinator, pool);
+    let deletions: DeleteCoordinator | undefined;
+    if (config.YOUTUBE_DELETE_ENABLED) {
+      await pool.query('SELECT id FROM youtube_delete_executions LIMIT 0');
+      await pool.query('SELECT account_id, role FROM channel_memberships LIMIT 0');
+      await pool.query('SELECT id, closed_at FROM stream_sessions LIMIT 0');
+      const enabled = () =>
+        config.WORKER_ENABLED && config.GOOGLE_AUTH_ENABLED && config.YOUTUBE_DELETE_ENABLED;
+      const executor = new DeleteExecutor(
+        executions,
+        new DeleteEligibilityStore(
+          pool,
+          enabled,
+          testScope ? controlledDeleteVersion(testScope) : null,
+        ),
+        tokens,
+        new YoutubeModerationAdapter(),
+      );
+      deletions = new DeleteCoordinator(new DeleteCandidateStore(pool), executor, enabled);
+    }
+
+    const banExecutions = new BanExecutionStore(pool);
+    const banRecovery = new BanRecovery(banExecutions);
+
+    let bans: BanCoordinator | undefined;
+
+    if (config.YOUTUBE_BAN_ENABLED) {
+      await pool.query('SELECT account_id, role FROM channel_memberships LIMIT 0');
+      await pool.query('SELECT id, closed_at FROM stream_sessions LIMIT 0');
+
+      const enabled = () =>
+        config.WORKER_ENABLED && config.GOOGLE_AUTH_ENABLED && config.YOUTUBE_BAN_ENABLED;
+
+      const banExecutor = new BanExecutor(
+        banExecutions,
+        new BanEligibilityStore(
+          pool,
+          enabled,
+          banTestScope ? controlledBanVersion(banTestScope) : null,
+        ),
+        tokens,
+        new YoutubeBanAdapter(fetch, (diagnostic) => {
+          console.warn('YouTube ban response validation failed.', diagnostic);
+        }),
+      );
+
+      bans = new BanCoordinator(new BanCandidateStore(pool), banExecutor, enabled);
+    }
+
+    runtime = new WorkerRuntime(coordinator, pool, deletions, recovery, {
+      dispatch: bans,
+      recovery: banRecovery,
+    });
 
     @Module({
       providers: [{ provide: WorkerRuntime, useValue: runtime }],

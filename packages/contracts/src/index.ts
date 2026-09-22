@@ -1,24 +1,18 @@
 import { z } from 'zod';
 
+import { category, outcome } from './moderation-enums';
+
+export * from './chat';
+export * from './moderation-action';
+export { category, outcome } from './moderation-enums';
+export * from './monitoring';
+export * from './saved-sessions';
+export * from './youtube-ingestion';
+
 export const uuid = z.uuid();
 
 const text = (max: number) =>
   z.string().refine((s) => s.trim().length > 0 && [...s].length <= max, 'Invalid text length');
-export const category = z.enum([
-  'PROFANITY',
-  'HARASSMENT',
-  'HATE',
-  'THREAT',
-  'SEXUAL',
-  'GAMBLING',
-  'SPAM',
-  'SCAM',
-  'PII',
-  'SELF_HARM_ENCOURAGEMENT',
-  'IMPERSONATION',
-  'SUSPICIOUS_LINK',
-]);
-export const outcome = z.enum(['ALLOW', 'REVIEW', 'ACTION_REQUIRED', 'ERROR']);
 export const messageInput = z.strictObject({
   external_message_id: text(128),
   author_external_id: text(128),
@@ -246,5 +240,3 @@ export const sessionCursor = z.strictObject({
   created_at: z.iso.datetime({ offset: true }),
   id: uuid,
 });
-export * from './monitoring';
-export * from './youtube-ingestion';
