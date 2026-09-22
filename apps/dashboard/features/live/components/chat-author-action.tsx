@@ -17,7 +17,7 @@ function describeAction(action: AuthorAction): string {
       return 'An attempt has started. YouTube has not confirmed the result.';
     case 'SUCCEEDED':
       return action.action === 'TIMEOUT'
-        ? `YouTube confirmed a timeout of ${action.duration_seconds} seconds. This does not indicate whether the timeout is still active.`
+        ? `YouTube confirmed the timeout request. Requested duration: ${action.duration_seconds} seconds. This does not indicate whether the timeout is still active.`
         : 'YouTube confirmed a permanent ban from this live chat. This records the execution result, not the current ban state.';
     case 'REJECTED':
       return 'YouTube rejected the request.';

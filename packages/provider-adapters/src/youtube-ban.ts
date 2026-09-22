@@ -52,7 +52,7 @@ const resourceSchema = z.object({
   kind: z.literal('youtube#liveChatBan'),
   id: identifier,
   snippet: z.object({
-    liveChatId: identifier,
+    liveChatId: identifier.optional(),
     type: z.enum(['temporary', 'permanent']),
     banDurationSeconds: responseDuration.optional(),
     bannedUserDetails: z.object({ channelId: identifier }),
@@ -174,10 +174,12 @@ export class YoutubeBanAdapter {
 
       if (
         resource.success &&
-        resource.data.snippet.liveChatId === request.liveChatId &&
+        (resource.data.snippet.liveChatId === undefined ||
+          resource.data.snippet.liveChatId === request.liveChatId) &&
         resource.data.snippet.type === type &&
         resource.data.snippet.bannedUserDetails.channelId === request.authorChannelId &&
         (request.action !== 'TIMEOUT' ||
+          resource.data.snippet.banDurationSeconds === undefined ||
           resource.data.snippet.banDurationSeconds === request.durationSeconds)
       ) {
         return {

@@ -190,7 +190,6 @@ test('invalid or mismatched response durations remain UNKNOWN', async () => {
   const input = { ...timeout, durationSeconds: 30 };
 
   for (const duration of [
-    undefined,
     null,
     '',
     ' ',
@@ -319,27 +318,78 @@ test('valid confirmation does not emit a failure diagnostic', async () => {
   assert.deepEqual(diagnostics, []);
 });
 
-test('diagnostics distinguish omitted live chat fields from mismatched targets', async () => {
-  const diagnostics = [];
-  const body = resource(timeout);
+test('successful responses may omit echoed live chat and duration fields', async () => {
+  for (const input of [ban, timeout]) {
+    for (const omitted of [
+      ['liveChatId'],
+      ['banDurationSeconds'],
+      ['liveChatId', 'banDurationSeconds'],
+    ]) {
+      const body = resource(input);
+      for (const field of omitted) delete body.snippet[field];
 
-  delete body.snippet.liveChatId;
-  delete body.snippet.banDurationSeconds;
+      const diagnostics = [];
+      let calls = 0;
 
-  const adapter = new YoutubeBanAdapter(
-    async () => Response.json(body),
-    (value) => diagnostics.push(value),
-  );
+      const adapter = new YoutubeBanAdapter(
+        async () => {
+          calls++;
+          return Response.json(body);
+        },
+        (value) => diagnostics.push(value),
+      );
 
-  assert.equal((await adapter.banUser(timeout)).status, 'UNKNOWN');
-  assert.equal(diagnostics.length, 1);
+      assert.deepEqual(await adapter.banUser(input), {
+        status: 'SUCCEEDED',
+        http_status: 200,
+        ban_id: 'ban-id',
+      });
+      assert.equal(calls, 1);
+      assert.deepEqual(diagnostics, []);
+    }
+  }
+});
 
-  const checks = diagnostics[0].checks;
-  assert.equal(checks.live_chat_present, false);
-  assert.equal(checks.live_chat_type, 'undefined');
-  assert.equal(checks.live_chat_valid, false);
-  assert.equal(checks.live_chat_matches, false);
-  assert.equal(checks.duration_type, 'undefined');
-  assert.equal(checks.author_matches, true);
-  assert.equal(checks.ban_type_matches, true);
+test('partial confirmations still reject invalid fields and mismatched targets', async () => {
+  const partial = resource(timeout);
+  delete partial.snippet.liveChatId;
+  delete partial.snippet.banDurationSeconds;
+
+  const invalidBodies = [
+    { ...partial, id: '' },
+    { ...partial, kind: 'other' },
+    { ...partial, snippet: { ...partial.snippet, liveChatId: null } },
+    { ...partial, snippet: { ...partial.snippet, liveChatId: '' } },
+    { ...partial, snippet: { ...partial.snippet, liveChatId: 'other-chat' } },
+    { ...partial, snippet: { ...partial.snippet, type: 'permanent' } },
+    {
+      ...partial,
+      snippet: {
+        ...partial.snippet,
+        bannedUserDetails: { channelId: 'other-author' },
+      },
+    },
+    {
+      ...partial,
+      snippet: { ...partial.snippet, bannedUserDetails: {} },
+    },
+    {
+      ...partial,
+      snippet: { ...partial.snippet, banDurationSeconds: null },
+    },
+    {
+      ...partial,
+      snippet: { ...partial.snippet, banDurationSeconds: 31 },
+    },
+  ];
+
+  for (const body of invalidBodies) {
+    const adapter = new YoutubeBanAdapter(async () => Response.json(body));
+
+    assert.deepEqual(await adapter.banUser(timeout), {
+      status: 'UNKNOWN',
+      http_status: 200,
+      code: 'UNEXPECTED_RESPONSE',
+    });
+  }
 });

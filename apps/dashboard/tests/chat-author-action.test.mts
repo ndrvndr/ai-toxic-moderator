@@ -54,7 +54,7 @@ describe('chat author action results', () => {
       }
 
       if (status === 'SUCCEEDED' && action === 'TIMEOUT') {
-        expect(panel.getByText(/timeout of 300 seconds/)).toBeTruthy();
+        expect(panel.getByText(/Requested duration: 300 seconds/)).toBeTruthy();
         expect(
           panel.getByText(/does not indicate whether the timeout is still active/),
         ).toBeTruthy();
