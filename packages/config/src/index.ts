@@ -53,6 +53,10 @@ const schema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().default(''),
   GOOGLE_REDIRECT_URI: z.string().default('http://127.0.0.1:3001/v1/auth/google/callback'),
   TOKEN_ENCRYPTION_KEY: z.string().default(''),
+  YOUTUBE_BAN_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
 });
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
@@ -74,6 +78,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     (!result.data.WORKER_ENABLED || !result.data.GOOGLE_AUTH_ENABLED)
   ) {
     throw new Error('YouTube deletion requires the worker and Google authentication.');
+  }
+  if (
+    result.data.YOUTUBE_BAN_ENABLED &&
+    (!result.data.WORKER_ENABLED || !result.data.GOOGLE_AUTH_ENABLED)
+  ) {
+    throw new Error('YouTube timeout and ban require the worker and Google authentication.');
   }
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(host))
     throw new Error('Foundation database must be local');

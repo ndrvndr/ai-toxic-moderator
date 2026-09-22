@@ -15,6 +15,8 @@ const { DeleteExecutor } = source('apps/worker/src/ingestion/delete-executor.ts'
 const { YoutubeModerationAdapter } = source('packages/provider-adapters/src/youtube-moderation.ts');
 const { readLiveEvents } = source('packages/persistence/src/live-events.ts');
 const { consumeLiveFrame } = source('apps/dashboard/features/live/lib/live-event-protocol.ts');
+const { BanCandidateStore } = source('apps/worker/src/ingestion/ban-candidate-store.ts');
+
 const schema = `delete_store_${randomUUID().replaceAll('-', '')}`;
 const role = `delete_worker_${randomUUID().replaceAll('-', '')}`;
 let admin;
@@ -1010,4 +1012,45 @@ test('recovery and its refresh event roll back together on publication failure',
     (await eventsFor(row)).map((event) => event.sequence),
     ['1'],
   );
+});
+
+test('ban candidates exclude attempted authors and conflicting actions', async () => {
+  const f = await eligibleFixture('TIMEOUT');
+  const candidates = new BanCandidateStore(pool);
+  const bans = new BanExecutionStore(pool);
+
+  async function scan() {
+    const ids = [];
+    let cursor = null;
+
+    for (;;) {
+      const candidate = await candidates.next(cursor);
+
+      if (!candidate) return ids;
+
+      assert.ok(!ids.includes(candidate.planId));
+      ids.push(candidate.planId);
+      cursor = candidate.planId;
+    }
+  }
+
+  assert.ok((await scan()).includes(f.planId));
+
+  const conflictingPlan = randomUUID();
+
+  await insertPlan(f, conflictingPlan, 'conflicting-ban-policy', 'BAN');
+
+  assert.equal((await scan()).includes(conflictingPlan), false);
+
+  const claim = await bans.claim(f.execution.id, randomUUID());
+
+  assert.ok(claim);
+  assert.equal((await scan()).includes(f.planId), false);
+
+  await bans.complete(claim, {
+    status: 'NOT_SENT',
+    code: 'REQUEST_CANCELLED',
+  });
+
+  assert.equal((await scan()).includes(f.planId), false);
 });

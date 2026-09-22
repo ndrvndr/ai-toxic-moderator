@@ -8,10 +8,17 @@ import { createPool } from '@moderator/persistence';
 import {
   GoogleProvider,
   GoogleTokenStore,
+  YoutubeBanAdapter,
   YoutubeChatAdapter,
   YoutubeModerationAdapter,
 } from '@moderator/provider-adapters';
 
+import { BanCandidateStore } from './ingestion/ban-candidate-store';
+import { BanCoordinator } from './ingestion/ban-coordinator';
+import { BanEligibilityStore } from './ingestion/ban-eligibility-store';
+import { BanExecutionStore } from './ingestion/ban-execution-store';
+import { BanExecutor } from './ingestion/ban-executor';
+import { BanRecovery } from './ingestion/ban-recovery';
 import { BatchWriter } from './ingestion/batch-writer';
 import { controlledDeleteVersion } from './ingestion/controlled-delete-policy';
 import { IngestionCoordinator } from './ingestion/coordinator';
@@ -75,6 +82,8 @@ async function bootstrap() {
     await pool.query('SELECT id FROM youtube_chat_classifications LIMIT 0');
     await pool.query('SELECT id FROM youtube_moderation_action_plans LIMIT 0');
     await pool.query('SELECT id, status, deadline_at FROM youtube_delete_attempts LIMIT 0');
+    await pool.query('SELECT id FROM youtube_ban_executions LIMIT 0');
+    await pool.query('SELECT id, status, deadline_at, ban_id FROM youtube_ban_attempts LIMIT 0');
 
     const leases = new LeaseStore(pool);
     const testScope =
@@ -113,7 +122,32 @@ async function bootstrap() {
       deletions = new DeleteCoordinator(new DeleteCandidateStore(pool), executor, enabled);
     }
 
-    runtime = new WorkerRuntime(coordinator, pool, deletions, recovery);
+    const banExecutions = new BanExecutionStore(pool);
+    const banRecovery = new BanRecovery(banExecutions);
+
+    let bans: BanCoordinator | undefined;
+
+    if (config.YOUTUBE_BAN_ENABLED) {
+      await pool.query('SELECT account_id, role FROM channel_memberships LIMIT 0');
+      await pool.query('SELECT id, closed_at FROM stream_sessions LIMIT 0');
+
+      const enabled = () =>
+        config.WORKER_ENABLED && config.GOOGLE_AUTH_ENABLED && config.YOUTUBE_BAN_ENABLED;
+
+      const banExecutor = new BanExecutor(
+        banExecutions,
+        new BanEligibilityStore(pool, enabled),
+        tokens,
+        new YoutubeBanAdapter(),
+      );
+
+      bans = new BanCoordinator(new BanCandidateStore(pool), banExecutor, enabled);
+    }
+
+    runtime = new WorkerRuntime(coordinator, pool, deletions, recovery, {
+      dispatch: bans,
+      recovery: banRecovery,
+    });
 
     @Module({
       providers: [{ provide: WorkerRuntime, useValue: runtime }],

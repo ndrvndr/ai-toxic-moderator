@@ -5,6 +5,15 @@ import type { IngestionCoordinator } from './coordinator';
 
 type DatabasePool = ReturnType<typeof createPool>;
 
+type WorkerCycle = {
+  tick(signal: AbortSignal): Promise<unknown>;
+};
+
+type BanCycles = {
+  dispatch?: WorkerCycle;
+  recovery: WorkerCycle;
+};
+
 export class WorkerRuntime {
   private readonly abort = new AbortController();
   private running: Promise<void> | undefined;
@@ -13,8 +22,9 @@ export class WorkerRuntime {
   constructor(
     private readonly coordinator: Pick<IngestionCoordinator, 'tick'>,
     private readonly pool: Pick<DatabasePool, 'end'>,
-    private readonly deletions?: { tick(signal: AbortSignal): Promise<unknown> },
-    private readonly recovery?: { tick(signal: AbortSignal): Promise<unknown> },
+    private readonly deletions?: WorkerCycle,
+    private readonly recovery?: WorkerCycle,
+    private readonly bans?: BanCycles,
   ) {}
 
   start(): void {
@@ -25,10 +35,26 @@ export class WorkerRuntime {
 
   private async runLoops(): Promise<void> {
     const loops = [this.loop(this.coordinator, 'Ingestion')];
-    if (this.deletions) loops.push(this.loop(this.deletions, 'Deletion'));
-    if (this.recovery) loops.push(this.loop(this.recovery, 'Deletion recovery'));
-    // Always drain every loop before the shared database pool can be closed.
+
+    if (this.deletions) {
+      loops.push(this.loop(this.deletions, 'Deletion'));
+    }
+
+    if (this.recovery) {
+      loops.push(this.loop(this.recovery, 'Deletion recovery'));
+    }
+
+    if (this.bans?.dispatch) {
+      loops.push(this.loop(this.bans.dispatch, 'Timeout and ban'));
+    }
+
+    if (this.bans) {
+      loops.push(this.loop(this.bans.recovery, 'Timeout and ban recovery'));
+    }
+
+    // Every loop must finish before the shared pool closes.
     const results = await Promise.allSettled(loops);
+
     if (results.some((result) => result.status === 'rejected')) {
       console.error('A worker loop stopped unexpectedly.');
     }
