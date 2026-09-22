@@ -39,13 +39,22 @@ export type YoutubeBanResult =
         | 'UNEXPECTED_RESPONSE';
     };
 
+const responseDuration = z.union([
+  z.number().int().positive().safe(),
+  z
+    .string()
+    .regex(/^[1-9][0-9]*$/)
+    .transform((value) => Number(value))
+    .pipe(z.number().int().positive().safe()),
+]);
+
 const resourceSchema = z.object({
   kind: z.literal('youtube#liveChatBan'),
   id: identifier,
   snippet: z.object({
     liveChatId: identifier,
     type: z.enum(['temporary', 'permanent']),
-    banDurationSeconds: z.number().int().positive().safe().optional(),
+    banDurationSeconds: responseDuration.optional(),
     bannedUserDetails: z.object({ channelId: identifier }),
   }),
 });

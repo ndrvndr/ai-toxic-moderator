@@ -168,3 +168,51 @@ test('a failed response body read cannot be reported as confirmed success', asyn
     code: 'UNEXPECTED_RESPONSE',
   });
 });
+
+test('timeout confirmation accepts numeric and decimal-string durations', async () => {
+  const input = { ...timeout, durationSeconds: 30 };
+
+  for (const duration of [30, '30']) {
+    const body = resource(input);
+    body.snippet.banDurationSeconds = duration;
+
+    const adapter = new YoutubeBanAdapter(async () => Response.json(body));
+
+    assert.deepEqual(await adapter.banUser(input), {
+      status: 'SUCCEEDED',
+      http_status: 200,
+      ban_id: 'ban-id',
+    });
+  }
+});
+
+test('invalid or mismatched response durations remain UNKNOWN', async () => {
+  const input = { ...timeout, durationSeconds: 30 };
+
+  for (const duration of [
+    undefined,
+    null,
+    '',
+    ' ',
+    true,
+    '30seconds',
+    '3e1',
+    '30.0',
+    '-30',
+    '0',
+    '31',
+    31,
+    '9007199254740993',
+  ]) {
+    const body = resource(input);
+    body.snippet.banDurationSeconds = duration;
+
+    const adapter = new YoutubeBanAdapter(async () => Response.json(body));
+
+    assert.deepEqual(await adapter.banUser(input), {
+      status: 'UNKNOWN',
+      http_status: 200,
+      code: 'UNEXPECTED_RESPONSE',
+    });
+  }
+});
