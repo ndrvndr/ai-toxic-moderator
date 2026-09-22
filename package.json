@@ -49,6 +49,7 @@
     "test:delete-recovery": "node --experimental-test-isolation=none --test tests/delete-recovery.test.cjs",
     "test:controlled-delete-policy": "node --experimental-test-isolation=none --test tests/controlled-delete-policy.test.cjs",
     "test:ban-runtime": "node --experimental-test-isolation=none --test tests/ban-runtime.test.cjs",
+    "test:controlled-ban-policy": "node --experimental-test-isolation=none --test tests/controlled-ban-policy.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
