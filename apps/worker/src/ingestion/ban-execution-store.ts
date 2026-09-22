@@ -53,7 +53,7 @@ export class BanExecutionStore {
       const inserted = await client.query<BanExecution>(
         `INSERT INTO youtube_ban_executions(id, plan_id, channel_id, session_id, live_chat_id, author_channel_id, action, duration_seconds)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-         ON CONFLICT(channel_id, session_id, author_channel_id) DO NOTHING RETURNING ${columns}`,
+         ON CONFLICT DO NOTHING RETURNING ${columns}`,
         [
           randomUUID(),
           planId,

@@ -867,3 +867,78 @@ test('action plans cannot be rewritten', async () => {
     (error) => error.code === '23514',
   );
 });
+
+test('ban execution derives its triggering observation from the persisted plan', async () => {
+  const f = await banFixture();
+  const executionId = await insertBanExecution(f);
+
+  const result = await client.query(
+    `
+      SELECT
+        e.observation_id,
+        c.observation_id AS expected_observation_id
+      FROM youtube_ban_executions e
+      JOIN youtube_moderation_action_plans p ON p.id = e.plan_id
+      JOIN youtube_chat_classifications c ON c.id = p.classification_id
+      WHERE e.id = $1
+    `,
+    [executionId],
+  );
+
+  assert.ok(result.rows[0].observation_id);
+  assert.equal(result.rows[0].observation_id, result.rows[0].expected_observation_id);
+});
+
+test('ban execution rejects a substituted observation from the same session', async () => {
+  const f = await banFixture();
+  const otherObservationId = await insertObservation(f);
+
+  await assert.rejects(
+    client.query(
+      `
+        INSERT INTO youtube_ban_executions(
+          id, plan_id, channel_id, session_id,
+          live_chat_id, author_channel_id, action,
+          duration_seconds, observation_id
+        )
+        VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `,
+      [
+        randomUUID(),
+        f.planId,
+        f.channelId,
+        f.sessionId,
+        f.liveChatId,
+        f.authorId,
+        f.action,
+        f.durationSeconds,
+        otherObservationId,
+      ],
+    ),
+    { code: '23514' },
+  );
+});
+
+test('ban execution observation identity cannot be rewritten', async () => {
+  const f = await banFixture();
+  const executionId = await insertBanExecution(f);
+  const otherObservationId = await insertObservation(f);
+
+  await assert.rejects(
+    client.query('UPDATE youtube_ban_executions SET observation_id = $2 WHERE id = $1', [
+      executionId,
+      otherObservationId,
+    ]),
+    { code: '23514' },
+  );
+});
+
+test('ban observation migration remains applied exactly once', async () => {
+  await migrate(client);
+
+  const result = await client.query('SELECT name FROM schema_migrations WHERE name = $1', [
+    '014_youtube_ban_execution_observation.sql',
+  ]);
+
+  assert.equal(result.rows.length, 1);
+});
