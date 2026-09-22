@@ -49,3 +49,72 @@ restoring the disabled test configuration.
 See [deletion integration verification](deletion-integration-verification.md) for
 evidence scope and remaining checks. This supplements the classification verification;
 TIMEOUT, BAN, and general production moderation accuracy remain unverified.
+
+## Repeated Timeout Verification
+
+### Verification status
+
+Passed in a controlled live test, as reported by the developer on
+September 23, 2026.
+
+The test used the same YouTube livestream session and viewer account
+for two separate timeout actions.
+
+### Verified behavior
+
+- The exact controlled marker triggered the first timeout.
+- The dashboard displayed `Timeout confirmed`.
+- After the first timeout ended, a normal message was accepted.
+- The normal message did not inherit the previous action result.
+- A new controlled marker triggered a second timeout in the same session.
+- Each action result appeared on its triggering message.
+- Dashboard updates appeared without a manual refresh.
+
+### Execution rules
+
+- One execution is allowed per triggering observation.
+- Reprocessing the same observation does not create another execution.
+- Claims for the same author and session are serialized.
+- A successful timeout blocks further dispatch until its scheduling
+  window has elapsed.
+- Messages published before that window ends do not become queued
+  timeout actions afterward.
+- A new violation published after the window ends can trigger another
+  timeout.
+- An unresolved `UNKNOWN` outcome blocks further author actions in
+  that session.
+- A successful permanent ban blocks further author actions in that
+  session.
+
+The scheduling window is calculated conservatively from the recorded
+completion time and requested timeout duration. It is not a live query
+of the author's current restriction state on YouTube.
+
+### Provider response handling
+
+Observed successful YouTube responses omitted `snippet.liveChatId`
+and `snippet.banDurationSeconds`.
+
+The adapter accepts these omitted fields while still requiring:
+
+- A successful HTTP response.
+- The expected resource kind.
+- A valid provider ban ID.
+- The expected target author.
+- The expected temporary or permanent ban type.
+
+When the response includes a live chat ID or timeout duration, that value
+must be valid and match the request.
+
+Historical attempts recorded as `UNKNOWN` remain unchanged.
+
+### Remaining work
+
+- Clearly distinguish blocked executions from pending executions.
+- Verify permanent BAN behavior separately.
+- Define reconciliation for uncertain provider outcomes.
+- Evaluate production moderation policies independently of controlled
+  test markers.
+
+This verification establishes the controlled repeated-timeout flow.
+It does not establish classifier accuracy or production readiness.
