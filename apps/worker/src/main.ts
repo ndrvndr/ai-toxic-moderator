@@ -20,6 +20,7 @@ import { BanExecutionStore } from './ingestion/ban-execution-store';
 import { BanExecutor } from './ingestion/ban-executor';
 import { BanRecovery } from './ingestion/ban-recovery';
 import { BatchWriter } from './ingestion/batch-writer';
+import { ControlledBanScope, controlledBanVersion } from './ingestion/controlled-ban-policy';
 import { controlledDeleteVersion } from './ingestion/controlled-delete-policy';
 import { IngestionCoordinator } from './ingestion/coordinator';
 import { createClassificationStore } from './ingestion/create-classification-store';
@@ -93,7 +94,19 @@ async function bootstrap() {
             authorChannelId: config.YOUTUBE_DELETE_TEST_AUTHOR_ID,
           }
         : undefined;
-    const classifications = createClassificationStore(undefined, testScope);
+    const banTestScope: ControlledBanScope | undefined =
+      config.YOUTUBE_BAN_ENABLED &&
+      config.YOUTUBE_BAN_TEST_SESSION_ID &&
+      config.YOUTUBE_BAN_TEST_AUTHOR_ID &&
+      config.YOUTUBE_BAN_TEST_ACTION
+        ? {
+            sessionId: config.YOUTUBE_BAN_TEST_SESSION_ID,
+            authorChannelId: config.YOUTUBE_BAN_TEST_AUTHOR_ID,
+            action: config.YOUTUBE_BAN_TEST_ACTION,
+          }
+        : undefined;
+
+    const classifications = createClassificationStore(undefined, testScope, banTestScope);
     const writer = new BatchWriter(leases, classifications);
     const tokens = new GoogleTokenStore(pool, config, new GoogleProvider());
     const cycle = new PollCycle(leases, writer, tokens, new YoutubeChatAdapter());
@@ -136,7 +149,11 @@ async function bootstrap() {
 
       const banExecutor = new BanExecutor(
         banExecutions,
-        new BanEligibilityStore(pool, enabled),
+        new BanEligibilityStore(
+          pool,
+          enabled,
+          banTestScope ? controlledBanVersion(banTestScope) : null,
+        ),
         tokens,
         new YoutubeBanAdapter(),
       );

@@ -138,3 +138,119 @@ test('invalid controlled scopes are rejected', () => {
     assert.throws(() => controlledBanPolicy(changed));
   }
 });
+
+const { loadConfig } = source('packages/config/src/index.ts');
+const { createClassificationStore } = source(
+  'apps/worker/src/ingestion/create-classification-store.ts',
+);
+
+test('controlled ban configuration requires a complete scope', () => {
+  const base = {
+    DATABASE_URL: 'postgresql://test:test@127.0.0.1/test',
+  };
+  const fields = {
+    YOUTUBE_BAN_TEST_SESSION_ID: scope.sessionId,
+    YOUTUBE_BAN_TEST_AUTHOR_ID: scope.authorChannelId,
+    YOUTUBE_BAN_TEST_ACTION: 'TIMEOUT',
+  };
+
+  const defaults = loadConfig(base);
+  assert.equal(defaults.YOUTUBE_BAN_TEST_SESSION_ID, '');
+  assert.equal(defaults.YOUTUBE_BAN_TEST_AUTHOR_ID, '');
+  assert.equal(defaults.YOUTUBE_BAN_TEST_ACTION, '');
+
+  for (const key of Object.keys(fields)) {
+    assert.throws(() => loadConfig({ ...base, [key]: fields[key] }));
+    assert.throws(() => loadConfig({ ...base, ...fields, [key]: '' }));
+  }
+
+  assert.equal(loadConfig({ ...base, ...fields }).YOUTUBE_BAN_TEST_ACTION, 'TIMEOUT');
+  assert.throws(() => loadConfig({ ...base, ...fields, YOUTUBE_BAN_TEST_ACTION: 'DELETE' }));
+});
+
+test('both controlled policies cannot be enabled together', () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        DATABASE_URL: 'postgresql://test:test@127.0.0.1/test',
+        WORKER_ENABLED: 'true',
+        GOOGLE_AUTH_ENABLED: 'true',
+        YOUTUBE_DELETE_ENABLED: 'true',
+        YOUTUBE_DELETE_TEST_SESSION_ID: scope.sessionId,
+        YOUTUBE_DELETE_TEST_AUTHOR_ID: scope.authorChannelId,
+        YOUTUBE_BAN_ENABLED: 'true',
+        YOUTUBE_BAN_TEST_SESSION_ID: scope.sessionId,
+        YOUTUBE_BAN_TEST_AUTHOR_ID: scope.authorChannelId,
+        YOUTUBE_BAN_TEST_ACTION: 'TIMEOUT',
+      }),
+    /cannot run simultaneously/,
+  );
+
+  assert.throws(
+    () => createClassificationStore(undefined, scope, scope),
+    /Only one controlled action policy/,
+  );
+});
+
+test('classification factory persists controlled author plans only when scoped', async () => {
+  for (const action of ['TIMEOUT', 'BAN']) {
+    for (const enabled of [false, true]) {
+      const plans = [];
+      const store = createClassificationStore(
+        {
+          async save(_client, plan) {
+            plans.push(plan);
+          },
+        },
+        undefined,
+        enabled ? { ...scope, action } : undefined,
+      );
+
+      const client = {
+        async query(_sql, params) {
+          return {
+            rows: [
+              {
+                id: params[0],
+                outcome: params[7],
+                primary_category: params[8],
+                severity: params[9],
+                reason_code: params[10],
+                reason: params[11],
+                signals: JSON.parse(params[12]),
+              },
+            ],
+          };
+        },
+      };
+
+      await store.classify(client, {
+        channelId: context.channel_id,
+        sessionId: scope.sessionId,
+        observationId: context.classification_id,
+        externalMessageId: 'test-message',
+        runId: context.classification_id,
+        publishedAt: '2026-01-01T00:00:00Z',
+        payload: {
+          snippet: {
+            textMessageDetails: {
+              messageText:
+                action === 'TIMEOUT' ? CONTROLLED_TIMEOUT_MESSAGE : CONTROLLED_BAN_MESSAGE,
+            },
+          },
+          authorDetails: {
+            channelId: scope.authorChannelId,
+            displayName: 'Test viewer',
+          },
+        },
+      });
+
+      assert.equal(plans.length, 1);
+      assert.equal(plans[0].action, enabled ? action : 'NONE');
+      assert.equal(
+        plans[0].policy_version,
+        enabled ? controlledBanVersion({ ...scope, action }) : 'actions-1',
+      );
+    }
+  }
+});

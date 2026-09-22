@@ -57,6 +57,12 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  YOUTUBE_BAN_TEST_SESSION_ID: z.union([z.literal(''), z.uuid()]).default(''),
+  YOUTUBE_BAN_TEST_AUTHOR_ID: z
+    .string()
+    .regex(/^(?:UC[A-Za-z0-9_-]{22})?$/)
+    .default(''),
+  YOUTUBE_BAN_TEST_ACTION: z.enum(['', 'TIMEOUT', 'BAN']).default(''),
 });
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
@@ -67,6 +73,28 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         result.error.issues.map((i) => i.path.join('.')).join(', '),
     );
   const host = new URL(result.data.DATABASE_URL).hostname;
+  const banTestFields = [
+    result.data.YOUTUBE_BAN_TEST_SESSION_ID,
+    result.data.YOUTUBE_BAN_TEST_AUTHOR_ID,
+    result.data.YOUTUBE_BAN_TEST_ACTION,
+  ];
+
+  const hasBanTestScope = banTestFields.some(Boolean);
+
+  if (hasBanTestScope && !banTestFields.every(Boolean)) {
+    throw new Error(
+      'Controlled timeout and ban require a test session, author channel, and action.',
+    );
+  }
+
+  if (
+    hasBanTestScope &&
+    result.data.YOUTUBE_BAN_ENABLED &&
+    result.data.YOUTUBE_DELETE_ENABLED &&
+    result.data.YOUTUBE_DELETE_TEST_SESSION_ID
+  ) {
+    throw new Error('Controlled deletion and controlled author actions cannot run simultaneously.');
+  }
   if (
     Boolean(result.data.YOUTUBE_DELETE_TEST_SESSION_ID) !==
     Boolean(result.data.YOUTUBE_DELETE_TEST_AUTHOR_ID)

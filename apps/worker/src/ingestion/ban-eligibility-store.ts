@@ -8,6 +8,7 @@ export class BanEligibilityStore implements BanEligibility {
   constructor(
     private readonly pool: ReturnType<typeof createPool>,
     private readonly isEnabled: () => boolean,
+    private readonly allowedTestPolicyVersion: string | null = null,
   ) {}
 
   async resolve(execution: Readonly<BanExecution>): Promise<{ accountId: string } | null> {
@@ -42,6 +43,13 @@ export class BanEligibilityStore implements BanEligibility {
        WHERE e.id = $1 AND e.plan_id = $2 AND e.channel_id = $3 AND e.session_id = $4
          AND e.live_chat_id = $5 AND e.author_channel_id = $6 AND e.action = $7
          AND e.duration_seconds IS NOT DISTINCT FROM $8::bigint
+         AND (
+  (
+    $9::text IS NULL
+    AND p.policy_version NOT LIKE 'ban-test-%'
+  )
+  OR p.policy_version = $9::text
+)
          AND b.live_chat_id = e.live_chat_id AND p.action = e.action
          AND p.duration_seconds IS NOT DISTINCT FROM e.duration_seconds
          AND COALESCE(o.payload #>> '{authorDetails,channelId}', o.payload #>> '{snippet,authorChannelId}') = e.author_channel_id
@@ -63,6 +71,7 @@ export class BanEligibilityStore implements BanEligibility {
         execution.author_channel_id,
         execution.action,
         execution.duration_seconds,
+        this.allowedTestPolicyVersion,
       ],
     );
     // Configuration may have changed while the database request was in flight.

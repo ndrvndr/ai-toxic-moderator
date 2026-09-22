@@ -64,7 +64,7 @@ after(async () => {
   }
 });
 
-async function fixture(action = 'DELETE') {
+async function fixture(action = 'DELETE', policyVersion = 'test-actions-1') {
   const f = {
     accountId: randomUUID(),
     channelId: randomUUID(),
@@ -112,7 +112,7 @@ async function fixture(action = 'DELETE') {
       2, 'DIRECT_INSULT', 'Deletion store fixture.', '[]'::jsonb)`,
     [f.classificationId, f.channelId, f.sessionId, f.observationId, f.runId],
   );
-  await insertPlan(f, f.planId, 'test-actions-1', action);
+  await insertPlan(f, f.planId, policyVersion, action);
   return f;
 }
 
@@ -418,8 +418,8 @@ async function allResults(promises) {
   });
 }
 
-async function eligibleFixture(action = 'DELETE') {
-  const f = await fixture(action);
+async function eligibleFixture(action = 'DELETE', policyVersion = 'test-actions-1') {
+  const f = await fixture(action, policyVersion);
   await admin.query(
     "UPDATE monitoring_runs SET status = 'RUNNING', started_at = clock_timestamp() WHERE id = $1",
     [f.runId],
@@ -1053,4 +1053,36 @@ test('ban candidates exclude attempted authors and conflicting actions', async (
   });
 
   assert.equal((await scan()).includes(f.planId), false);
+});
+
+test('controlled ban eligibility accepts only the enabled policy version', async () => {
+  for (const action of ['TIMEOUT', 'BAN']) {
+    const version = 'ban-test-' + 'a'.repeat(64);
+    const otherVersion = 'ban-test-' + 'b'.repeat(64);
+    const f = await eligibleFixture(action, version);
+
+    assert.equal(await new BanEligibilityStore(pool, () => true).resolve(f.execution), null);
+
+    assert.equal(
+      await new BanEligibilityStore(pool, () => true, otherVersion).resolve(f.execution),
+      null,
+    );
+
+    assert.deepEqual(
+      await new BanEligibilityStore(pool, () => true, version).resolve(f.execution),
+      { accountId: f.accountId },
+    );
+
+    assert.equal(
+      await new BanEligibilityStore(pool, () => false, version).resolve(f.execution),
+      null,
+    );
+
+    const regular = await eligibleFixture(action);
+
+    assert.equal(
+      await new BanEligibilityStore(pool, () => true, version).resolve(regular.execution),
+      null,
+    );
+  }
 });
