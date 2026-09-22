@@ -112,7 +112,7 @@ test('account changes during token refresh cannot authorize ban', async () => {
 test('a lost claim never sends or completes another attempt', async () => {
   const f = fixture();
   f.store.claim = async () => null;
-  assert.equal((await f.executor.execute(f.input)).reason, 'ALREADY_ATTEMPTED');
+  assert.equal((await f.executor.execute(f.input)).reason, 'DISPATCH_BLOCKED');
   assert.ok(!f.calls.some(([name]) => name === 'ban' || name === 'complete'));
 });
 

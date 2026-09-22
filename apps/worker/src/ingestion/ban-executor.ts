@@ -13,7 +13,7 @@ export interface BanEligibility {
 export type BanExecutorResult =
   | {
       status: 'SKIPPED';
-      reason: 'CANCELLED' | 'INELIGIBLE' | 'CREDENTIALS_UNAVAILABLE' | 'ALREADY_ATTEMPTED';
+      reason: 'CANCELLED' | 'INELIGIBLE' | 'CREDENTIALS_UNAVAILABLE' | 'DISPATCH_BLOCKED';
     }
   | { status: 'RECORDED'; attemptId: string; result: YoutubeBanResult }
   | { status: 'RESULT_NOT_RECORDED'; attemptId: string };
@@ -52,7 +52,7 @@ export class BanExecutor {
     }
 
     const claim = await this.store.claim(execution.id, input.ownerId);
-    if (!claim) return { status: 'SKIPPED', reason: 'ALREADY_ATTEMPTED' };
+    if (!claim) return { status: 'SKIPPED', reason: 'DISPATCH_BLOCKED' };
 
     // The dispatch marker is now committed. Every following exit must preserve its history.
     let authorized = false;

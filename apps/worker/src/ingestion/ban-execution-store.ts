@@ -7,6 +7,7 @@ import {
 } from '@moderator/persistence';
 import type { YoutubeBanResult } from '@moderator/provider-adapters';
 import { randomUUID } from 'node:crypto';
+import { BAN_DISPATCH_ALLOWED_SQL } from './ban-dispatch-policy';
 
 export type BanExecution = {
   id: string;
@@ -103,11 +104,38 @@ export class BanExecutionStore {
       );
       const execution = locked.rows[0];
       if (!execution) return null;
+
+      // Serialize claims for different messages targeting the same author.
+      // The lock is released when this transaction commits or rolls back.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [
+        JSON.stringify([
+          'youtube-author-action',
+          execution.channel_id,
+          execution.session_id,
+          execution.author_channel_id,
+        ]),
+      ]);
+
       const previous = await client.query(
         'SELECT id FROM youtube_ban_attempts WHERE execution_id=$1',
         [executionId],
       );
       if (previous.rows.length) return null;
+      const allowed = await client.query(
+        `
+    SELECT o.id
+    FROM youtube_ban_executions current_execution
+    JOIN youtube_chat_observations o
+      ON o.id = current_execution.observation_id
+      AND o.channel_id = current_execution.channel_id
+      AND o.session_id = current_execution.session_id
+    WHERE current_execution.id = $1
+      AND ${BAN_DISPATCH_ALLOWED_SQL}
+  `,
+        [executionId],
+      );
+
+      if (!allowed.rows.length) return null;
       const attemptId = randomUUID();
       const inserted = await client.query<{ deadline_at: Date }>(
         `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)

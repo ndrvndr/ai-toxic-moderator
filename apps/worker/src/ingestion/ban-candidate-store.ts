@@ -1,4 +1,5 @@
 import type { createPool } from '@moderator/persistence';
+import { BAN_DISPATCH_ALLOWED_SQL } from './ban-dispatch-policy';
 
 export type BanCandidate = {
   planId: string;
@@ -33,10 +34,7 @@ export class BanCandidateStore {
         LEFT JOIN youtube_ban_executions e
           ON e.channel_id = p.channel_id
           AND e.session_id = p.session_id
-          AND e.author_channel_id = COALESCE(
-            o.payload #>> '{authorDetails,channelId}',
-            o.payload #>> '{snippet,authorChannelId}'
-          )
+          AND e.observation_id = o.id
         WHERE p.action IN ('TIMEOUT', 'BAN')
           AND r.status = 'RUNNING'
           AND r.stop_requested_at IS NULL
@@ -60,6 +58,7 @@ export class BanCandidateStore {
             FROM youtube_ban_attempts a
             WHERE a.execution_id = e.id
           )
+        AND ${BAN_DISPATCH_ALLOWED_SQL}
         ORDER BY p.id
         LIMIT 1
       `,

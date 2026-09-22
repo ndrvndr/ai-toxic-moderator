@@ -528,7 +528,7 @@ test('ban executor integration persists confirmed targets and never redispatches
       [f.execution.id],
     );
     assert.deepEqual(stored.rows[0], { ban_id: 'confirmed-ban', status: 'SUCCEEDED' });
-    assert.equal((await executor.execute(executeInput(f))).reason, 'ALREADY_ATTEMPTED');
+    assert.equal((await executor.execute(executeInput(f))).reason, 'DISPATCH_BLOCKED');
     assert.equal(requests.length, 1);
   }
 });
@@ -1085,4 +1085,207 @@ test('controlled ban eligibility accepts only the enabled policy version', async
       null,
     );
   }
+});
+
+async function nextAuthorPlan(
+  f,
+  { publishedAt = new Date().toISOString(), action = 'TIMEOUT' } = {},
+) {
+  const next = {
+    ...f,
+    observationId: randomUUID(),
+    classificationId: randomUUID(),
+    planId: randomUUID(),
+  };
+
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_observations(
+        id, channel_id, session_id, first_observed_run_id,
+        external_message_id, event_type, published_at, payload, payload_hash
+      )
+      SELECT
+        $2, channel_id, session_id, first_observed_run_id,
+        $3, event_type, $4::timestamptz, payload, payload_hash
+      FROM youtube_chat_observations
+      WHERE id = $1
+    `,
+    [f.observationId, next.observationId, `message-${next.observationId}`, publishedAt],
+  );
+
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_classifications(
+        id, channel_id, session_id, observation_id, run_id,
+        classifier_version, policy_version, outcome,
+        primary_category, severity, reason_code, reason, signals
+      )
+      SELECT
+        $2, channel_id, session_id, $3, run_id,
+        classifier_version, policy_version, outcome,
+        primary_category, severity, reason_code, reason, signals
+      FROM youtube_chat_classifications
+      WHERE id = $1
+    `,
+    [f.classificationId, next.classificationId, next.observationId],
+  );
+
+  await insertPlan(next, next.planId, 'repeated-action-test', action);
+  return next;
+}
+
+async function seedHistoricalBanAttempt(executionId, status = 'SUCCEEDED') {
+  const id = randomUUID();
+
+  await admin.query(
+    `
+      INSERT INTO youtube_ban_attempts(
+        id, execution_id, owner_id, started_at, deadline_at
+      )
+      VALUES(
+        $1, $2, $3,
+        '2020-01-01T00:00:00Z',
+        '2020-01-01T00:00:30Z'
+      )
+    `,
+    [id, executionId, randomUUID()],
+  );
+
+  await admin.query(
+    `
+      UPDATE youtube_ban_attempts
+      SET status = $2,
+          finished_at = '2020-01-01T00:00:01Z',
+          http_status = $3,
+          error_code = $4,
+          ban_id = $5
+      WHERE id = $1
+    `,
+    [
+      id,
+      status,
+      status === 'SUCCEEDED' ? 200 : null,
+      status === 'SUCCEEDED' ? null : 'REQUEST_INTERRUPTED',
+      status === 'SUCCEEDED' ? 'historical-provider-ban' : null,
+    ],
+  );
+}
+
+async function findBanCandidate(planId) {
+  const candidates = new BanCandidateStore(pool);
+  let cursor = null;
+
+  for (let count = 0; count < 1000; count++) {
+    const candidate = await candidates.next(cursor);
+    if (!candidate) return false;
+    if (candidate.planId === planId) return true;
+    cursor = candidate.planId;
+  }
+
+  throw new Error('Candidate scan did not terminate.');
+}
+
+test('different messages share one author dispatch lock', async () => {
+  const f = await eligibleFixture('TIMEOUT');
+  const next = await nextAuthorPlan(f);
+  const bans = new BanExecutionStore(pool);
+  const second = await bans.ensure(next.planId, next.channelId, next.sessionId);
+
+  assert.notEqual(second.id, f.execution.id);
+
+  const claims = await allResults([
+    bans.claim(f.execution.id, randomUUID()),
+    bans.claim(second.id, randomUUID()),
+  ]);
+
+  assert.equal(claims.filter(Boolean).length, 1);
+
+  const winner = claims.find(Boolean);
+  const blockedId = winner.execution.id === f.execution.id ? second.id : f.execution.id;
+
+  assert.equal(
+    await bans.complete(winner, {
+      status: 'SUCCEEDED',
+      http_status: 200,
+      ban_id: 'confirmed-timeout',
+    }),
+    true,
+  );
+
+  // A successful timeout still blocks another dispatch while active.
+  assert.equal(await bans.claim(blockedId, randomUUID()), null);
+});
+
+test('a new violation after an expired timeout can dispatch once', async () => {
+  const f = await eligibleFixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+
+  await seedHistoricalBanAttempt(f.execution.id);
+
+  const next = await nextAuthorPlan(f);
+  assert.equal(await findBanCandidate(next.planId), true);
+
+  const second = await bans.ensure(next.planId, next.channelId, next.sessionId);
+  assert.notEqual(second.id, f.execution.id);
+
+  const claims = await allResults([
+    bans.claim(second.id, randomUUID()),
+    bans.claim(second.id, randomUUID()),
+  ]);
+
+  assert.equal(claims.filter(Boolean).length, 1);
+  assert.equal(await findBanCandidate(next.planId), false);
+});
+
+test('messages published during a past timeout do not become a later backlog', async () => {
+  const f = await eligibleFixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+
+  // Fixture timeout duration is 300 seconds; the boundary is 00:05:01.
+  await seedHistoricalBanAttempt(f.execution.id);
+
+  for (const publishedAt of ['2020-01-01T00:00:10Z', '2020-01-01T00:05:01Z']) {
+    const old = await nextAuthorPlan(f, { publishedAt });
+    const execution = await bans.ensure(old.planId, old.channelId, old.sessionId);
+
+    assert.equal(await findBanCandidate(old.planId), false);
+    assert.equal(await bans.claim(execution.id, randomUUID()), null);
+  }
+
+  const fresh = await nextAuthorPlan(f, {
+    publishedAt: '2020-01-01T00:05:02Z',
+  });
+
+  assert.equal(await findBanCandidate(fresh.planId), true);
+
+  const execution = await bans.ensure(fresh.planId, fresh.channelId, fresh.sessionId);
+
+  assert.ok(await bans.claim(execution.id, randomUUID()));
+});
+
+test('unknown outcomes and confirmed permanent bans block new author actions', async () => {
+  for (const [action, status] of [
+    ['TIMEOUT', 'UNKNOWN'],
+    ['BAN', 'SUCCEEDED'],
+  ]) {
+    const f = await eligibleFixture(action);
+    const bans = new BanExecutionStore(pool);
+
+    await seedHistoricalBanAttempt(f.execution.id, status);
+
+    const next = await nextAuthorPlan(f);
+    const execution = await bans.ensure(next.planId, next.channelId, next.sessionId);
+
+    assert.equal(await findBanCandidate(next.planId), false);
+    assert.equal(await bans.claim(execution.id, randomUUID()), null);
+  }
+});
+
+test('an active action does not block a different channel session', async () => {
+  const first = await eligibleFixture('TIMEOUT');
+  const second = await eligibleFixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+
+  assert.ok(await bans.claim(first.execution.id, randomUUID()));
+  assert.ok(await bans.claim(second.execution.id, randomUUID()));
 });
