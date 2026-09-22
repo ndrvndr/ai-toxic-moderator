@@ -90,6 +90,9 @@ class ChatController {
         evaluation_classifier_version: string | null;
         evaluation_policy_version: string | null;
         deletion_status: string | null;
+        author_action_type: 'TIMEOUT' | 'BAN' | null;
+        author_action_status: string | null;
+        author_action_duration: string | null;
       }>(
         `
           SELECT
@@ -120,7 +123,10 @@ class ChatController {
             evaluation.reason AS evaluation_reason,
             evaluation.classifier_version AS evaluation_classifier_version,
             evaluation.policy_version AS evaluation_policy_version,
-            deletion.deletion_status
+            deletion.deletion_status,
+            author_action.author_action_type,
+            author_action.author_action_status,
+            author_action.author_action_duration
           FROM youtube_chat_observations
           LEFT JOIN LATERAL (
             SELECT
@@ -158,6 +164,20 @@ class ChatController {
                 AND p.action = 'DELETE'
             )
           ) deletion ON true
+           LEFT JOIN LATERAL (
+  SELECT
+    e.action AS author_action_type,
+    COALESCE(a.status, 'PENDING') AS author_action_status,
+    e.duration_seconds::text AS author_action_duration
+  FROM youtube_ban_executions e
+  LEFT JOIN youtube_ban_attempts a ON a.execution_id = e.id
+  WHERE e.channel_id = youtube_chat_observations.channel_id
+    AND e.session_id = youtube_chat_observations.session_id
+    AND e.author_channel_id = COALESCE(
+      youtube_chat_observations.payload #>> '{authorDetails,channelId}',
+      youtube_chat_observations.payload #>> '{snippet,authorChannelId}'
+    )
+) author_action ON true
           WHERE channel_id = $1
             AND session_id = $2
             AND (
@@ -199,6 +219,15 @@ class ChatController {
           evaluation_status: row.evaluation_outcome ?? 'NOT_EVALUATED',
           deletion:
             row.deletion_status === null ? null : { action: 'DELETE', status: row.deletion_status },
+          author_action:
+            row.author_action_type === null
+              ? null
+              : {
+                  action: row.author_action_type,
+                  status: row.author_action_status,
+                  duration_seconds:
+                    row.author_action_duration === null ? null : Number(row.author_action_duration),
+                },
           evaluation:
             row.evaluation_outcome === null
               ? null

@@ -727,3 +727,155 @@ test('saved sessions reject malformed pagination and another account cursor', as
 
   assert.equal(response.status, 400);
 });
+
+test('chat exposes author action results without leaking execution details', async () => {
+  for (const action of ['TIMEOUT', 'BAN']) {
+    for (const status of ['DISPATCHED', 'SUCCEEDED', 'REJECTED', 'NOT_SENT', 'UNKNOWN']) {
+      const run = await startRun();
+      const observationId = await insertChatObservation(run);
+      const siblingId = await insertChatObservation(run);
+      const duration = action === 'TIMEOUT' ? 300 : null;
+
+      async function readItems() {
+        const response = await request(chatPath(run));
+        assert.equal(response.status, 200, await response.clone().text());
+        return chatPage.parse(await response.json()).items;
+      }
+
+      assert.ok((await readItems()).every((item) => item.author_action === null));
+
+      const classificationId = randomUUID();
+      const planId = randomUUID();
+      const executionId = randomUUID();
+      const attemptId = randomUUID();
+
+      await admin.query(
+        `
+          INSERT INTO youtube_chat_classifications(
+            id, channel_id, session_id, observation_id, run_id,
+            classifier_version, policy_version, outcome,
+            primary_category, severity, reason_code, reason, signals
+          )
+          VALUES(
+            $1, $2, $3, $4, $5,
+            'test-rules', 'test-policy', 'REVIEW',
+            'HARASSMENT', 2, 'DIRECT_INSULT', 'Test classification.', '[]'::jsonb
+          )
+        `,
+        [classificationId, run.channel_id, run.session_id, observationId, run.id],
+      );
+
+      await admin.query(
+        `
+          INSERT INTO youtube_moderation_action_plans(
+            id, channel_id, session_id, classification_id,
+            policy_version, action, duration_seconds, reason
+          )
+          VALUES($1, $2, $3, $4, 'test-author-actions', $5, $6, 'Test action.')
+        `,
+        [planId, run.channel_id, run.session_id, classificationId, action, duration],
+      );
+
+      // A plan alone does not represent a scheduled execution.
+      assert.ok((await readItems()).every((item) => item.author_action === null));
+
+      await admin.query(
+        `
+          INSERT INTO youtube_ban_executions(
+            id, plan_id, channel_id, session_id,
+            live_chat_id, author_channel_id, action, duration_seconds
+          )
+          SELECT $1, $2, channel_id, session_id,
+            live_chat_id, 'viewer-channel', $5, $6
+          FROM youtube_broadcasts
+          WHERE channel_id = $3 AND session_id = $4
+        `,
+        [executionId, planId, run.channel_id, run.session_id, action, duration],
+      );
+
+      for (const item of await readItems()) {
+        assert.deepEqual(item.author_action, {
+          action,
+          status: 'PENDING',
+          duration_seconds: duration,
+        });
+      }
+
+      await admin.query(
+        `
+          WITH moment AS MATERIALIZED (
+            SELECT clock_timestamp() AS at
+          )
+          INSERT INTO youtube_ban_attempts(
+            id, execution_id, owner_id, started_at, deadline_at
+          )
+          SELECT $1, $2, $3, at, at + interval '30 seconds'
+          FROM moment
+        `,
+        [attemptId, executionId, randomUUID()],
+      );
+
+      if (status !== 'DISPATCHED') {
+        await admin.query(
+          `
+            UPDATE youtube_ban_attempts
+            SET status = $2,
+                finished_at = clock_timestamp(),
+                http_status = $3,
+                error_code = $4,
+                ban_id = $5
+            WHERE id = $1
+          `,
+          [
+            attemptId,
+            status,
+            status === 'SUCCEEDED' ? 200 : status === 'REJECTED' ? 403 : null,
+            status === 'SUCCEEDED'
+              ? null
+              : status === 'REJECTED'
+                ? 'YOUTUBE_FORBIDDEN'
+                : status === 'NOT_SENT'
+                  ? 'REQUEST_CANCELLED'
+                  : 'EXECUTION_DEADLINE_EXCEEDED',
+            status === 'SUCCEEDED' ? 'private-provider-ban-id' : null,
+          ],
+        );
+      }
+
+      const items = await readItems();
+      assert.equal(items.length, 2);
+      assert.ok(items.some((item) => item.id === siblingId));
+
+      for (const item of items) {
+        assert.deepEqual(item.author_action, {
+          action,
+          status,
+          duration_seconds: duration,
+        });
+        assert.equal(item.deletion, null);
+        assert.equal('ban_id' in item.author_action, false);
+        assert.equal('owner_id' in item.author_action, false);
+        assert.equal('error_code' in item.author_action, false);
+      }
+
+      assert.equal(items.find((item) => item.id === siblingId).evaluation_status, 'NOT_EVALUATED');
+
+      // The same author in another session must not inherit this result.
+      const otherRun = await startRun();
+      await insertChatObservation(otherRun);
+      const otherResponse = await request(chatPath(otherRun));
+      assert.equal(otherResponse.status, 200);
+      assert.equal(chatPage.parse(await otherResponse.json()).items[0].author_action, null);
+
+      // Existing channel authorization must still apply.
+      await admin.query(
+        `
+          UPDATE channel_memberships SET role = 'OPERATOR'
+          WHERE channel_id = $1 AND account_id = $2
+        `,
+        [run.channel_id, accountId],
+      );
+      assert.equal((await request(chatPath(run))).status, 403);
+    }
+  }
+});

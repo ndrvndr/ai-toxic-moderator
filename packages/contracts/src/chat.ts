@@ -43,6 +43,19 @@ export const chatDeletion = z.strictObject({
   status: z.enum(['PENDING', 'DISPATCHED', 'SUCCEEDED', 'REJECTED', 'NOT_SENT', 'UNKNOWN']),
 });
 
+export const chatAuthorAction = z.discriminatedUnion('action', [
+  z.strictObject({
+    action: z.literal('TIMEOUT'),
+    status: chatDeletion.shape.status,
+    duration_seconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  }),
+  z.strictObject({
+    action: z.literal('BAN'),
+    status: chatDeletion.shape.status,
+    duration_seconds: z.null(),
+  }),
+]);
+
 export const chatObservation = z.strictObject({
   id: z.uuid(),
   external_message_id: z.string().min(1).max(1024),
@@ -55,6 +68,7 @@ export const chatObservation = z.strictObject({
   evaluation_status: z.enum(['NOT_EVALUATED', 'ALLOW', 'REVIEW', 'ACTION_REQUIRED', 'ERROR']),
   evaluation: chatEvaluation.nullable(),
   deletion: chatDeletion.nullable().optional(),
+  author_action: chatAuthorAction.nullable().optional(),
 });
 
 export const chatPage = z.strictObject({
@@ -66,3 +80,4 @@ export type ChatObservation = z.infer<typeof chatObservation>;
 export type ChatPage = z.infer<typeof chatPage>;
 export type ChatEvaluation = z.infer<typeof chatEvaluation>;
 export type ChatDeletion = z.infer<typeof chatDeletion>;
+export type ChatAuthorAction = z.infer<typeof chatAuthorAction>;
