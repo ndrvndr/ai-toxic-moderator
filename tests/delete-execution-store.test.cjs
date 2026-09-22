@@ -16,6 +16,7 @@ const { YoutubeModerationAdapter } = source('packages/provider-adapters/src/yout
 const { readLiveEvents } = source('packages/persistence/src/live-events.ts');
 const { consumeLiveFrame } = source('apps/dashboard/features/live/lib/live-event-protocol.ts');
 const { BanCandidateStore } = source('apps/worker/src/ingestion/ban-candidate-store.ts');
+const { BAN_DISPATCH_BLOCK_REASON_SQL } = source('packages/persistence/src/ban-dispatch-policy.ts');
 
 const schema = `delete_store_${randomUUID().replaceAll('-', '')}`;
 const role = `delete_worker_${randomUUID().replaceAll('-', '')}`;
@@ -1288,4 +1289,96 @@ test('an active action does not block a different channel session', async () => 
 
   assert.ok(await bans.claim(first.execution.id, randomUUID()));
   assert.ok(await bans.claim(second.execution.id, randomUUID()));
+});
+
+async function authorBlockReason(observationId) {
+  const result = await pool.query(
+    `
+      SELECT ${BAN_DISPATCH_BLOCK_REASON_SQL} AS reason
+      FROM youtube_chat_observations o
+      WHERE o.id = $1
+    `,
+    [observationId],
+  );
+
+  assert.equal(result.rows.length, 1);
+  return result.rows[0].reason;
+}
+
+test('author dispatch reasons distinguish unresolved and permanent outcomes', async () => {
+  for (const [action, status, expected] of [
+    ['TIMEOUT', 'UNKNOWN', 'PREVIOUS_OUTCOME_UNKNOWN'],
+    ['BAN', 'SUCCEEDED', 'AUTHOR_ALREADY_BANNED'],
+  ]) {
+    const f = await eligibleFixture(action);
+    await seedHistoricalBanAttempt(f.execution.id, status);
+
+    const next = await nextAuthorPlan(f);
+
+    assert.equal(await authorBlockReason(next.observationId), expected);
+    assert.equal(await findBanCandidate(next.planId), false);
+  }
+});
+
+test('an expired timeout still excludes old messages but permits newer messages', async () => {
+  const f = await eligibleFixture('TIMEOUT');
+  await seedHistoricalBanAttempt(f.execution.id);
+
+  // Historical attempt finished at 00:00:01 with a 300-second duration.
+  const old = await nextAuthorPlan(f, {
+    publishedAt: '2020-01-01T00:05:01Z',
+  });
+  const fresh = await nextAuthorPlan(f, {
+    publishedAt: '2020-01-01T00:05:02Z',
+  });
+
+  assert.equal(await authorBlockReason(old.observationId), 'MESSAGE_BEFORE_TIMEOUT_END');
+  assert.equal(await authorBlockReason(fresh.observationId), null);
+});
+
+test('an in-progress author action has a distinct blocking reason', async () => {
+  const f = await eligibleFixture('TIMEOUT');
+  const next = await nextAuthorPlan(f);
+  const bans = new BanExecutionStore(pool);
+
+  assert.ok(await bans.claim(f.execution.id, randomUUID()));
+
+  assert.equal(await authorBlockReason(next.observationId), 'AUTHOR_ACTION_IN_PROGRESS');
+});
+
+test('an active timeout window is distinguishable from an old message', async () => {
+  const f = await eligibleFixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const claim = await bans.claim(f.execution.id, randomUUID());
+
+  assert.ok(claim);
+  assert.equal(
+    await bans.complete(claim, {
+      status: 'SUCCEEDED',
+      http_status: 200,
+      ban_id: 'active-window-test',
+    }),
+    true,
+  );
+
+  // Simulate a provider timestamp ahead of the database clock.
+  // Dispatch must still wait for the local scheduling window.
+  const clock = await admin.query("SELECT clock_timestamp() + interval '1 hour' AS future");
+  const next = await nextAuthorPlan(f, {
+    publishedAt: clock.rows[0].future.toISOString(),
+  });
+
+  assert.equal(await authorBlockReason(next.observationId), 'TIMEOUT_WINDOW_ACTIVE');
+
+  const execution = await bans.ensure(next.planId, next.channelId, next.sessionId);
+  assert.equal(await bans.claim(execution.id, randomUUID()), null);
+});
+
+test('author dispatch reasons do not leak across sessions', async () => {
+  const first = await eligibleFixture('BAN');
+  await seedHistoricalBanAttempt(first.execution.id);
+
+  const other = await eligibleFixture('TIMEOUT');
+
+  assert.equal(await authorBlockReason(other.observationId), null);
 });
