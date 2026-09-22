@@ -728,7 +728,7 @@ test('saved sessions reject malformed pagination and another account cursor', as
   assert.equal(response.status, 400);
 });
 
-test('chat exposes author action results without leaking execution details', async () => {
+test('chat exposes author action results only on their triggering messages', async () => {
   for (const action of ['TIMEOUT', 'BAN']) {
     for (const status of ['DISPATCHED', 'SUCCEEDED', 'REJECTED', 'NOT_SENT', 'UNKNOWN']) {
       const run = await startRun();
@@ -793,13 +793,15 @@ test('chat exposes author action results without leaking execution details', asy
         [executionId, planId, run.channel_id, run.session_id, action, duration],
       );
 
-      for (const item of await readItems()) {
-        assert.deepEqual(item.author_action, {
-          action,
-          status: 'PENDING',
-          duration_seconds: duration,
-        });
-      }
+      const pendingItems = await readItems();
+
+      assert.deepEqual(pendingItems.find((item) => item.id === observationId).author_action, {
+        action,
+        status: 'PENDING',
+        duration_seconds: duration,
+      });
+
+      assert.equal(pendingItems.find((item) => item.id === siblingId).author_action, null);
 
       await admin.query(
         `
@@ -846,17 +848,40 @@ test('chat exposes author action results without leaking execution details', asy
       assert.equal(items.length, 2);
       assert.ok(items.some((item) => item.id === siblingId));
 
-      for (const item of items) {
-        assert.deepEqual(item.author_action, {
-          action,
-          status,
-          duration_seconds: duration,
-        });
-        assert.equal(item.deletion, null);
-        assert.equal('ban_id' in item.author_action, false);
-        assert.equal('owner_id' in item.author_action, false);
-        assert.equal('error_code' in item.author_action, false);
-      }
+      const triggeringMessage = items.find((item) => item.id === observationId);
+      const siblingMessage = items.find((item) => item.id === siblingId);
+
+      assert.ok(triggeringMessage);
+      assert.ok(siblingMessage);
+
+      assert.deepEqual(triggeringMessage.author_action, {
+        action,
+        status,
+        duration_seconds: duration,
+      });
+
+      assert.equal(siblingMessage.author_action, null);
+      assert.equal(triggeringMessage.deletion, null);
+      assert.equal(siblingMessage.deletion, null);
+
+      assert.equal('ban_id' in triggeringMessage.author_action, false);
+      assert.equal('owner_id' in triggeringMessage.author_action, false);
+      assert.equal('error_code' in triggeringMessage.author_action, false);
+
+      // Messages sent later by the same author must not inherit this result.
+      const laterId = await insertChatObservation(run, {
+        receivedAt: '2026-01-01T00:01:00.123456Z',
+        text: 'A later message from the same viewer',
+      });
+
+      const laterItems = await readItems();
+
+      assert.equal(laterItems.find((item) => item.id === laterId).author_action, null);
+      assert.deepEqual(laterItems.find((item) => item.id === observationId).author_action, {
+        action,
+        status,
+        duration_seconds: duration,
+      });
 
       assert.equal(items.find((item) => item.id === siblingId).evaluation_status, 'NOT_EVALUATED');
 

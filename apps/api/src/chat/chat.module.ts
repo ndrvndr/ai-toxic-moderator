@@ -173,10 +173,7 @@ class ChatController {
   LEFT JOIN youtube_ban_attempts a ON a.execution_id = e.id
   WHERE e.channel_id = youtube_chat_observations.channel_id
     AND e.session_id = youtube_chat_observations.session_id
-    AND e.author_channel_id = COALESCE(
-      youtube_chat_observations.payload #>> '{authorDetails,channelId}',
-      youtube_chat_observations.payload #>> '{snippet,authorChannelId}'
-    )
+    AND e.observation_id = youtube_chat_observations.id
 ) author_action ON true
           WHERE channel_id = $1
             AND session_id = $2

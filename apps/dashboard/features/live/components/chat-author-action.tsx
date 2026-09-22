@@ -45,8 +45,8 @@ export function ChatAuthorAction({ action }: { action?: AuthorAction | null }) {
       <p className="text-xs text-muted-foreground">{describeAction(action)}</p>
 
       <p className="text-xs text-muted-foreground">
-        This result applies to the author in this livestream session. It may appear on multiple
-        messages from the same author.
+        This execution was triggered by this message and targeted its author. The result records a
+        past attempt, not the author's current restriction status.
       </p>
     </div>
   );

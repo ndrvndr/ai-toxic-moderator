@@ -34,9 +34,11 @@ export class BanExecutionStore {
     [planId, channelId, sessionId].forEach((value) => uuid.parse(value));
     return transaction(this.pool, async (client) => {
       const source = await client.query<
-        Pick<BanExecution, 'live_chat_id' | 'author_channel_id' | 'action' | 'duration_seconds'>
+        Pick<BanExecution, 'live_chat_id' | 'author_channel_id' | 'action' | 'duration_seconds'> & {
+          observation_id: string;
+        }
       >(
-        `SELECT b.live_chat_id, COALESCE(o.payload #>> '{authorDetails,channelId}',
+        `SELECT o.id AS observation_id, b.live_chat_id, COALESCE(o.payload #>> '{authorDetails,channelId}',
           o.payload #>> '{snippet,authorChannelId}') AS author_channel_id, p.action, p.duration_seconds::text
          FROM youtube_moderation_action_plans p
          JOIN youtube_chat_classifications c ON c.id = p.classification_id
@@ -67,12 +69,17 @@ export class BanExecutionStore {
       );
       if (inserted.rows[0]) return inserted.rows[0];
       const existing = await client.query<BanExecution>(
-        `SELECT ${columns} FROM youtube_ban_executions WHERE channel_id=$1 AND session_id=$2 AND author_channel_id=$3`,
-        [channelId, sessionId, target.author_channel_id],
+        `SELECT ${columns}
+   FROM youtube_ban_executions
+   WHERE channel_id = $1
+     AND session_id = $2
+     AND observation_id = $3`,
+        [channelId, sessionId, target.observation_id],
       );
       const row = existing.rows[0];
       if (
         !row ||
+        row.author_channel_id !== target.author_channel_id ||
         row.action !== target.action ||
         row.duration_seconds !== target.duration_seconds ||
         row.live_chat_id !== target.live_chat_id

@@ -42,7 +42,7 @@ describe('chat author action results', () => {
       const panel = within(screen.getByRole('group', { name: 'Author action result' }));
 
       expect(panel.getByText(`${label} ${suffix}`)).toBeTruthy();
-      expect(panel.getByText(/applies to the author in this livestream session/)).toBeTruthy();
+      expect(panel.getByText(/This execution was triggered by this message/)).toBeTruthy();
 
       if (status !== 'SUCCEEDED') {
         expect(panel.queryByText(`${label} confirmed`)).toBeNull();
