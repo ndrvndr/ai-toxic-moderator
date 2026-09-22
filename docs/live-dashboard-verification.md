@@ -118,3 +118,39 @@ Historical attempts recorded as `UNKNOWN` remain unchanged.
 
 This verification establishes the controlled repeated-timeout flow.
 It does not establish classifier accuracy or production readiness.
+
+## Permanent Ban Verification
+
+### Verification status
+
+Passed in a controlled live test, as reported by the developer on
+September 23, 2026 (Asia/Jakarta).
+
+### Confirmed evidence
+
+- The exact `ATM_BAN_TEST_V1` marker produced a BAN execution.
+- The chat API returned `action: BAN`, `status: SUCCEEDED`, and
+  `duration_seconds: null` for the triggering message.
+- A `userBannedEvent` was received at
+  `2026-09-22T20:52:12.449294Z`.
+- Earlier messages from the test viewer appeared as deleted in YouTube.
+- After the channel owner removed the test viewer from Hidden users,
+  the viewer's `test unban` message became visible again.
+
+The visible removal of earlier messages is separate from the
+application's per-message DELETE execution history.
+
+### Additional verified behavior
+
+- A new probe message sent while the ban was active was not visible
+  to the channel owner.
+- The dashboard displayed `Ban confirmed` without a manual refresh.
+
+### Manual unban limitation
+
+Removing the viewer from Hidden users restores access on YouTube but
+does not rewrite the application's historical successful BAN attempt.
+
+The current worker still blocks further author actions in that session
+when a successful BAN exists in its history. Synchronizing external
+unban actions is not implemented.
