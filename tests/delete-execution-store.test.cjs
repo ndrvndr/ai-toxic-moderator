@@ -19,6 +19,7 @@ const { BanCandidateStore } = source('apps/worker/src/ingestion/ban-candidate-st
 const { BAN_DISPATCH_BLOCK_REASON_SQL } = source('packages/persistence/src/ban-dispatch-policy.ts');
 const { BanEvidenceReader } = source('apps/worker/src/ingestion/ban-evidence-reader.ts');
 const { BanEvidenceStore } = source('apps/worker/src/ingestion/ban-evidence-store.ts');
+const { BanEvidenceCoordinator } = source('apps/worker/src/ingestion/ban-evidence-coordinator.ts');
 
 const schema = `delete_store_${randomUUID().replaceAll('-', '')}`;
 const role = `delete_worker_${randomUUID().replaceAll('-', '')}`;
@@ -1938,4 +1939,128 @@ test('evidence publication failure rolls back the evidence link', async () => {
   assert.equal(await evidenceStore.save(claim.attempt_id, observationId), 'INSERTED');
 
   assert.equal((await eventsFor(execution)).length, eventsBefore.length + 1);
+});
+
+test('integration: late evidence is collected after rescan and restart does not duplicate publication', async () => {
+  const { f, execution, claim } = await unknownEvidenceFixture();
+  const baselineEvents = await eventsFor(execution);
+  const signal = new AbortController().signal;
+  let now = 0;
+
+  function createScanner() {
+    const reader = new BanEvidenceReader(pool);
+    let exhausted = false;
+
+    const coordinator = new BanEvidenceCoordinator(
+      {
+        async nextAttempt(after) {
+          const candidate = await reader.nextAttempt(after);
+
+          if (candidate === null) {
+            exhausted = true;
+          }
+
+          return candidate;
+        },
+        read: reader.read.bind(reader),
+      },
+      new BanEvidenceStore(pool),
+      () => now,
+    );
+
+    return {
+      coordinator,
+      async drain() {
+        exhausted = false;
+
+        for (let index = 0; index < 1000; index += 1) {
+          await coordinator.tick(signal);
+
+          if (exhausted) return;
+        }
+
+        assert.fail('Evidence scan did not reach the end.');
+      },
+    };
+  }
+
+  async function storedEvidence() {
+    const result = await admin.query(
+      `
+        SELECT observation_id, attribution
+        FROM youtube_ban_evidence
+        WHERE attempt_id = $1
+        ORDER BY observation_id
+      `,
+      [claim.attempt_id],
+    );
+
+    return result.rows;
+  }
+
+  const scanner = createScanner();
+
+  // Complete a scan before the provider event has been ingested.
+  await scanner.drain();
+
+  assert.deepEqual(await storedEvidence(), []);
+  assert.deepEqual(await eventsFor(execution), baselineEvents);
+
+  // The event is persisted late, but its publication time matches the attempt.
+  const observationId = await insertBanEvidenceObservation(f, claim);
+
+  now = 29_999;
+  await scanner.coordinator.tick(signal);
+
+  assert.deepEqual(await storedEvidence(), []);
+  assert.deepEqual(await eventsFor(execution), baselineEvents);
+
+  now = 30_000;
+  await scanner.drain();
+
+  assert.deepEqual(await storedEvidence(), [
+    {
+      observation_id: observationId,
+      attribution: 'UNPROVEN',
+    },
+  ]);
+
+  const afterCollection = await eventsFor(execution);
+
+  assert.equal(afterCollection.length, baselineEvents.length + 1);
+  assert.deepEqual(afterCollection.slice(0, baselineEvents.length), baselineEvents);
+  assert.equal(afterCollection.at(-1).event_type, 'chat.updated');
+  assert.equal(afterCollection.at(-1).run_id, f.runId);
+
+  // A fresh coordinator has no in-memory cursors, as after a worker restart.
+  const restarted = createScanner();
+  await restarted.drain();
+
+  assert.deepEqual(await storedEvidence(), [
+    {
+      observation_id: observationId,
+      attribution: 'UNPROVEN',
+    },
+  ]);
+  assert.deepEqual(await eventsFor(execution), afterCollection);
+
+  const attempts = await admin.query(
+    `
+      SELECT id, status, error_code
+      FROM youtube_ban_attempts
+      WHERE execution_id = $1
+    `,
+    [execution.id],
+  );
+
+  assert.deepEqual(attempts.rows, [
+    {
+      id: claim.attempt_id,
+      status: 'UNKNOWN',
+      error_code: 'TRANSPORT_ERROR',
+    },
+  ]);
+
+  // Evidence collection must not make the original execution dispatchable.
+  assert.equal(await new BanExecutionStore(pool).claim(execution.id, randomUUID()), null);
 });

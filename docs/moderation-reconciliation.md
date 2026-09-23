@@ -86,7 +86,10 @@ Shutdown waits for in-flight database work before closing the pool.
 
 ## API and Dashboard Presentation
 
-The API should expose request outcome and evidence separately.
+The API exposes request outcome and candidate evidence separately.
+For unknown author actions, `evidence.matching_event_observed` indicates
+whether a candidate evidence link has been stored. Attribution remains
+`UNPROVEN`.
 
 For an unknown request with stored candidate evidence, use:
 
@@ -105,8 +108,31 @@ Do not display candidate evidence as `Timeout confirmed` or `Ban confirmed`.
 
 ## Current Limitations
 
-Candidate evidence collection is implemented separately from request
-execution. It does not resolve ambiguous request attribution.
+Candidate evidence collection runs independently of request execution.
+It does not resolve ambiguous request attribution or unblock actions that
+the dispatch policy blocks because of an unknown outcome.
 
-API exposure, dashboard presentation, and their integration tests must be
-completed before evidence is visible to users.
+New evidence links publish `chat.updated` in the same transaction.
+Repeated processing of an existing link does not publish another event.
+The dashboard displays matching evidence separately from the request outcome.
+
+Automated tests cover evidence matching, storage, publication, API responses,
+and component rendering. A browser verification of the complete evidence
+update flow remains pending.
+
+## Integration Verification
+
+The integration test uses a local test database and the real evidence
+reader, coordinator, store, and live-event persistence.
+
+It verifies that:
+
+- A completed scan without evidence preserves the unknown request outcome.
+- A late observation is collected after the rescan cooldown.
+- A new evidence link publishes one scoped `chat.updated` event.
+- A fresh coordinator can replay the scan without duplicate evidence or events.
+- Evidence collection does not create another moderation attempt.
+- The original execution remains non-dispatchable.
+
+This test does not send requests to YouTube or establish that a matching
+event was caused by the application request.
