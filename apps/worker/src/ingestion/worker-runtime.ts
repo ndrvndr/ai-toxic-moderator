@@ -12,6 +12,7 @@ type WorkerCycle = {
 type BanCycles = {
   dispatch?: WorkerCycle;
   recovery: WorkerCycle;
+  evidence?: WorkerCycle;
 };
 
 export class WorkerRuntime {
@@ -50,6 +51,10 @@ export class WorkerRuntime {
 
     if (this.bans) {
       loops.push(this.loop(this.bans.recovery, 'Timeout and ban recovery'));
+    }
+
+    if (this.bans?.evidence) {
+      loops.push(this.loop(this.bans.evidence, 'Moderation evidence'));
     }
 
     // Every loop must finish before the shared pool closes.

@@ -18,6 +18,9 @@ import { ActorResolver } from './ingestion/actor-resolver';
 import { BanCandidateStore } from './ingestion/ban-candidate-store';
 import { BanCoordinator } from './ingestion/ban-coordinator';
 import { BanEligibilityStore } from './ingestion/ban-eligibility-store';
+import { BanEvidenceCoordinator } from './ingestion/ban-evidence-coordinator';
+import { BanEvidenceReader } from './ingestion/ban-evidence-reader';
+import { BanEvidenceStore } from './ingestion/ban-evidence-store';
 import { BanExecutionStore } from './ingestion/ban-execution-store';
 import { BanExecutor } from './ingestion/ban-executor';
 import { BanRecovery } from './ingestion/ban-recovery';
@@ -95,6 +98,24 @@ async function bootstrap() {
     credential_account_id,
     moderator_channel_id
   FROM youtube_ban_attempts
+  LIMIT 0
+`);
+
+    await pool.query(`
+  SELECT
+    id,
+    status,
+    deadline_at,
+    ban_id,
+    credential_account_id,
+    moderator_channel_id
+  FROM youtube_ban_attempts
+  LIMIT 0
+`);
+
+    await pool.query(`
+  SELECT attempt_id, observation_id, attribution
+  FROM youtube_ban_evidence
   LIMIT 0
 `);
 
@@ -179,6 +200,7 @@ async function bootstrap() {
     runtime = new WorkerRuntime(coordinator, pool, deletions, recovery, {
       dispatch: bans,
       recovery: banRecovery,
+      evidence: new BanEvidenceCoordinator(new BanEvidenceReader(pool), new BanEvidenceStore(pool)),
     });
 
     @Module({

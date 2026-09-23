@@ -129,3 +129,53 @@ test('a stopped runtime cannot restart', async () => {
   assert.equal(calls, 0);
   assert.equal(closures, 1);
 });
+
+test('shutdown drains evidence persistence before closing the pool', async () => {
+  let release;
+  let evidenceSignal;
+  let closed = false;
+
+  const runtime = new WorkerRuntime(
+    {
+      async tick() {
+        return { kind: 'IDLE' };
+      },
+    },
+    {
+      async end() {
+        closed = true;
+      },
+    },
+    undefined,
+    undefined,
+    {
+      recovery: {
+        async tick() {},
+      },
+      evidence: {
+        async tick(signal) {
+          evidenceSignal = signal;
+
+          await new Promise((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    },
+  );
+
+  runtime.start();
+
+  assert.ok(evidenceSignal);
+
+  const stopping = runtime.onApplicationShutdown();
+
+  assert.equal(evidenceSignal.aborted, true);
+  await Promise.resolve();
+  assert.equal(closed, false);
+
+  release();
+  await stopping;
+
+  assert.equal(closed, true);
+});
