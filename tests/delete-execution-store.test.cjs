@@ -1382,3 +1382,147 @@ test('author dispatch reasons do not leak across sessions', async () => {
 
   assert.equal(await authorBlockReason(other.observationId), null);
 });
+
+test('concurrent ban claims persist one actor snapshot with worker permissions', async () => {
+  const f = await fixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const row = await bans.ensure(f.planId, f.channelId, f.sessionId);
+
+  const actors = [
+    {
+      accountId: f.accountId,
+      moderatorChannelId: `UC${'a'.repeat(22)}`,
+    },
+    {
+      accountId: f.accountId,
+      moderatorChannelId: `UC${'b'.repeat(22)}`,
+    },
+  ];
+
+  const claims = await allResults(
+    actors.map((actor) => bans.claim(row.id, randomUUID(), 30, actor)),
+  );
+
+  assert.equal(claims.filter(Boolean).length, 1);
+
+  const winnerIndex = claims.findIndex(Boolean);
+  const claim = claims[winnerIndex];
+
+  const saved = await admin.query(
+    `
+      SELECT credential_account_id, moderator_channel_id, status
+      FROM youtube_ban_attempts
+      WHERE execution_id = $1
+    `,
+    [row.id],
+  );
+
+  assert.equal(saved.rows.length, 1);
+  assert.deepEqual(saved.rows[0], {
+    credential_account_id: actors[winnerIndex].accountId,
+    moderator_channel_id: actors[winnerIndex].moderatorChannelId,
+    status: 'DISPATCHED',
+  });
+
+  assert.equal(
+    await bans.complete(claim, {
+      status: 'SUCCEEDED',
+      http_status: 200,
+      ban_id: 'actor-snapshot-ban',
+    }),
+    true,
+  );
+
+  const completed = await admin.query(
+    `
+      SELECT credential_account_id, moderator_channel_id, status
+      FROM youtube_ban_attempts
+      WHERE id = $1
+    `,
+    [claim.attempt_id],
+  );
+
+  assert.deepEqual(completed.rows[0], {
+    credential_account_id: actors[winnerIndex].accountId,
+    moderator_channel_id: actors[winnerIndex].moderatorChannelId,
+    status: 'SUCCEEDED',
+  });
+
+  assert.equal(await bans.claim(row.id, randomUUID(), 30, actors[1 - winnerIndex]), null);
+});
+
+test('ban claims reject credentials from another run without leaving an attempt', async () => {
+  const f = await fixture('BAN');
+  const other = await fixture('BAN');
+  const bans = new BanExecutionStore(pool);
+  const row = await bans.ensure(f.planId, f.channelId, f.sessionId);
+
+  await assert.rejects(
+    bans.claim(row.id, randomUUID(), 30, {
+      accountId: other.accountId,
+      moderatorChannelId: `UC${'a'.repeat(22)}`,
+    }),
+    { code: '23514' },
+  );
+
+  const attempts = await admin.query(
+    'SELECT id FROM youtube_ban_attempts WHERE execution_id = $1',
+    [row.id],
+  );
+
+  assert.equal(attempts.rows.length, 0);
+  assert.equal((await eventsFor(row)).length, 0);
+
+  const validClaim = await bans.claim(row.id, randomUUID(), 30, {
+    accountId: f.accountId,
+    moderatorChannelId: `UC${'a'.repeat(22)}`,
+  });
+
+  assert.ok(validClaim);
+});
+
+test('ban claims reject malformed actor channels before creating an attempt', async () => {
+  const f = await fixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const row = await bans.ensure(f.planId, f.channelId, f.sessionId);
+
+  for (const moderatorChannelId of ['', 'invalid-channel', null, undefined]) {
+    await assert.rejects(
+      bans.claim(row.id, randomUUID(), 30, {
+        accountId: f.accountId,
+        moderatorChannelId,
+      }),
+      /valid YouTube moderator channel/,
+    );
+  }
+
+  const attempts = await admin.query(
+    'SELECT id FROM youtube_ban_attempts WHERE execution_id = $1',
+    [row.id],
+  );
+
+  assert.equal(attempts.rows.length, 0);
+});
+
+test('legacy ban claims leave actor identity unknown', async () => {
+  const f = await fixture('BAN');
+  const bans = new BanExecutionStore(pool);
+  const row = await bans.ensure(f.planId, f.channelId, f.sessionId);
+  const claim = await bans.claim(row.id, randomUUID());
+
+  assert.ok(claim);
+
+  const result = await admin.query(
+    `
+      SELECT credential_account_id, moderator_channel_id
+      FROM youtube_ban_attempts
+      WHERE id = $1
+    `,
+    [claim.attempt_id],
+  );
+
+  assert.deepEqual(result.rows[0], {
+    credential_account_id: null,
+    moderator_channel_id: null,
+  });
+});

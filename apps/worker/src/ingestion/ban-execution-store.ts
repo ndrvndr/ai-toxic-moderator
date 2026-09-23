@@ -19,6 +19,10 @@ export type BanExecution = {
   action: 'TIMEOUT' | 'BAN';
   duration_seconds: string | null;
 };
+export type BanAttemptActor = Readonly<{
+  accountId: string;
+  moderatorChannelId: string;
+}>;
 export type BanClaim = Readonly<{
   execution: BanExecution;
   attempt_id: string;
@@ -91,9 +95,24 @@ export class BanExecutionStore {
     });
   }
 
-  async claim(executionId: string, ownerId: string, timeoutSeconds = 30): Promise<BanClaim | null> {
+  async claim(
+    executionId: string,
+    ownerId: string,
+    timeoutSeconds = 30,
+    actor?: BanAttemptActor,
+  ): Promise<BanClaim | null> {
     uuid.parse(executionId);
     uuid.parse(ownerId);
+    const credentialAccountId = actor === undefined ? null : uuid.parse(actor.accountId);
+
+    const moderatorChannelId = actor === undefined ? null : actor.moderatorChannelId;
+
+    if (
+      actor !== undefined &&
+      (typeof moderatorChannelId !== 'string' || !/^UC[A-Za-z0-9_-]{22}$/.test(moderatorChannelId))
+    ) {
+      throw new Error('A valid YouTube moderator channel is required.');
+    }
     if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 15 || timeoutSeconds > 300) {
       throw new Error('Ban attempt duration must be between 15 and 300 seconds.');
     }
@@ -138,10 +157,31 @@ export class BanExecutionStore {
       if (!allowed.rows.length) return null;
       const attemptId = randomUUID();
       const inserted = await client.query<{ deadline_at: Date }>(
-        `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
-         INSERT INTO youtube_ban_attempts(id, execution_id, owner_id, started_at, deadline_at)
-         SELECT $1,$2,$3,at,at + $4 * interval '1 second' FROM moment RETURNING deadline_at`,
-        [attemptId, executionId, ownerId, timeoutSeconds],
+        `
+    WITH moment AS MATERIALIZED (
+      SELECT clock_timestamp() AS at
+    )
+    INSERT INTO youtube_ban_attempts(
+      id,
+      execution_id,
+      owner_id,
+      started_at,
+      deadline_at,
+      credential_account_id,
+      moderator_channel_id
+    )
+    SELECT
+      $1,
+      $2,
+      $3,
+      at,
+      at + $4 * interval '1 second',
+      $5,
+      $6
+    FROM moment
+    RETURNING deadline_at
+  `,
+        [attemptId, executionId, ownerId, timeoutSeconds, credentialAccountId, moderatorChannelId],
       );
       await this.publish(client, [executionId]);
       return Object.freeze({
