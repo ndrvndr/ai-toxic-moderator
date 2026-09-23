@@ -640,14 +640,23 @@ async function insertBanExecution(f) {
   return id;
 }
 
-async function insertBanAttempt(executionId) {
+async function insertBanAttempt(executionId, { accountId = null, moderatorChannelId = null } = {}) {
   const id = randomUUID();
+
   await client.query(
-    `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
-     INSERT INTO youtube_ban_attempts(id, execution_id, owner_id, started_at, deadline_at)
-     SELECT $1,$2,$3,at,at + interval '30 seconds' FROM moment`,
-    [id, executionId, randomUUID()],
+    `
+      WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+      INSERT INTO youtube_ban_attempts(
+        id, execution_id, owner_id, started_at, deadline_at,
+        credential_account_id, moderator_channel_id
+      )
+      SELECT
+        $1, $2, $3, at, at + interval '30 seconds', $4, $5
+      FROM moment
+    `,
+    [id, executionId, randomUUID(), accountId, moderatorChannelId],
   );
+
   return id;
 }
 
@@ -941,4 +950,103 @@ test('ban observation migration remains applied exactly once', async () => {
   ]);
 
   assert.equal(result.rows.length, 1);
+});
+
+test('legacy ban attempts retain an explicitly unknown actor', async () => {
+  const executionId = await insertBanExecution(await banFixture());
+  const attemptId = await insertBanAttempt(executionId);
+
+  const result = await client.query(
+    `
+      SELECT credential_account_id, moderator_channel_id
+      FROM youtube_ban_attempts
+      WHERE id = $1
+    `,
+    [attemptId],
+  );
+
+  assert.deepEqual(result.rows[0], {
+    credential_account_id: null,
+    moderator_channel_id: null,
+  });
+});
+
+test('ban attempt actor requires a complete pair and the original credential account', async () => {
+  const f = await banFixture();
+  const other = await fixture();
+  const executionId = await insertBanExecution(f);
+  const moderatorChannelId = 'UC' + 'a'.repeat(22);
+
+  for (const actor of [
+    { accountId: f.accountId },
+    { moderatorChannelId },
+    { accountId: f.accountId, moderatorChannelId: 'invalid' },
+    { accountId: other.accountId, moderatorChannelId },
+  ]) {
+    await assert.rejects(insertBanAttempt(executionId, actor), { code: '23514' });
+  }
+
+  const attemptId = await insertBanAttempt(executionId, {
+    accountId: f.accountId,
+    moderatorChannelId,
+  });
+
+  const result = await client.query(
+    `
+      SELECT credential_account_id, moderator_channel_id
+      FROM youtube_ban_attempts
+      WHERE id = $1
+    `,
+    [attemptId],
+  );
+
+  assert.deepEqual(result.rows[0], {
+    credential_account_id: f.accountId,
+    moderator_channel_id: moderatorChannelId,
+  });
+});
+
+test('recording a terminal result cannot replace the verified actor', async () => {
+  const f = await banFixture();
+  const executionId = await insertBanExecution(f);
+  const attemptId = await insertBanAttempt(executionId, {
+    accountId: f.accountId,
+    moderatorChannelId: 'UC' + 'a'.repeat(22),
+  });
+
+  await assert.rejects(
+    client.query(
+      `
+        UPDATE youtube_ban_attempts
+        SET status = 'UNKNOWN',
+            finished_at = clock_timestamp(),
+            error_code = 'REQUEST_INTERRUPTED',
+            moderator_channel_id = $2
+        WHERE id = $1
+      `,
+      [attemptId, 'UC' + 'b'.repeat(22)],
+    ),
+    { code: '23514' },
+  );
+
+  await client.query(
+    `
+      UPDATE youtube_ban_attempts
+      SET status = 'UNKNOWN',
+          finished_at = clock_timestamp(),
+          error_code = 'REQUEST_INTERRUPTED'
+      WHERE id = $1
+    `,
+    [attemptId],
+  );
+
+  const result = await client.query(
+    'SELECT status, moderator_channel_id FROM youtube_ban_attempts WHERE id = $1',
+    [attemptId],
+  );
+
+  assert.deepEqual(result.rows[0], {
+    status: 'UNKNOWN',
+    moderator_channel_id: 'UC' + 'a'.repeat(22),
+  });
 });
