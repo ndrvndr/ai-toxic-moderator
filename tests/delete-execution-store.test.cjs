@@ -18,6 +18,7 @@ const { consumeLiveFrame } = source('apps/dashboard/features/live/lib/live-event
 const { BanCandidateStore } = source('apps/worker/src/ingestion/ban-candidate-store.ts');
 const { BAN_DISPATCH_BLOCK_REASON_SQL } = source('packages/persistence/src/ban-dispatch-policy.ts');
 const { BanEvidenceReader } = source('apps/worker/src/ingestion/ban-evidence-reader.ts');
+const { BanEvidenceStore } = source('apps/worker/src/ingestion/ban-evidence-store.ts');
 
 const schema = `delete_store_${randomUUID().replaceAll('-', '')}`;
 const role = `delete_worker_${randomUUID().replaceAll('-', '')}`;
@@ -1758,4 +1759,147 @@ test('evidence reader validates page size and identifiers', async () => {
 
   await assert.rejects(reader.read('invalid-id'));
   await assert.rejects(reader.nextAttempt('invalid-id'));
+});
+
+async function unknownEvidenceFixture() {
+  const f = await fixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const execution = await bans.ensure(f.planId, f.channelId, f.sessionId);
+
+  const claim = await bans.claim(execution.id, randomUUID(), 30, {
+    accountId: f.accountId,
+    moderatorChannelId: `UC${'a'.repeat(22)}`,
+  });
+
+  assert.ok(claim);
+
+  assert.equal(
+    await bans.complete(claim, {
+      status: 'UNKNOWN',
+      http_status: null,
+      code: 'TRANSPORT_ERROR',
+    }),
+    true,
+  );
+
+  return { f, execution, claim };
+}
+
+test('evidence storage is idempotent across concurrent workers and restarts', async () => {
+  const { f, execution, claim } = await unknownEvidenceFixture();
+  const observationId = await insertBanEvidenceObservation(f, claim);
+  const eventsBefore = await eventsFor(execution);
+
+  const results = await allResults([
+    new BanEvidenceStore(pool).save(claim.attempt_id, observationId),
+    new BanEvidenceStore(pool).save(claim.attempt_id, observationId),
+  ]);
+
+  assert.deepEqual(results.sort(), ['EXISTING', 'INSERTED']);
+
+  assert.equal(await new BanEvidenceStore(pool).save(claim.attempt_id, observationId), 'EXISTING');
+
+  const saved = await admin.query(
+    `
+      SELECT attempt_id, observation_id, attribution
+      FROM youtube_ban_evidence
+      WHERE attempt_id = $1
+    `,
+    [claim.attempt_id],
+  );
+
+  assert.deepEqual(saved.rows, [
+    {
+      attempt_id: claim.attempt_id,
+      observation_id: observationId,
+      attribution: 'UNPROVEN',
+    },
+  ]);
+
+  const attempt = await admin.query('SELECT status FROM youtube_ban_attempts WHERE id = $1', [
+    claim.attempt_id,
+  ]);
+
+  assert.equal(attempt.rows[0].status, 'UNKNOWN');
+  assert.deepEqual(await eventsFor(execution), eventsBefore);
+});
+
+test('evidence storage rejects mismatched events and cross-session references', async () => {
+  const { f, claim } = await unknownEvidenceFixture();
+  const evidenceStore = new BanEvidenceStore(pool);
+  const other = await fixture('TIMEOUT');
+
+  const invalidIds = [
+    await insertBanEvidenceObservation(f, claim, {
+      moderatorChannelId: `UC${'b'.repeat(22)}`,
+    }),
+    await insertBanEvidenceObservation(f, claim, {
+      targetChannelId: 'another-viewer',
+    }),
+    await insertBanEvidenceObservation(f, claim, {
+      offsetSeconds: -1,
+    }),
+    await insertBanEvidenceObservation(f, claim, {
+      offsetSeconds: 31,
+    }),
+    await insertBanEvidenceObservation(other, claim),
+  ];
+
+  for (const observationId of invalidIds) {
+    assert.equal(await evidenceStore.save(claim.attempt_id, observationId), 'NOT_MATCHED');
+
+    // Database validation also rejects bypassing the store.
+    await assert.rejects(
+      pool.query(
+        `
+          INSERT INTO youtube_ban_evidence(attempt_id, observation_id)
+          VALUES($1, $2)
+        `,
+        [claim.attempt_id, observationId],
+      ),
+      { code: '23514' },
+    );
+  }
+
+  const saved = await admin.query(
+    'SELECT attempt_id FROM youtube_ban_evidence WHERE attempt_id = $1',
+    [claim.attempt_id],
+  );
+
+  assert.equal(saved.rows.length, 0);
+});
+
+test('worker evidence permissions allow insertion but forbid changes and deletion', async () => {
+  const { f, claim } = await unknownEvidenceFixture();
+  const observationId = await insertBanEvidenceObservation(f, claim);
+
+  assert.equal(await new BanEvidenceStore(pool).save(claim.attempt_id, observationId), 'INSERTED');
+
+  await assert.rejects(
+    pool.query(
+      `
+        UPDATE youtube_ban_evidence
+        SET attribution = 'UNPROVEN'
+        WHERE attempt_id = $1
+      `,
+      [claim.attempt_id],
+    ),
+    { code: '42501' },
+  );
+
+  await assert.rejects(
+    pool.query('DELETE FROM youtube_ban_evidence WHERE attempt_id = $1', [claim.attempt_id]),
+    { code: '42501' },
+  );
+
+  await assert.rejects(
+    admin.query(
+      `
+        UPDATE youtube_ban_evidence
+        SET attribution = 'UNPROVEN'
+        WHERE attempt_id = $1
+      `,
+      [claim.attempt_id],
+    ),
+  );
 });
