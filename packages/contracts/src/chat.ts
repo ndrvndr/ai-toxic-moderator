@@ -51,9 +51,15 @@ export const authorActionBlockReason = z.enum([
   'TIMEOUT_WINDOW_ACTIVE',
 ]);
 
+export const authorActionEvidence = z.strictObject({
+  matching_event_observed: z.boolean(),
+  attribution: z.literal('UNPROVEN'),
+});
+
 const authorActionFields = {
   status: z.enum([...chatDeletion.shape.status.options, 'BLOCKED', 'SUPPRESSED']),
   block_reason: authorActionBlockReason.optional(),
+  evidence: authorActionEvidence.optional(),
 };
 
 export const chatAuthorAction = z
@@ -82,6 +88,14 @@ export const chatAuthorAction = z
         code: 'custom',
         path: ['block_reason'],
         message: 'The blocking reason must match the action status.',
+      });
+    }
+
+    if (value.evidence !== undefined && value.status !== 'UNKNOWN') {
+      context.addIssue({
+        code: 'custom',
+        path: ['evidence'],
+        message: 'Candidate evidence is only supported for unknown request outcomes.',
       });
     }
   });

@@ -39,6 +39,14 @@ function describeAction(action: AuthorAction): string {
     case 'NOT_SENT':
       return 'The request was not sent to YouTube.';
     case 'UNKNOWN':
+      if (action.evidence?.matching_event_observed) {
+        return 'The action may or may not have taken effect. A matching YouTube moderation event was observed, but it does not prove that this application request caused the event. The request outcome remains unknown. No automatic retry will be made.';
+      }
+
+      if (action.evidence !== undefined) {
+        return 'The action may or may not have taken effect. No matching event evidence has been stored. No automatic retry will be made.';
+      }
+
       return 'The action may or may not have taken effect. No automatic retry will be made.';
     case 'BLOCKED':
     case 'SUPPRESSED':
@@ -63,6 +71,10 @@ export function ChatAuthorAction({ action }: { action?: AuthorAction | null }) {
       </div>
 
       <p className="text-xs text-muted-foreground">{describeAction(action)}</p>
+
+      {action.status === 'UNKNOWN' && action.evidence?.matching_event_observed && (
+        <p className="text-xs font-medium">Matching moderation event observed</p>
+      )}
 
       <p className="text-xs text-muted-foreground">
         This execution belongs to this message and targets its author. Execution status does not

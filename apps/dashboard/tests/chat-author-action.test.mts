@@ -161,3 +161,111 @@ describe('author dispatch blocking', () => {
     }
   });
 });
+
+describe('moderation event evidence', () => {
+  it.each(['TIMEOUT', 'BAN'] as const)(
+    '%s keeps an unknown request separate from matching evidence',
+    (kind) => {
+      const action = chatAuthorAction.parse({
+        ...makeAction(kind, 'UNKNOWN'),
+        evidence: {
+          matching_event_observed: true,
+          attribution: 'UNPROVEN',
+        },
+      });
+
+      render(createElement(ChatAuthorAction, { action }));
+
+      const panel = within(screen.getByRole('group', { name: 'Author action result' }));
+      const label = kind === 'TIMEOUT' ? 'Timeout' : 'Ban';
+
+      expect(panel.getByText(`${label} outcome unknown`)).toBeTruthy();
+      expect(panel.getByText('Matching moderation event observed')).toBeTruthy();
+      expect(panel.getByText(/does not prove that this application request caused/)).toBeTruthy();
+      expect(panel.getByText(/No automatic retry/)).toBeTruthy();
+      expect(panel.queryByText(`${label} confirmed`)).toBeNull();
+    },
+  );
+
+  it('distinguishes unavailable evidence metadata from a checked empty result', () => {
+    const view = render(
+      createElement(ChatAuthorAction, {
+        action: makeAction('TIMEOUT', 'UNKNOWN'),
+      }),
+    );
+
+    expect(screen.queryByText(/No matching event evidence has been stored/)).toBeNull();
+
+    view.rerender(
+      createElement(ChatAuthorAction, {
+        action: chatAuthorAction.parse({
+          ...makeAction('TIMEOUT', 'UNKNOWN'),
+          evidence: {
+            matching_event_observed: false,
+            attribution: 'UNPROVEN',
+          },
+        }),
+      }),
+    );
+
+    expect(screen.getByText(/No matching event evidence has been stored/)).toBeTruthy();
+
+    expect(screen.queryByText('Matching moderation event observed')).toBeNull();
+  });
+
+  it('updates evidence without changing the request outcome', () => {
+    const initial = chatAuthorAction.parse({
+      ...makeAction('TIMEOUT', 'UNKNOWN'),
+      evidence: {
+        matching_event_observed: false,
+        attribution: 'UNPROVEN',
+      },
+    });
+
+    const view = render(createElement(ChatAuthorAction, { action: initial }));
+
+    view.rerender(
+      createElement(ChatAuthorAction, {
+        action: chatAuthorAction.parse({
+          ...initial,
+          evidence: {
+            matching_event_observed: true,
+            attribution: 'UNPROVEN',
+          },
+        }),
+      }),
+    );
+
+    expect(screen.getByText('Timeout outcome unknown')).toBeTruthy();
+    expect(screen.getByText('Matching moderation event observed')).toBeTruthy();
+    expect(screen.queryByText('Timeout confirmed')).toBeNull();
+    expect(screen.queryByText(/No matching event evidence has been stored/)).toBeNull();
+  });
+
+  it('rejects evidence that claims proven attribution', () => {
+    expect(
+      chatAuthorAction.safeParse({
+        ...makeAction('BAN', 'UNKNOWN'),
+        evidence: {
+          matching_event_observed: true,
+          attribution: 'PROVEN',
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each(['PENDING', 'DISPATCHED', 'SUCCEEDED', 'REJECTED', 'NOT_SENT'] as const)(
+    'rejects candidate evidence on %s results',
+    (status) => {
+      expect(
+        chatAuthorAction.safeParse({
+          ...makeAction('BAN', status),
+          evidence: {
+            matching_event_observed: true,
+            attribution: 'UNPROVEN',
+          },
+        }).success,
+      ).toBe(false);
+    },
+  );
+});
