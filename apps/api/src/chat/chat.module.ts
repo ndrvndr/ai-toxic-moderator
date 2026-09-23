@@ -94,6 +94,7 @@ class ChatController {
         author_action_status: string | null;
         author_action_duration: string | null;
         author_action_block_reason: string | null;
+        author_action_has_evidence: boolean | null;
       }>(
         `
           SELECT
@@ -128,7 +129,8 @@ class ChatController {
             author_action.author_action_type,
             author_action.author_action_status,
             author_action.author_action_duration,
-            author_action.author_action_block_reason
+            author_action.author_action_block_reason,
+            author_action.author_action_has_evidence
           FROM youtube_chat_observations
           LEFT JOIN LATERAL (
             SELECT
@@ -179,8 +181,16 @@ class ChatController {
     CASE
       WHEN a.id IS NULL THEN decision.reason
       ELSE NULL
-    END AS author_action_block_reason
-  FROM youtube_ban_executions e
+   END AS author_action_block_reason,
+CASE
+  WHEN a.status = 'UNKNOWN' THEN EXISTS (
+    SELECT 1
+    FROM youtube_ban_evidence evidence
+    WHERE evidence.attempt_id = a.id
+  )
+  ELSE NULL
+END AS author_action_has_evidence
+FROM youtube_ban_executions e
   LEFT JOIN youtube_ban_attempts a ON a.execution_id = e.id
   LEFT JOIN LATERAL (
     SELECT ${BAN_DISPATCH_BLOCK_REASON_SQL} AS reason
@@ -241,6 +251,14 @@ class ChatController {
               : {
                   action: row.author_action_type,
                   status: row.author_action_status,
+                  ...(row.author_action_status === 'UNKNOWN'
+                    ? {
+                        evidence: {
+                          matching_event_observed: row.author_action_has_evidence === true,
+                          attribution: 'UNPROVEN' as const,
+                        },
+                      }
+                    : {}),
                   ...(row.author_action_block_reason === null
                     ? {}
                     : { block_reason: row.author_action_block_reason }),

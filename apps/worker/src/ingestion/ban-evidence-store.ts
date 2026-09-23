@@ -1,5 +1,5 @@
 import { uuid } from '@moderator/contracts';
-import { transaction, type createPool } from '@moderator/persistence';
+import { appendLiveEvent, transaction, type createPool } from '@moderator/persistence';
 import { parseYoutubeBanEvent } from '@moderator/provider-adapters';
 
 import { matchBanEvidence, type UnknownBanAttempt } from './ban-evidence-matcher';
@@ -111,7 +111,44 @@ export class BanEvidenceStore {
         [attemptId, observationId],
       );
 
-      return inserted.rowCount === 1 ? 'INSERTED' : 'EXISTING';
+      if (inserted.rowCount !== 1) return 'EXISTING';
+
+      const scope = await client.query<{
+        channel_id: string;
+        session_id: string;
+        run_id: string;
+      }>(
+        `
+    SELECT e.channel_id, e.session_id, c.run_id
+    FROM youtube_ban_attempts a
+    JOIN youtube_ban_executions e ON e.id = a.execution_id
+    JOIN youtube_moderation_action_plans p
+      ON p.id = e.plan_id
+      AND p.channel_id = e.channel_id
+      AND p.session_id = e.session_id
+    JOIN youtube_chat_classifications c
+      ON c.id = p.classification_id
+      AND c.channel_id = p.channel_id
+      AND c.session_id = p.session_id
+    WHERE a.id = $1
+  `,
+        [attemptId],
+      );
+
+      const provenance = scope.rows[0];
+
+      if (!provenance) {
+        throw new Error('Evidence publication requires execution provenance.');
+      }
+
+      await appendLiveEvent(client, {
+        channelId: provenance.channel_id,
+        sessionId: provenance.session_id,
+        runId: provenance.run_id,
+        type: 'chat.updated',
+      });
+
+      return 'INSERTED';
     });
   }
 }

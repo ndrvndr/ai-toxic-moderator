@@ -858,6 +858,14 @@ test('chat exposes author action results only on their triggering messages', asy
         action,
         status,
         duration_seconds: duration,
+        ...(status === 'UNKNOWN'
+          ? {
+              evidence: {
+                matching_event_observed: false,
+                attribution: 'UNPROVEN',
+              },
+            }
+          : {}),
       });
 
       assert.equal(siblingMessage.author_action, null);
@@ -881,6 +889,14 @@ test('chat exposes author action results only on their triggering messages', asy
         action,
         status,
         duration_seconds: duration,
+        ...(status === 'UNKNOWN'
+          ? {
+              evidence: {
+                matching_event_observed: false,
+                attribution: 'UNPROVEN',
+              },
+            }
+          : {}),
       });
 
       assert.equal(items.find((item) => item.id === siblingId).evaluation_status, 'NOT_EVALUATED');
@@ -1042,4 +1058,142 @@ test('chat distinguishes blocked executions from their original attempt results'
     // Reading the API must not create or rewrite attempts.
     assert.equal(attempts.rows[0].count, 1);
   }
+});
+
+test('chat exposes candidate evidence without confirming the request or affecting sibling messages', async () => {
+  const run = await startRun();
+  const messageId = await insertChatObservation(run);
+  const siblingId = await insertChatObservation(run);
+  const executionId = await createAuthorExecution(run, messageId);
+  const attemptId = randomUUID();
+  const moderatorId = `UC${'a'.repeat(22)}`;
+
+  await admin.query(
+    `
+      WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+      INSERT INTO youtube_ban_attempts(
+        id, execution_id, owner_id,
+        started_at, deadline_at,
+        credential_account_id, moderator_channel_id
+      )
+      SELECT $1, $2, $3, at, at + interval '30 seconds', $4, $5
+      FROM moment
+    `,
+    [attemptId, executionId, randomUUID(), accountId, moderatorId],
+  );
+
+  await admin.query(
+    `
+      UPDATE youtube_ban_attempts
+      SET status = 'UNKNOWN',
+          finished_at = clock_timestamp(),
+          error_code = 'TRANSPORT_ERROR'
+      WHERE id = $1
+    `,
+    [attemptId],
+  );
+
+  const beforeResponse = await request(chatPath(run));
+  assert.equal(beforeResponse.status, 200);
+
+  const beforePage = chatPage.parse(await beforeResponse.json());
+  const beforeAction = beforePage.items.find((item) => item.id === messageId).author_action;
+
+  assert.deepEqual(beforeAction.evidence, {
+    matching_event_observed: false,
+    attribution: 'UNPROVEN',
+  });
+
+  const eventId = randomUUID();
+  const externalId = `evidence-${eventId}`;
+
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_observations(
+        id, channel_id, session_id, first_observed_run_id,
+        external_message_id, event_type,
+        published_at, payload, payload_hash
+      )
+      SELECT
+        $1, e.channel_id, e.session_id, $2,
+        $3, 'userBannedEvent',
+        a.started_at + interval '1 second',
+        jsonb_build_object(
+          'id', $3::text,
+          'snippet', jsonb_build_object(
+            'type', 'userBannedEvent',
+            'liveChatId', e.live_chat_id,
+            'authorChannelId', a.moderator_channel_id,
+            'publishedAt', to_char(
+              (a.started_at + interval '1 second') AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+            ),
+            'userBannedDetails', jsonb_build_object(
+              'banType', 'temporary',
+              'banDurationSeconds', e.duration_seconds::text,
+              'bannedUserDetails', jsonb_build_object(
+                'channelId', e.author_channel_id
+              )
+            )
+          )
+        ),
+        $4
+      FROM youtube_ban_attempts a
+      JOIN youtube_ban_executions e ON e.id = a.execution_id
+      WHERE a.id = $5
+    `,
+    [eventId, run.id, externalId, 'b'.repeat(64), attemptId],
+  );
+
+  // Seed persisted evidence; worker publication is covered by store tests.
+  await admin.query(
+    `
+      INSERT INTO youtube_ban_evidence(attempt_id, observation_id)
+      VALUES($1, $2)
+    `,
+    [attemptId, eventId],
+  );
+
+  const response = await request(chatPath(run));
+  assert.equal(response.status, 200, await response.clone().text());
+
+  const page = chatPage.parse(await response.json());
+  const action = page.items.find((item) => item.id === messageId).author_action;
+
+  assert.deepEqual(action, {
+    action: 'TIMEOUT',
+    status: 'UNKNOWN',
+    duration_seconds: 30,
+    evidence: {
+      matching_event_observed: true,
+      attribution: 'UNPROVEN',
+    },
+  });
+
+  assert.equal(page.items.find((item) => item.id === siblingId).author_action, null);
+
+  assert.equal(page.items.find((item) => item.id === eventId).author_action, null);
+
+  const serialized = JSON.stringify(action);
+
+  assert.equal(serialized.includes(attemptId), false);
+  assert.equal(serialized.includes(moderatorId), false);
+  assert.equal(serialized.includes(accountId), false);
+
+  const stored = await admin.query('SELECT status FROM youtube_ban_attempts WHERE id = $1', [
+    attemptId,
+  ]);
+  assert.equal(stored.rows[0].status, 'UNKNOWN');
+
+  // Evidence access must not grant the API role permission to write it.
+  await assert.rejects(
+    pool.query(
+      `
+        INSERT INTO youtube_ban_evidence(attempt_id, observation_id)
+        VALUES($1, $2)
+      `,
+      [attemptId, eventId],
+    ),
+    { code: '42501' },
+  );
 });

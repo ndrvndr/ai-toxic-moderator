@@ -1821,7 +1821,12 @@ test('evidence storage is idempotent across concurrent workers and restarts', as
   ]);
 
   assert.equal(attempt.rows[0].status, 'UNKNOWN');
-  assert.deepEqual(await eventsFor(execution), eventsBefore);
+  const eventsAfter = await eventsFor(execution);
+
+  assert.deepEqual(eventsAfter.slice(0, eventsBefore.length), eventsBefore);
+  assert.equal(eventsAfter.length, eventsBefore.length + 1);
+  assert.equal(eventsAfter.at(-1).event_type, 'chat.updated');
+  assert.equal(eventsAfter.at(-1).run_id, f.runId);
 });
 
 test('evidence storage rejects mismatched events and cross-session references', async () => {
@@ -1902,4 +1907,35 @@ test('worker evidence permissions allow insertion but forbid changes and deletio
       [claim.attempt_id],
     ),
   );
+});
+
+test('evidence publication failure rolls back the evidence link', async () => {
+  const { f, execution, claim } = await unknownEvidenceFixture();
+  const observationId = await insertBanEvidenceObservation(f, claim);
+  const evidenceStore = new BanEvidenceStore(pool);
+  const eventsBefore = await eventsFor(execution);
+
+  await admin.query(`REVOKE INSERT ON ${schema}.live_events FROM ${role}`);
+
+  try {
+    await assert.rejects(evidenceStore.save(claim.attempt_id, observationId), { code: '42501' });
+  } finally {
+    await admin.query(`GRANT INSERT ON ${schema}.live_events TO ${role}`);
+  }
+
+  const links = await admin.query(
+    `
+      SELECT observation_id
+      FROM youtube_ban_evidence
+      WHERE attempt_id = $1
+    `,
+    [claim.attempt_id],
+  );
+
+  assert.equal(links.rows.length, 0);
+  assert.deepEqual(await eventsFor(execution), eventsBefore);
+
+  assert.equal(await evidenceStore.save(claim.attempt_id, observationId), 'INSERTED');
+
+  assert.equal((await eventsFor(execution)).length, eventsBefore.length + 1);
 });
