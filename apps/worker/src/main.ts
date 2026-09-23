@@ -14,6 +14,7 @@ import {
   YoutubeModerationAdapter,
 } from '@moderator/provider-adapters';
 
+import { ActorResolver } from './ingestion/actor-resolver';
 import { BanCandidateStore } from './ingestion/ban-candidate-store';
 import { BanCoordinator } from './ingestion/ban-coordinator';
 import { BanEligibilityStore } from './ingestion/ban-eligibility-store';
@@ -169,7 +170,7 @@ async function bootstrap() {
         new YoutubeBanAdapter(fetch, (diagnostic) => {
           console.warn('YouTube ban response validation failed.', diagnostic);
         }),
-        new YoutubeActorAdapter(),
+        new ActorResolver(new YoutubeActorAdapter()),
       );
 
       bans = new BanCoordinator(new BanCandidateStore(pool), banExecutor, enabled);

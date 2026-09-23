@@ -53,6 +53,7 @@
     "test:youtube-ban-event": "node --experimental-test-isolation=none --test tests/youtube-ban-event.test.cjs",
     "test:ban-evidence-matcher": "node --experimental-test-isolation=none --test tests/ban-evidence-matcher.test.cjs",
     "test:youtube-actor": "node --experimental-test-isolation=none --test tests/youtube-actor.test.cjs",
+    "test:actor-resolver": "node --experimental-test-isolation=none --test tests/actor-resolver.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
