@@ -59,6 +59,16 @@ function fixture() {
       return { status: 'SUCCEEDED', http_status: 200, ban_id: 'provider-ban' };
     },
   };
+  const actors = {
+    async resolve(accessToken, signal) {
+      calls.push(['actor', accessToken, signal]);
+
+      return {
+        status: 'RESOLVED',
+        channelId: `UC${'a'.repeat(22)}`,
+      };
+    },
+  };
   return {
     calls,
     execution,
@@ -68,7 +78,8 @@ function fixture() {
     eligibility,
     tokens,
     adapter,
-    executor: new BanExecutor(store, eligibility, tokens, adapter),
+    actors,
+    executor: new BanExecutor(store, eligibility, tokens, adapter, actors),
   };
 }
 
@@ -79,7 +90,7 @@ test('checks original provenance, commits claim, sends persisted target, and rec
   assert.equal(result.result.status, 'SUCCEEDED');
   assert.deepEqual(
     f.calls.map(([name]) => name),
-    ['ensure', 'resolve', 'token', 'resolve', 'claim', 'resolve', 'ban', 'complete'],
+    ['ensure', 'resolve', 'token', 'actor', 'resolve', 'claim', 'resolve', 'ban', 'complete'],
   );
   assert.equal(f.calls.find(([name]) => name === 'token')[1], 'persisted-account');
   for (const [, value] of f.calls.filter(([name]) => name === 'resolve')) {
@@ -205,4 +216,113 @@ test('timeout converts the persisted duration and BAN omits it', async () => {
     assert.equal(request.durationSeconds, action === 'TIMEOUT' ? 300 : undefined);
     assert.equal(result.result.ban_id, 'provider-ban');
   }
+});
+
+test('actor lookup and moderation use the same token and capture the original account', async () => {
+  const f = fixture();
+
+  await f.executor.execute(f.input);
+
+  const lookup = f.calls.find(([name]) => name === 'actor');
+  const dispatch = f.calls.find(([name]) => name === 'ban');
+  const claimCall = f.calls.find(([name]) => name === 'claim');
+
+  assert.equal(lookup[1], 'test-token');
+  assert.equal(dispatch[1].accessToken, lookup[1]);
+
+  assert.deepEqual(claimCall, [
+    'claim',
+    'execution',
+    'owner',
+    30,
+    {
+      accountId: 'persisted-account',
+      moderatorChannelId: `UC${'a'.repeat(22)}`,
+    },
+  ]);
+});
+
+test('unresolved or failed actor lookup never claims or dispatches', async () => {
+  for (const throws of [false, true]) {
+    const f = fixture();
+
+    f.actors.resolve = async () => {
+      if (throws) {
+        throw new Error('Private identity lookup details');
+      }
+
+      return {
+        status: 'UNRESOLVED',
+        code: 'AMBIGUOUS_IDENTITY',
+        httpStatus: 200,
+      };
+    };
+
+    assert.deepEqual(await f.executor.execute(f.input), {
+      status: 'SKIPPED',
+      reason: 'ACTOR_UNAVAILABLE',
+    });
+
+    assert.equal(
+      f.calls.some(([name]) => ['claim', 'ban', 'complete'].includes(name)),
+      false,
+    );
+  }
+});
+
+test('cancellation during actor lookup never creates an attempt', async () => {
+  const f = fixture();
+  const controller = new AbortController();
+
+  f.actors.resolve = async (_accessToken, signal) => {
+    assert.equal(signal, controller.signal);
+    controller.abort();
+
+    return {
+      status: 'RESOLVED',
+      channelId: `UC${'a'.repeat(22)}`,
+    };
+  };
+
+  assert.deepEqual(
+    await f.executor.execute({
+      ...f.input,
+      signal: controller.signal,
+    }),
+    {
+      status: 'SKIPPED',
+      reason: 'CANCELLED',
+    },
+  );
+
+  assert.equal(
+    f.calls.some(([name]) => ['claim', 'ban', 'complete'].includes(name)),
+    false,
+  );
+});
+
+test('authorization is rechecked after actor lookup', async () => {
+  const f = fixture();
+  let revoked = false;
+
+  f.eligibility.resolve = async () => (revoked ? null : { accountId: 'persisted-account' });
+
+  f.actors.resolve = async () => {
+    revoked = true;
+
+    return {
+      status: 'RESOLVED',
+      channelId: `UC${'a'.repeat(22)}`,
+    };
+  };
+
+  assert.deepEqual(await f.executor.execute(f.input), {
+    status: 'SKIPPED',
+    reason: 'INELIGIBLE',
+  });
+
+  assert.equal(
+    f.calls.some(([name]) => ['claim', 'ban', 'complete'].includes(name)),
+    false,
+  );
 });

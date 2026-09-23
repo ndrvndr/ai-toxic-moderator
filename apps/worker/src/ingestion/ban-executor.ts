@@ -1,5 +1,7 @@
 import type {
   GoogleTokenStore,
+  YoutubeActorAdapter,
+  YoutubeActorResult,
   YoutubeBanAdapter,
   YoutubeBanResult,
 } from '@moderator/provider-adapters';
@@ -13,18 +15,24 @@ export interface BanEligibility {
 export type BanExecutorResult =
   | {
       status: 'SKIPPED';
-      reason: 'CANCELLED' | 'INELIGIBLE' | 'CREDENTIALS_UNAVAILABLE' | 'DISPATCH_BLOCKED';
+      reason:
+        | 'CANCELLED'
+        | 'INELIGIBLE'
+        | 'CREDENTIALS_UNAVAILABLE'
+        | 'ACTOR_UNAVAILABLE'
+        | 'DISPATCH_BLOCKED';
     }
   | { status: 'RECORDED'; attemptId: string; result: YoutubeBanResult }
   | { status: 'RESULT_NOT_RECORDED'; attemptId: string };
 
-/** Single attempt with authorization rechecks. Not yet wired into the worker runtime. */
+/** Single attempt with credential identity capture and authorization rechecks. */
 export class BanExecutor {
   constructor(
     private readonly store: Pick<BanExecutionStore, 'ensure' | 'claim' | 'complete'>,
     private readonly eligibility: BanEligibility,
     private readonly tokens: Pick<GoogleTokenStore, 'accessToken'>,
     private readonly adapter: Pick<YoutubeBanAdapter, 'banUser'>,
+    private readonly actors: Pick<YoutubeActorAdapter, 'resolve'>,
   ) {}
 
   async execute(input: {
@@ -45,13 +53,42 @@ export class BanExecutor {
     } catch {
       return { status: 'SKIPPED', reason: 'CREDENTIALS_UNAVAILABLE' };
     }
-    if (input.signal?.aborted) return { status: 'SKIPPED', reason: 'CANCELLED' };
+    if (input.signal?.aborted) {
+      return { status: 'SKIPPED', reason: 'CANCELLED' };
+    }
+
+    let actor: YoutubeActorResult;
+
+    try {
+      actor = await this.actors.resolve(accessToken, input.signal);
+    } catch {
+      return {
+        status: 'SKIPPED',
+        reason: input.signal?.aborted ? 'CANCELLED' : 'ACTOR_UNAVAILABLE',
+      };
+    }
+
+    if (input.signal?.aborted) {
+      return { status: 'SKIPPED', reason: 'CANCELLED' };
+    }
+
+    if (actor.status !== 'RESOLVED') {
+      return { status: 'SKIPPED', reason: 'ACTOR_UNAVAILABLE' };
+    }
+
     const refreshed = await this.eligibility.resolve(execution);
     if (refreshed?.accountId !== authorization.accountId) {
       return { status: 'SKIPPED', reason: 'INELIGIBLE' };
     }
 
-    const claim = await this.store.claim(execution.id, input.ownerId);
+    if (input.signal?.aborted) {
+      return { status: 'SKIPPED', reason: 'CANCELLED' };
+    }
+
+    const claim = await this.store.claim(execution.id, input.ownerId, 30, {
+      accountId: authorization.accountId,
+      moderatorChannelId: actor.channelId,
+    });
     if (!claim) return { status: 'SKIPPED', reason: 'DISPATCH_BLOCKED' };
 
     // The dispatch marker is now committed. Every following exit must preserve its history.

@@ -8,6 +8,7 @@ import { createPool } from '@moderator/persistence';
 import {
   GoogleProvider,
   GoogleTokenStore,
+  YoutubeActorAdapter,
   YoutubeBanAdapter,
   YoutubeChatAdapter,
   YoutubeModerationAdapter,
@@ -84,7 +85,17 @@ async function bootstrap() {
     await pool.query('SELECT id FROM youtube_moderation_action_plans LIMIT 0');
     await pool.query('SELECT id, status, deadline_at FROM youtube_delete_attempts LIMIT 0');
     await pool.query('SELECT id FROM youtube_ban_executions LIMIT 0');
-    await pool.query('SELECT id, status, deadline_at, ban_id FROM youtube_ban_attempts LIMIT 0');
+    await pool.query(`
+  SELECT
+    id,
+    status,
+    deadline_at,
+    ban_id,
+    credential_account_id,
+    moderator_channel_id
+  FROM youtube_ban_attempts
+  LIMIT 0
+`);
 
     const leases = new LeaseStore(pool);
     const testScope =
@@ -158,6 +169,7 @@ async function bootstrap() {
         new YoutubeBanAdapter(fetch, (diagnostic) => {
           console.warn('YouTube ban response validation failed.', diagnostic);
         }),
+        new YoutubeActorAdapter(),
       );
 
       bans = new BanCoordinator(new BanCandidateStore(pool), banExecutor, enabled);

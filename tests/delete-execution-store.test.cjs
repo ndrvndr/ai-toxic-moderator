@@ -509,6 +509,24 @@ test('ban executor integration persists confirmed targets and never redispatches
         },
       },
       new YoutubeBanAdapter(async (_url, init) => {
+        const snapshot = await admin.query(
+          `
+    SELECT credential_account_id, moderator_channel_id, status
+    FROM youtube_ban_attempts
+    WHERE execution_id = $1
+  `,
+          [f.execution.id],
+        );
+
+        assert.deepEqual(snapshot.rows, [
+          {
+            credential_account_id: f.accountId,
+            moderator_channel_id: `UC${'a'.repeat(22)}`,
+            status: 'DISPATCHED',
+          },
+        ]);
+
+        assert.equal(init.headers.Authorization, 'Bearer test-token');
         const body = JSON.parse(init.body);
         requests.push(body);
         return Response.json({
@@ -517,6 +535,16 @@ test('ban executor integration persists confirmed targets and never redispatches
           snippet: body.snippet,
         });
       }),
+      {
+        async resolve(accessToken) {
+          assert.equal(accessToken, 'test-token');
+
+          return {
+            status: 'RESOLVED',
+            channelId: `UC${'a'.repeat(22)}`,
+          };
+        },
+      },
     );
     const result = await executor.execute(executeInput(f));
     assert.equal(result.status, 'RECORDED');
