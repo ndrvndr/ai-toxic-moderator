@@ -17,6 +17,7 @@ const { readLiveEvents } = source('packages/persistence/src/live-events.ts');
 const { consumeLiveFrame } = source('apps/dashboard/features/live/lib/live-event-protocol.ts');
 const { BanCandidateStore } = source('apps/worker/src/ingestion/ban-candidate-store.ts');
 const { BAN_DISPATCH_BLOCK_REASON_SQL } = source('packages/persistence/src/ban-dispatch-policy.ts');
+const { BanEvidenceReader } = source('apps/worker/src/ingestion/ban-evidence-reader.ts');
 
 const schema = `delete_store_${randomUUID().replaceAll('-', '')}`;
 const role = `delete_worker_${randomUUID().replaceAll('-', '')}`;
@@ -1553,4 +1554,208 @@ test('legacy ban claims leave actor identity unknown', async () => {
     credential_account_id: null,
     moderator_channel_id: null,
   });
+});
+
+async function insertBanEvidenceObservation(
+  f,
+  claim,
+  {
+    moderatorChannelId = `UC${'a'.repeat(22)}`,
+    targetChannelId = 'test-author',
+    offsetSeconds = 1,
+  } = {},
+) {
+  const observationId = randomUUID();
+  const externalId = `event-${randomUUID()}`;
+
+  const timestamp = await admin.query(
+    `
+      SELECT to_char(
+        (started_at + $2 * interval '1 second') AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+      ) AS published_at
+      FROM youtube_ban_attempts
+      WHERE id = $1
+    `,
+    [claim.attempt_id, offsetSeconds],
+  );
+
+  const publishedAt = timestamp.rows[0].published_at;
+
+  const payload = {
+    id: externalId,
+    snippet: {
+      type: 'userBannedEvent',
+      liveChatId: claim.execution.live_chat_id,
+      authorChannelId: moderatorChannelId,
+      publishedAt,
+      userBannedDetails: {
+        banType: 'temporary',
+        banDurationSeconds: '300',
+        bannedUserDetails: {
+          channelId: targetChannelId,
+        },
+      },
+    },
+  };
+
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_observations(
+        id,
+        channel_id,
+        session_id,
+        first_observed_run_id,
+        external_message_id,
+        event_type,
+        published_at,
+        payload,
+        payload_hash
+      )
+      VALUES(
+        $1, $2, $3, $4, $5,
+        'userBannedEvent', $6, $7::jsonb, $8
+      )
+    `,
+    [
+      observationId,
+      f.channelId,
+      f.sessionId,
+      f.runId,
+      externalId,
+      publishedAt,
+      JSON.stringify(payload),
+      'b'.repeat(64),
+    ],
+  );
+
+  return observationId;
+}
+
+test('evidence reader matches scoped events without changing UNKNOWN or publishing updates', async () => {
+  const f = await fixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const execution = await bans.ensure(f.planId, f.channelId, f.sessionId);
+
+  const claim = await bans.claim(execution.id, randomUUID(), 30, {
+    accountId: f.accountId,
+    moderatorChannelId: `UC${'a'.repeat(22)}`,
+  });
+
+  assert.ok(claim);
+
+  assert.equal(
+    await bans.complete(claim, {
+      status: 'UNKNOWN',
+      http_status: null,
+      code: 'TRANSPORT_ERROR',
+    }),
+    true,
+  );
+
+  const matchingId = await insertBanEvidenceObservation(f, claim);
+
+  await insertBanEvidenceObservation(f, claim, {
+    moderatorChannelId: `UC${'b'.repeat(22)}`,
+  });
+
+  await insertBanEvidenceObservation(f, claim, {
+    targetChannelId: 'another-viewer',
+  });
+
+  await insertBanEvidenceObservation(f, claim, {
+    offsetSeconds: -1,
+  });
+
+  await insertBanEvidenceObservation(f, claim, {
+    offsetSeconds: 31,
+  });
+
+  const other = await fixture('TIMEOUT');
+
+  // A matching payload in another session is not evidence for this attempt.
+  await insertBanEvidenceObservation(other, claim);
+
+  const reader = new BanEvidenceReader(pool);
+  const eventsBefore = await eventsFor(execution);
+
+  const matches = [];
+  let cursor = null;
+  let pages = 0;
+
+  do {
+    const page = await reader.read(claim.attempt_id, cursor, 1);
+
+    assert.ok(page);
+    matches.push(...page.matches);
+    cursor = page.nextCursor;
+    pages += 1;
+
+    assert.ok(pages <= 10, 'Evidence pagination must make progress.');
+  } while (cursor !== null);
+
+  assert.equal(pages, 3);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].observationId, matchingId);
+  assert.equal(matches[0].attribution, 'UNPROVEN');
+
+  const stored = await admin.query('SELECT status FROM youtube_ban_attempts WHERE id = $1', [
+    claim.attempt_id,
+  ]);
+
+  assert.equal(stored.rows[0].status, 'UNKNOWN');
+  assert.deepEqual(await eventsFor(execution), eventsBefore);
+
+  const replay = await reader.read(claim.attempt_id);
+  assert.deepEqual(replay.matches, matches);
+});
+
+test('evidence reader excludes unknown attempts without recorded actors', async () => {
+  const f = await fixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const execution = await bans.ensure(f.planId, f.channelId, f.sessionId);
+  const claim = await bans.claim(execution.id, randomUUID());
+
+  await bans.complete(claim, {
+    status: 'UNKNOWN',
+    http_status: null,
+    code: 'TRANSPORT_ERROR',
+  });
+
+  const reader = new BanEvidenceReader(pool);
+
+  assert.equal(await reader.read(claim.attempt_id), null);
+  assert.equal(await reader.read(randomUUID()), null);
+});
+
+test('evidence reader excludes confirmed attempts even when actors are recorded', async () => {
+  const f = await fixture('TIMEOUT');
+  const bans = new BanExecutionStore(pool);
+  const execution = await bans.ensure(f.planId, f.channelId, f.sessionId);
+
+  const claim = await bans.claim(execution.id, randomUUID(), 30, {
+    accountId: f.accountId,
+    moderatorChannelId: `UC${'a'.repeat(22)}`,
+  });
+
+  await bans.complete(claim, {
+    status: 'SUCCEEDED',
+    http_status: 200,
+    ban_id: 'confirmed-evidence-test',
+  });
+
+  const reader = new BanEvidenceReader(pool);
+
+  assert.equal(await reader.read(claim.attempt_id), null);
+});
+
+test('evidence reader validates page size and identifiers', async () => {
+  const reader = new BanEvidenceReader(pool);
+
+  for (const limit of [0, -1, 101, 1.5]) {
+    await assert.rejects(reader.read(randomUUID(), null, limit), /page size/);
+  }
+
+  await assert.rejects(reader.read('invalid-id'));
+  await assert.rejects(reader.nextAttempt('invalid-id'));
 });
