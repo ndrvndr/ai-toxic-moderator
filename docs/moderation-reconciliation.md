@@ -117,8 +117,8 @@ Repeated processing of an existing link does not publish another event.
 The dashboard displays matching evidence separately from the request outcome.
 
 Automated tests cover evidence matching, storage, publication, API responses,
-and component rendering. A browser verification of the complete evidence
-update flow remains pending.
+and component rendering. Browser verification of the local evidence update flow passed on 2026-09-27.
+See the verification results below.
 
 ## Integration Verification
 
@@ -136,3 +136,16 @@ It verifies that:
 
 This test does not send requests to YouTube or establish that a matching
 event was caused by the application request.
+
+## Browser Verification — 2026-09-27
+
+Passed using a local fixture:
+
+- New evidence returned INSERTED and published chat.updated.
+- The WebSocket cursor advanced from 0 to 1.
+- The dashboard displayed matching evidence without a manual refresh.
+- The request outcome remained UNKNOWN; attribution remained UNPROVEN.
+- Reprocessing returned EXISTING without another event; the cursor stayed at 1.
+
+This verifies the local database-to-WebSocket-to-dashboard flow.
+No real YouTube moderation request was sent during this verification.
