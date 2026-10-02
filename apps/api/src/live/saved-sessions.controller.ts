@@ -29,6 +29,7 @@ export class SavedSessionsController {
       flagged_messages: string;
       error_messages: string;
       unevaluated_messages: string;
+      flagged_reasons: unknown;
     }>(
       `
         WITH accessible_session AS (
@@ -59,10 +60,14 @@ export class SavedSessionsController {
             o.id DESC
         ),
         evaluated_messages AS (
-          SELECT o.id, evaluation.outcome
+          SELECT
+  o.id,
+  evaluation.outcome,
+  evaluation.primary_category,
+  evaluation.reason_code
           FROM latest_observations o
           LEFT JOIN LATERAL (
-            SELECT c.outcome
+            SELECT c.outcome, c.primary_category, c.reason_code
             FROM youtube_chat_classifications c
             WHERE c.channel_id = o.channel_id
               AND c.session_id = o.session_id
@@ -78,7 +83,32 @@ export class SavedSessionsController {
           counts.allowed_messages,
           counts.flagged_messages,
           counts.error_messages,
-          counts.unevaluated_messages
+counts.unevaluated_messages,
+COALESCE(
+  (
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'category', reasons.primary_category,
+        'reason_code', reasons.reason_code,
+        'message_count', reasons.message_count
+      )
+      ORDER BY
+        reasons.message_count DESC,
+        reasons.primary_category,
+        reasons.reason_code
+    )
+    FROM (
+      SELECT
+        primary_category,
+        reason_code,
+        count(*) AS message_count
+      FROM evaluated_messages
+      WHERE outcome IN ('REVIEW', 'ACTION_REQUIRED')
+      GROUP BY primary_category, reason_code
+    ) reasons
+  ),
+  '[]'::jsonb
+) AS flagged_reasons
         FROM accessible_session s
         CROSS JOIN (
           SELECT
@@ -118,6 +148,7 @@ export class SavedSessionsController {
       flagged_messages: Number(row.flagged_messages),
       error_messages: Number(row.error_messages),
       unevaluated_messages: Number(row.unevaluated_messages),
+      flagged_reasons: row.flagged_reasons,
     });
   }
 

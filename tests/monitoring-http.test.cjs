@@ -1306,6 +1306,7 @@ test('history statistics return zero counts for an empty session', async () => {
     flagged_messages: 0,
     error_messages: 0,
     unevaluated_messages: 0,
+    flagged_reasons: [],
   });
 });
 
@@ -1420,6 +1421,13 @@ test('history statistics deduplicate snapshots and use the latest evaluation', a
     flagged_messages: 2,
     error_messages: 1,
     unevaluated_messages: 1,
+    flagged_reasons: [
+      {
+        category: 'SPAM',
+        reason_code: 'CONTEXT_REQUIRED',
+        message_count: 2,
+      },
+    ],
   });
 });
 

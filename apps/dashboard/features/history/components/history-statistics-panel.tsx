@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ApiError, getErrorMessage } from '@/lib/api-client';
 
 import { useHistoryStatistics } from '../hooks/use-history-statistics';
+import { HistoryFlaggedReasons } from './history-flagged-reasons';
 
 type HistoryStatisticsPanelProps = {
   accountId: string;
@@ -82,6 +83,8 @@ export function HistoryStatisticsPanel({ accountId, sessionId }: HistoryStatisti
           </div>
         ))}
       </dl>
+
+      <HistoryFlaggedReasons reasons={data.flagged_reasons} />
 
       <div className="space-y-1 text-xs text-muted-foreground">
         <p>
