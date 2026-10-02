@@ -1,4 +1,4 @@
-import { historyStatistics, savedSession } from '@moderator/contracts';
+import { historyActionStatistics, historyStatistics, savedSession } from '@moderator/contracts';
 
 import { apiRequest } from '@/lib/api-client';
 
@@ -17,6 +17,20 @@ export async function getHistoryStatistics(sessionId: string, signal: AbortSigna
 
   if (result.session_id !== sessionId) {
     throw new Error('History statistics session mismatch.');
+  }
+
+  return result;
+}
+
+export async function getHistoryActionStatistics(sessionId: string, signal: AbortSignal) {
+  const result = historyActionStatistics.parse(
+    await apiRequest(`/v1/youtube/sessions/${encodeURIComponent(sessionId)}/action-statistics`, {
+      signal,
+    }),
+  );
+
+  if (result.session_id !== sessionId) {
+    throw new Error('History action statistics session mismatch.');
   }
 
   return result;

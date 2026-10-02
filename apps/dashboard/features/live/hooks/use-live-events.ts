@@ -37,6 +37,7 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
     const chatKey = ['live-chat', accountId, channelId, sessionId] as const;
     const monitoringKey = ['monitoring', accountId, broadcastId] as const;
     const statisticsKey = ['history-statistics', accountId, sessionId] as const;
+    const actionStatisticsKey = ['history-action-statistics', accountId, sessionId] as const;
 
     let disposed = false;
     let socket: WebSocket | null = null;
@@ -87,7 +88,8 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
                     queryKey[2] === channelId &&
                     queryKey[3] === sessionId) ||
                   (queryKey.length === 3 &&
-                    queryKey[0] === 'history-statistics' &&
+                    (queryKey[0] === 'history-statistics' ||
+                      queryKey[0] === 'history-action-statistics') &&
                     queryKey[1] === accountId &&
                     queryKey[2] === sessionId),
               },
@@ -222,6 +224,10 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
             queryKey: statisticsKey,
             exact: true,
           });
+          void queryClient.resetQueries({
+            queryKey: actionStatisticsKey,
+            exact: true,
+          });
           return;
         }
 
@@ -241,6 +247,11 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
 
           void queryClient.resetQueries({
             queryKey: statisticsKey,
+            exact: true,
+          });
+
+          void queryClient.resetQueries({
+            queryKey: actionStatisticsKey,
             exact: true,
           });
 

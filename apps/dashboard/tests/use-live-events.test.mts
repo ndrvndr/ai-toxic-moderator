@@ -46,6 +46,7 @@ const chatKey = ['live-chat', accountId, channelId, sessionId] as const;
 const monitoringKey = ['monitoring', accountId, broadcastId] as const;
 const statisticsKey = ['history-statistics', accountId, sessionId] as const;
 const unrelatedKey = ['live-chat', 'another-account', channelId, sessionId] as const;
+const actionStatisticsKey = ['history-action-statistics', accountId, sessionId] as const;
 
 let client: QueryClient;
 let unsubscribe: Array<() => void>;
@@ -457,5 +458,60 @@ describe('useLiveEvents', () => {
     await advance(60_000);
 
     expect(statistics).not.toHaveBeenCalled();
+  });
+
+  it('refreshes action statistics on ready and chat updates within the current scope', async () => {
+    const actions = observe(actionStatisticsKey);
+    const otherAccount = observe(['history-action-statistics', 'another-account', sessionId]);
+    const otherSession = observe(['history-action-statistics', accountId, 'another-session']);
+
+    mount();
+    const socket = latestSocket();
+
+    ready(socket, '0');
+    await advance(250);
+
+    expect(actions).toHaveBeenCalledTimes(1);
+
+    event(socket, '1');
+    await advance(250);
+
+    expect(actions).toHaveBeenCalledTimes(2);
+    expect(client.getQueryData(actionStatisticsKey)).toBe(2);
+
+    event(socket, '2', 'monitoring.updated');
+    await advance(250);
+
+    expect(actions).toHaveBeenCalledTimes(2);
+    expect(otherAccount).not.toHaveBeenCalled();
+    expect(otherSession).not.toHaveBeenCalled();
+  });
+
+  it.each([4001, 4003, 4004])(
+    'clears cached action statistics after access close code %s',
+    async (code) => {
+      client.setQueryData(actionStatisticsKey, { private: true });
+
+      mount();
+      const socket = latestSocket();
+
+      ready(socket, '0');
+      act(() => socket.disconnect(code));
+      await advance(60_000);
+
+      expect(client.getQueryData(actionStatisticsKey)).toBeUndefined();
+      expect(MockWebSocket.instances).toHaveLength(1);
+    },
+  );
+
+  it('cancels pending action statistics refresh on unmount', async () => {
+    const actions = observe(actionStatisticsKey);
+    const hook = mount();
+
+    ready(latestSocket(), '0');
+    hook.unmount();
+    await advance(60_000);
+
+    expect(actions).not.toHaveBeenCalled();
   });
 });
