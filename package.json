@@ -55,6 +55,7 @@
     "test:youtube-actor": "node --experimental-test-isolation=none --test tests/youtube-actor.test.cjs",
     "test:actor-resolver": "node --experimental-test-isolation=none --test tests/actor-resolver.test.cjs",
     "test:ban-evidence-coordinator": "node --experimental-test-isolation=none --test tests/ban-evidence-coordinator.test.cjs",
+    "test:history-action-statistics": "node --experimental-test-isolation=none --test tests/history-action-statistics.test.cjs",
     "dev:api": "npm run build:core && npm run build --workspace=@moderator/api && node --env-file-if-exists=.env apps/api/dist/main.js",
     "dev:worker": "npm run build:core && npm run build --workspace=@moderator/worker && node --env-file-if-exists=.env apps/worker/dist/main.js",
     "dev:dashboard": "npm run dev --workspace=@moderator/dashboard",
