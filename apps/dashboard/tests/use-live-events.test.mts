@@ -44,6 +44,7 @@ const broadcastId = 'test-broadcast';
 
 const chatKey = ['live-chat', accountId, channelId, sessionId] as const;
 const monitoringKey = ['monitoring', accountId, broadcastId] as const;
+const statisticsKey = ['history-statistics', accountId, sessionId] as const;
 const unrelatedKey = ['live-chat', 'another-account', channelId, sessionId] as const;
 
 let client: QueryClient;
@@ -337,5 +338,124 @@ describe('useLiveEvents', () => {
     await advance(60_000);
 
     expect(MockWebSocket.instances).toHaveLength(7);
+  });
+
+  it('refreshes statistics for the current session on ready and chat events', async () => {
+    const statistics = observe(statisticsKey);
+    const anotherAccount = observe(['history-statistics', 'another-account', sessionId]);
+    const anotherSession = observe(['history-statistics', accountId, 'another-session']);
+
+    mount();
+    const socket = latestSocket();
+
+    ready(socket, '0');
+    await advance(250);
+
+    expect(statistics).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(statisticsKey)).toBe(1);
+
+    event(socket, '1');
+    await advance(250);
+
+    expect(statistics).toHaveBeenCalledTimes(2);
+    expect(client.getQueryData(statisticsKey)).toBe(2);
+
+    event(socket, '2', 'monitoring.updated');
+    await advance(250);
+
+    expect(statistics).toHaveBeenCalledTimes(2);
+    expect(anotherAccount).not.toHaveBeenCalled();
+    expect(anotherSession).not.toHaveBeenCalled();
+  });
+
+  it('refreshes statistics after reconnect without creating a second subscription', async () => {
+    const statistics = observe(statisticsKey);
+
+    mount();
+    const first = latestSocket();
+
+    ready(first, '0');
+    await advance(250);
+
+    act(() => first.disconnect());
+    await advance(1000);
+
+    const second = latestSocket();
+
+    expect(new URL(second.url).searchParams.get('after')).toBe('0');
+
+    ready(second, '0');
+    await advance(250);
+
+    expect(statistics).toHaveBeenCalledTimes(2);
+    expect(MockWebSocket.instances).toHaveLength(2);
+  });
+
+  it('keeps statistics refresh pending while the current request is running', async () => {
+    const statistics = observe(statisticsKey);
+
+    mount();
+    const socket = latestSocket();
+
+    ready(socket, '0');
+    await advance(250);
+
+    let resolveRequest!: (value: number) => void;
+
+    statistics.mockImplementationOnce(
+      () =>
+        new Promise<number>((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+
+    event(socket, '1');
+    await advance(250);
+
+    expect(statistics).toHaveBeenCalledTimes(2);
+
+    event(socket, '2');
+    await advance(250);
+
+    expect(statistics).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveRequest(50);
+      await Promise.resolve();
+    });
+
+    await advance(250);
+
+    expect(statistics).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([4001, 4003, 4004])(
+    'clears cached statistics after access close code %s',
+    async (code) => {
+      client.setQueryData(statisticsKey, { total_messages: 12 });
+
+      mount();
+      const socket = latestSocket();
+
+      ready(socket, '0');
+      act(() => socket.disconnect(code));
+
+      await advance(60_000);
+
+      expect(client.getQueryData(statisticsKey)).toBeUndefined();
+      expect(MockWebSocket.instances).toHaveLength(1);
+    },
+  );
+
+  it('does not refresh statistics after unmount', async () => {
+    const statistics = observe(statisticsKey);
+    const hook = mount();
+
+    ready(latestSocket(), '0');
+    hook.unmount();
+
+    await advance(60_000);
+
+    expect(statistics).not.toHaveBeenCalled();
   });
 });

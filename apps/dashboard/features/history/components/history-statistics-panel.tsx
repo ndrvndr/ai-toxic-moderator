@@ -88,7 +88,9 @@ export function HistoryStatisticsPanel({ accountId, sessionId }: HistoryStatisti
           Counts cover unique text messages stored during monitoring. Moderation events are
           excluded. Flagged includes messages requiring review or action.
         </p>
-        <p>Statistics refresh when you return to this tab or select Refresh statistics.</p>
+        <p>
+          Statistics update when live chat updates are received. You can also refresh them manually.
+        </p>
         <p>
           Last updated:{' '}
           <time dateTime={new Date(statistics.dataUpdatedAt).toISOString()}>
