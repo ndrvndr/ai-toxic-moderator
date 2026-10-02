@@ -38,7 +38,12 @@ export function DashboardSidebar() {
               </SidebarMenuItem>
 
               <SidebarMenuItem>
-                <SidebarMenuButton disabled>History — Coming soon</SidebarMenuButton>
+                <SidebarMenuButton
+                  asChild
+                  isActive={pathname === '/history' || pathname.startsWith('/history/')}
+                >
+                  <Link href="/history">History</Link>
+                </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
