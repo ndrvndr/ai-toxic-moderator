@@ -13,6 +13,7 @@ const {
   chatPage,
   savedSession,
   savedSessionsPage,
+  historyStatistics,
 } = require('@moderator/contracts');
 
 const schema = `monitoring_http_${randomUUID().replaceAll('-', '')}`;
@@ -1289,4 +1290,170 @@ test('saved session detail enforces membership changes on every read', async () 
   const removed = await request(path);
   assert.equal(removed.status, 404);
   assert.equal((await removed.json()).error.code, 'SAVED_SESSION_NOT_FOUND');
+});
+
+test('history statistics return zero counts for an empty session', async () => {
+  const run = await startRun();
+
+  const response = await request(`/v1/youtube/sessions/${run.session_id}/statistics`);
+
+  assert.equal(response.status, 200, await response.clone().text());
+
+  assert.deepEqual(historyStatistics.parse(await response.json()), {
+    session_id: run.session_id,
+    total_messages: 0,
+    allowed_messages: 0,
+    flagged_messages: 0,
+    error_messages: 0,
+    unevaluated_messages: 0,
+  });
+});
+
+test('history statistics deduplicate snapshots and use the latest evaluation', async () => {
+  const run = await startRun();
+
+  async function classify(observationId, outcome, version, createdAt) {
+    const flagged = ['REVIEW', 'ACTION_REQUIRED'].includes(outcome);
+    const failed = outcome === 'ERROR';
+
+    await admin.query(
+      `
+        INSERT INTO youtube_chat_classifications(
+          id, channel_id, session_id, observation_id, run_id,
+          classifier_version, policy_version, outcome,
+          primary_category, severity, reason_code, reason,
+          signals, created_at
+        )
+        VALUES(
+          $1, $2, $3, $4, $5,
+          $6, 'history-test-policy', $7,
+          $8, $9, $10, 'History statistics test.',
+          '[]'::jsonb, $11
+        )
+      `,
+      [
+        randomUUID(),
+        run.channel_id,
+        run.session_id,
+        observationId,
+        run.id,
+        version,
+        outcome,
+        flagged ? 'SPAM' : null,
+        failed ? null : flagged ? 1 : 0,
+        failed ? 'PROCESSING_FAILED' : flagged ? 'CONTEXT_REQUIRED' : 'NO_RULE_MATCH',
+        createdAt,
+      ],
+    );
+  }
+
+  for (const outcome of ['ALLOW', 'REVIEW', 'ACTION_REQUIRED', 'ERROR']) {
+    const observationId = await insertChatObservation(run);
+
+    if (outcome === 'REVIEW') {
+      await classify(observationId, 'ALLOW', 'history-old', '2026-01-01T00:00:01Z');
+    }
+
+    await classify(observationId, outcome, 'history-current', '2026-01-01T00:00:02Z');
+  }
+
+  const olderSnapshot = await insertChatObservation(run);
+
+  // An older evaluated snapshot must not supply the latest snapshot's outcome.
+  await classify(olderSnapshot, 'REVIEW', 'history-older-snapshot', '2026-01-01T00:00:03Z');
+
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_observations(
+        id, channel_id, session_id, first_observed_run_id,
+        external_message_id, event_type, published_at,
+        received_at, payload, payload_hash
+      )
+      SELECT
+        $1, channel_id, session_id, first_observed_run_id,
+        external_message_id, event_type, published_at,
+        received_at + interval '1 second',
+        payload || '{"statistics_fixture": true}'::jsonb,
+        $2
+      FROM youtube_chat_observations
+      WHERE id = $3
+    `,
+    [randomUUID(), 'b'.repeat(64), olderSnapshot],
+  );
+
+  // Provider moderation events are not text messages.
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_observations(
+        id, channel_id, session_id, first_observed_run_id,
+        external_message_id, event_type, published_at,
+        received_at, payload, payload_hash
+      )
+      VALUES(
+        $1, $2, $3, $4,
+        $5, 'userBannedEvent', clock_timestamp(),
+        clock_timestamp(), '{}'::jsonb, $6
+      )
+    `,
+    [
+      randomUUID(),
+      run.channel_id,
+      run.session_id,
+      run.id,
+      `moderation-event-${randomUUID()}`,
+      'c'.repeat(64),
+    ],
+  );
+
+  // Another session must not affect this session's totals.
+  const otherRun = await startRun();
+  await insertChatObservation(otherRun);
+
+  const response = await request(`/v1/youtube/sessions/${run.session_id}/statistics`);
+
+  assert.equal(response.status, 200, await response.clone().text());
+
+  assert.deepEqual(historyStatistics.parse(await response.json()), {
+    session_id: run.session_id,
+    total_messages: 5,
+    allowed_messages: 1,
+    flagged_messages: 2,
+    error_messages: 1,
+    unevaluated_messages: 1,
+  });
+});
+
+test('history statistics enforce authentication and current membership', async () => {
+  const run = await startRun();
+  const path = `/v1/youtube/sessions/${run.session_id}/statistics`;
+
+  assert.equal((await request(path, { headers: { Cookie: '' } })).status, 401);
+
+  assert.equal((await request('/v1/youtube/sessions/invalid/statistics')).status, 422);
+
+  assert.equal((await request(`/v1/youtube/sessions/${randomUUID()}/statistics`)).status, 404);
+
+  for (const role of ['OWNER', 'MODERATOR', 'OPERATOR']) {
+    await admin.query(
+      `
+        UPDATE channel_memberships
+        SET role = $3
+        WHERE channel_id = $1 AND account_id = $2
+      `,
+      [run.channel_id, accountId, role],
+    );
+
+    const response = await request(path);
+    assert.equal(response.status, role === 'OPERATOR' ? 404 : 200);
+  }
+
+  await admin.query(
+    `
+      DELETE FROM channel_memberships
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [run.channel_id, accountId],
+  );
+
+  assert.equal((await request(path)).status, 404);
 });

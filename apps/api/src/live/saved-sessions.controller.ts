@@ -1,6 +1,7 @@
 import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 
 import {
+  historyStatistics,
   savedSession,
   savedSessionsCursor,
   savedSessionsPage,
@@ -14,6 +15,111 @@ import { failure, type ApiRequest } from '../http';
 @Controller('v1/youtube/sessions')
 export class SavedSessionsController {
   constructor(private readonly database: DatabaseService) {}
+
+  @Get(':session_id/statistics')
+  async statistics(@Param('session_id') sessionId: string, @Req() request: ApiRequest) {
+    if (!uuid.safeParse(sessionId).success) {
+      throw failure(422, 'VALIDATION_ERROR', 'Provide a valid session ID.');
+    }
+
+    const result = await this.database.pool.query<{
+      session_id: string;
+      total_messages: string;
+      allowed_messages: string;
+      flagged_messages: string;
+      error_messages: string;
+      unevaluated_messages: string;
+    }>(
+      `
+        WITH accessible_session AS (
+          SELECT s.id, s.channel_id
+          FROM stream_sessions s
+          JOIN youtube_broadcasts b
+            ON b.session_id = s.id
+            AND b.channel_id = s.channel_id
+          JOIN channel_memberships membership
+            ON membership.channel_id = s.channel_id
+            AND membership.account_id = $1
+            AND membership.role IN ('OWNER', 'MODERATOR')
+          WHERE s.id = $2
+        ),
+        latest_observations AS (
+          SELECT DISTINCT ON (o.external_message_id)
+            o.id,
+            o.channel_id,
+            o.session_id,
+            o.event_type
+          FROM youtube_chat_observations o
+          JOIN accessible_session s
+            ON s.id = o.session_id
+            AND s.channel_id = o.channel_id
+          ORDER BY
+            o.external_message_id,
+            o.received_at DESC,
+            o.id DESC
+        ),
+        evaluated_messages AS (
+          SELECT o.id, evaluation.outcome
+          FROM latest_observations o
+          LEFT JOIN LATERAL (
+            SELECT c.outcome
+            FROM youtube_chat_classifications c
+            WHERE c.channel_id = o.channel_id
+              AND c.session_id = o.session_id
+              AND c.observation_id = o.id
+            ORDER BY c.created_at DESC, c.id DESC
+            LIMIT 1
+          ) evaluation ON true
+          WHERE o.event_type = 'textMessageEvent'
+        )
+        SELECT
+          s.id AS session_id,
+          counts.total_messages,
+          counts.allowed_messages,
+          counts.flagged_messages,
+          counts.error_messages,
+          counts.unevaluated_messages
+        FROM accessible_session s
+        CROSS JOIN (
+          SELECT
+            count(*)::text AS total_messages,
+            (count(*) FILTER (
+              WHERE outcome = 'ALLOW'
+            ))::text AS allowed_messages,
+            (count(*) FILTER (
+              WHERE outcome IN ('REVIEW', 'ACTION_REQUIRED')
+            ))::text AS flagged_messages,
+            (count(*) FILTER (
+              WHERE outcome = 'ERROR'
+            ))::text AS error_messages,
+            (count(*) FILTER (
+              WHERE outcome IS NULL
+            ))::text AS unevaluated_messages
+          FROM evaluated_messages
+        ) counts
+      `,
+      [request.account!.id, sessionId],
+    );
+
+    const row = result.rows[0];
+
+    if (!row) {
+      throw failure(
+        404,
+        'SAVED_SESSION_NOT_FOUND',
+        'The saved session was not found or is not accessible.',
+      );
+    }
+
+    return historyStatistics.parse({
+      session_id: row.session_id,
+      total_messages: Number(row.total_messages),
+      allowed_messages: Number(row.allowed_messages),
+      flagged_messages: Number(row.flagged_messages),
+      error_messages: Number(row.error_messages),
+      unevaluated_messages: Number(row.unevaluated_messages),
+    });
+  }
 
   @Get(':session_id')
   async detail(@Param('session_id') sessionId: string, @Req() request: ApiRequest) {
