@@ -7,15 +7,16 @@ import { ApiError } from '@/lib/api-client';
 
 import { getSavedSessions } from '../api/saved-sessions-api';
 
-export function useSavedSessions(accountId: string) {
+export function useSavedSessions(accountId: string, search = '') {
   const queryClient = useQueryClient();
+  const q = search.trim();
 
   return useInfiniteQuery({
-    queryKey: ['saved-sessions', accountId],
+    queryKey: ['saved-sessions', accountId, q],
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam, signal }) => {
       try {
-        return await getSavedSessions(pageParam, signal);
+        return await getSavedSessions(pageParam, signal, q);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           void queryClient.invalidateQueries({

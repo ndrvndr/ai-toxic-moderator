@@ -2,9 +2,10 @@
 
 import { useSession } from '@/features/auth/hooks/use-session';
 
+import { HistorySearchForm } from './history-search-form';
 import { HistorySessionList } from './history-session-list';
 
-export function HistoryPage() {
+export function HistoryPage({ search = '' }: { search?: string }) {
   const session = useSession();
 
   return (
@@ -16,8 +17,20 @@ export function HistoryPage() {
         </p>
       </header>
 
-      {session.data && (
-        <HistorySessionList key={session.data.account.id} accountId={session.data.account.id} />
+      <HistorySearchForm key={search} search={search} />
+
+      {search.length > 100 ? (
+        <p role="alert" className="text-sm text-destructive">
+          Search terms must contain no more than 100 characters.
+        </p>
+      ) : (
+        session.data && (
+          <HistorySessionList
+            key={`${session.data.account.id}:${search}`}
+            accountId={session.data.account.id}
+            search={search}
+          />
+        )
       )}
     </div>
   );

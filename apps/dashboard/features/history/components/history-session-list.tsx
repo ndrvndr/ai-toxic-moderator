@@ -6,8 +6,13 @@ import { getErrorMessage } from '@/lib/api-client';
 
 import { HistorySessionCard } from './history-session-card';
 
-export function HistorySessionList({ accountId }: { accountId: string }) {
-  const sessions = useSavedSessions(accountId);
+type HistorySessionListProps = {
+  accountId: string;
+  search?: string;
+};
+
+export function HistorySessionList({ accountId, search = '' }: HistorySessionListProps) {
+  const sessions = useSavedSessions(accountId, search);
 
   const items = [
     ...new Map(
