@@ -26,7 +26,7 @@ class ChatController {
       );
     }
 
-    const { limit, cursor } = parsed.data;
+    const { limit, cursor, outcome: outcomeFilter, category: categoryFilter } = parsed.data;
     let position: { received_at: string; id: string } | null = null;
 
     if (cursor) {
@@ -37,6 +37,10 @@ class ChatController {
 
         if (decoded.channel_id !== channelId || decoded.session_id !== sessionId) {
           throw new Error('Cursor scope mismatch');
+        }
+
+        if (decoded.outcome !== outcomeFilter || decoded.category !== categoryFilter) {
+          throw new Error('Cursor filter mismatch.');
         }
 
         position = decoded;
@@ -207,13 +211,29 @@ FROM youtube_ban_executions e
           WHERE channel_id = $1
             AND session_id = $2
             AND (
+              $6::text IS NULL
+              OR COALESCE(evaluation.outcome, 'NOT_EVALUATED') = $6::text
+            )
+            AND (
+              $7::text IS NULL
+              OR evaluation.primary_category = $7::text
+            )
+            AND (
               $3::timestamptz IS NULL
               OR (received_at, id) < ($3::timestamptz, $4::uuid)
             )
           ORDER BY received_at DESC, id DESC
           LIMIT $5
         `,
-        [channelId, sessionId, position?.received_at ?? null, position?.id ?? null, limit + 1],
+        [
+          channelId,
+          sessionId,
+          position?.received_at ?? null,
+          position?.id ?? null,
+          limit + 1,
+          outcomeFilter ?? null,
+          categoryFilter ?? null,
+        ],
       );
 
       const rows = result.rows.slice(0, limit);
@@ -228,6 +248,8 @@ FROM youtube_ban_executions e
                 session_id: sessionId,
                 received_at: last.received_at,
                 id: last.id,
+                outcome: outcomeFilter,
+                category: categoryFilter,
               }),
             ).toString('base64url')
           : null;

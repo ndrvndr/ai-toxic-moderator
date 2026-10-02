@@ -925,6 +925,142 @@ test('chat exposes author action results only on their triggering messages', asy
   }
 });
 
+test('chat filters apply before pagination and bind cursors to both filters', async () => {
+  const run = await startRun();
+  const firstId = await insertChatObservation(run, {
+    receivedAt: '2026-01-01T00:00:01.000000Z',
+  });
+  const secondId = await insertChatObservation(run, {
+    receivedAt: '2026-01-01T00:00:02.000000Z',
+  });
+
+  // This helper creates a REVIEW classification with HARASSMENT category.
+  await createAuthorExecution(run, firstId);
+  await createAuthorExecution(run, secondId);
+
+  // A newer nonmatching observation must not consume the filtered page.
+  const unevaluatedId = await insertChatObservation(run, {
+    receivedAt: '2026-01-01T00:00:03.000000Z',
+  });
+  const otherRun = await startRun();
+  await createAuthorExecution(otherRun, await insertChatObservation(otherRun));
+
+  const query = new URLSearchParams({
+    outcome: 'REVIEW',
+    category: 'HARASSMENT',
+    limit: '1',
+  });
+  const firstResponse = await request(`${chatPath(run)}?${query}`);
+  assert.equal(firstResponse.status, 200, await firstResponse.clone().text());
+  const first = chatPage.parse(await firstResponse.json());
+  assert.deepEqual(
+    first.items.map((item) => item.id),
+    [secondId],
+  );
+  assert.ok(first.next_cursor);
+
+  query.set('cursor', first.next_cursor);
+  const secondResponse = await request(`${chatPath(run)}?${query}`);
+  assert.equal(secondResponse.status, 200);
+  const second = chatPage.parse(await secondResponse.json());
+  assert.deepEqual(
+    second.items.map((item) => item.id),
+    [firstId],
+  );
+  assert.equal(second.next_cursor, null);
+
+  for (const filters of [
+    { outcome: 'ALLOW', category: 'HARASSMENT' },
+    { outcome: 'REVIEW', category: 'SPAM' },
+    { outcome: 'REVIEW' },
+    {},
+  ]) {
+    const wrongQuery = new URLSearchParams({ ...filters, cursor: first.next_cursor });
+    const response = await request(`${chatPath(run)}?${wrongQuery}`);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, 'INVALID_CURSOR');
+  }
+
+  const otherSessionResponse = await request(`${chatPath(otherRun)}?${query}`);
+  assert.equal(otherSessionResponse.status, 400);
+
+  const unevaluatedResponse = await request(`${chatPath(run)}?outcome=NOT_EVALUATED`);
+  assert.equal(unevaluatedResponse.status, 200);
+  assert.deepEqual(
+    chatPage.parse(await unevaluatedResponse.json()).items.map((item) => item.id),
+    [unevaluatedId],
+  );
+
+  const categoryResponse = await request(`${chatPath(run)}?category=HARASSMENT`);
+  assert.equal(categoryResponse.status, 200);
+  assert.deepEqual(
+    chatPage.parse(await categoryResponse.json()).items.map((item) => item.id),
+    [secondId, firstId],
+  );
+});
+
+test('chat filters use the latest classification rather than an older match', async () => {
+  const run = await startRun();
+  const observationId = await insertChatObservation(run);
+  await createAuthorExecution(run, observationId);
+
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_classifications(
+        id, channel_id, session_id, observation_id, run_id,
+        classifier_version, policy_version, outcome,
+        primary_category, severity, reason_code, reason,
+        signals, created_at
+      )
+      SELECT
+        $1, channel_id, session_id, observation_id, run_id,
+        'chat-filter-latest', 'chat-filter-latest', 'ALLOW',
+        NULL, 0, 'NO_RULE_MATCH', 'Latest evaluation allows this message.',
+        '[]'::jsonb, created_at + interval '1 second'
+      FROM youtube_chat_classifications
+      WHERE observation_id = $2
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `,
+    [randomUUID(), observationId],
+  );
+
+  for (const filter of ['outcome=REVIEW', 'category=HARASSMENT', 'outcome=ALLOW&category=SPAM']) {
+    const response = await request(`${chatPath(run)}?${filter}`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(chatPage.parse(await response.json()), {
+      items: [],
+      next_cursor: null,
+    });
+  }
+
+  const allowed = await request(`${chatPath(run)}?outcome=ALLOW`);
+  assert.equal(allowed.status, 200);
+  assert.deepEqual(
+    chatPage.parse(await allowed.json()).items.map((item) => item.id),
+    [observationId],
+  );
+});
+
+test('chat filters validate values and preserve access checks', async () => {
+  const run = await startRun();
+  assert.equal((await request(`${chatPath(run)}?outcome=INVALID`)).status, 422);
+  assert.equal((await request(`${chatPath(run)}?category=INVALID`)).status, 422);
+
+  const path = `${chatPath(run)}?outcome=REVIEW&category=HARASSMENT`;
+  assert.equal((await request(path, { headers: { Cookie: '' } })).status, 401);
+
+  await admin.query(
+    `
+      UPDATE channel_memberships
+      SET role = 'OPERATOR'
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [run.channel_id, accountId],
+  );
+  assert.equal((await request(path)).status, 403);
+});
+
 async function createAuthorExecution(run, observationId, action = 'TIMEOUT') {
   const classificationId = randomUUID();
   const planId = randomUUID();

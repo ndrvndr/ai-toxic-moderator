@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 import { category, outcome } from './moderation-enums';
 
+export const chatOutcomeFilter = z.enum([...outcome.options, 'NOT_EVALUATED']);
+
 export const chatQuery = z.strictObject({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   cursor: z
@@ -10,6 +12,8 @@ export const chatQuery = z.strictObject({
     .max(2048)
     .regex(/^[A-Za-z0-9_-]+$/)
     .optional(),
+  outcome: chatOutcomeFilter.optional(),
+  category: category.optional(),
 });
 
 export const chatCursor = z.strictObject({
@@ -18,6 +22,8 @@ export const chatCursor = z.strictObject({
   session_id: z.uuid(),
   received_at: z.iso.datetime({ precision: 6 }),
   id: z.uuid(),
+  outcome: chatOutcomeFilter.optional(),
+  category: category.optional(),
 });
 
 export const classificationReasonCode = z.enum([
