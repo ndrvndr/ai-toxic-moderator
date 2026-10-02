@@ -14,6 +14,7 @@ const {
   savedSession,
   savedSessionsPage,
   historyStatistics,
+  historyActionStatistics,
 } = require('@moderator/contracts');
 
 const schema = `monitoring_http_${randomUUID().replaceAll('-', '')}`;
@@ -1464,4 +1465,255 @@ test('history statistics enforce authentication and current membership', async (
   );
 
   assert.equal((await request(path)).status, 404);
+});
+
+function emptyActionCounts() {
+  return {
+    total: 0,
+    dispatched: 0,
+    succeeded: 0,
+    rejected: 0,
+    not_sent: 0,
+    unknown: 0,
+  };
+}
+
+async function readActionStatistics(run) {
+  const response = await request(`/v1/youtube/sessions/${run.session_id}/action-statistics`);
+
+  assert.equal(response.status, 200, await response.clone().text());
+  return historyActionStatistics.parse(await response.json());
+}
+
+async function insertHistoryAuthorAttempt(executionId, status) {
+  const attemptId = randomUUID();
+
+  await admin.query(
+    `
+      WITH moment AS MATERIALIZED (
+        SELECT clock_timestamp() AS at
+      )
+      INSERT INTO youtube_ban_attempts(
+        id, execution_id, owner_id, started_at, deadline_at
+      )
+      SELECT $1, $2, $3, at, at + interval '30 seconds'
+      FROM moment
+    `,
+    [attemptId, executionId, randomUUID()],
+  );
+
+  if (status !== 'DISPATCHED') {
+    await admin.query(
+      `
+        UPDATE youtube_ban_attempts
+        SET status = $2,
+            finished_at = clock_timestamp(),
+            http_status = $3,
+            error_code = $4,
+            ban_id = $5
+        WHERE id = $1
+      `,
+      [
+        attemptId,
+        status,
+        status === 'SUCCEEDED' ? 200 : status === 'REJECTED' ? 403 : null,
+        status === 'SUCCEEDED' ? null : 'HISTORY_TEST_RESULT',
+        status === 'SUCCEEDED' ? `test-ban-${attemptId}` : null,
+      ],
+    );
+  }
+}
+
+test('action statistics return zero counts for a session without attempts', async () => {
+  const run = await startRun();
+
+  // An execution without an attempt must also remain excluded.
+  const observationId = await insertChatObservation(run);
+  await createAuthorExecution(run, observationId);
+
+  assert.deepEqual(await readActionStatistics(run), {
+    session_id: run.session_id,
+    delete: emptyActionCounts(),
+    timeout: emptyActionCounts(),
+    ban: emptyActionCounts(),
+  });
+});
+
+test('action statistics count repeated author executions and preserve each outcome', async () => {
+  const run = await startRun();
+
+  for (const action of ['TIMEOUT', 'BAN']) {
+    for (const status of ['DISPATCHED', 'SUCCEEDED', 'REJECTED', 'NOT_SENT', 'UNKNOWN']) {
+      const observationId = await insertChatObservation(run);
+      const executionId = await createAuthorExecution(run, observationId, action);
+
+      await insertHistoryAuthorAttempt(executionId, status);
+    }
+  }
+
+  // The same viewer has another successful timeout in this session.
+  const repeatedMessage = await insertChatObservation(run);
+  const repeatedExecution = await createAuthorExecution(run, repeatedMessage);
+  await insertHistoryAuthorAttempt(repeatedExecution, 'SUCCEEDED');
+
+  // Results from another session must not enter these totals.
+  const otherRun = await startRun();
+  const otherMessage = await insertChatObservation(otherRun);
+  const otherExecution = await createAuthorExecution(otherRun, otherMessage);
+  await insertHistoryAuthorAttempt(otherExecution, 'SUCCEEDED');
+
+  assert.deepEqual(await readActionStatistics(run), {
+    session_id: run.session_id,
+    delete: emptyActionCounts(),
+    timeout: {
+      total: 6,
+      dispatched: 1,
+      succeeded: 2,
+      rejected: 1,
+      not_sent: 1,
+      unknown: 1,
+    },
+    ban: {
+      total: 5,
+      dispatched: 1,
+      succeeded: 1,
+      rejected: 1,
+      not_sent: 1,
+      unknown: 1,
+    },
+  });
+});
+
+test('action statistics require authentication and current membership', async () => {
+  const run = await startRun();
+  const path = `/v1/youtube/sessions/${run.session_id}/action-statistics`;
+
+  assert.equal((await request(path, { headers: { Cookie: '' } })).status, 401);
+
+  assert.equal((await request('/v1/youtube/sessions/invalid/action-statistics')).status, 422);
+
+  assert.equal(
+    (await request(`/v1/youtube/sessions/${randomUUID()}/action-statistics`)).status,
+    404,
+  );
+
+  for (const role of ['OWNER', 'MODERATOR', 'OPERATOR']) {
+    await admin.query(
+      `
+        UPDATE channel_memberships
+        SET role = $3
+        WHERE channel_id = $1 AND account_id = $2
+      `,
+      [run.channel_id, accountId, role],
+    );
+
+    assert.equal((await request(path)).status, role === 'OPERATOR' ? 404 : 200);
+  }
+
+  await admin.query(
+    `
+      DELETE FROM channel_memberships
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [run.channel_id, accountId],
+  );
+
+  assert.equal((await request(path)).status, 404);
+});
+
+test('action statistics count only the latest deletion attempt', async () => {
+  const run = await startRun();
+  const observationId = await insertChatObservation(run);
+  const classificationId = randomUUID();
+  const planId = randomUUID();
+  const executionId = randomUUID();
+
+  await admin.query(
+    `
+      INSERT INTO youtube_chat_classifications(
+        id, channel_id, session_id, observation_id, run_id,
+        classifier_version, policy_version, outcome,
+        primary_category, severity, reason_code, reason, signals
+      )
+      VALUES(
+        $1, $2, $3, $4, $5,
+        'history-delete-test', 'history-delete-test', 'ACTION_REQUIRED',
+        'SPAM', 2, 'CONTEXT_REQUIRED', 'Statistics fixture.', '[]'::jsonb
+      )
+    `,
+    [classificationId, run.channel_id, run.session_id, observationId, run.id],
+  );
+
+  await admin.query(
+    `
+      INSERT INTO youtube_moderation_action_plans(
+        id, channel_id, session_id, classification_id,
+        policy_version, action, duration_seconds, reason
+      )
+      VALUES(
+        $1, $2, $3, $4,
+        'history-delete-test', 'DELETE', NULL, 'Statistics fixture.'
+      )
+    `,
+    [planId, run.channel_id, run.session_id, classificationId],
+  );
+
+  await admin.query(
+    `
+      INSERT INTO youtube_delete_executions(
+        id, plan_id, channel_id, session_id, external_message_id
+      )
+      SELECT $1, $2, channel_id, session_id, external_message_id
+      FROM youtube_chat_observations
+      WHERE id = $3
+    `,
+    [executionId, planId, observationId],
+  );
+
+  for (const attemptNumber of [1, 2]) {
+    const attemptId = randomUUID();
+
+    await admin.query(
+      `
+        WITH moment AS MATERIALIZED (
+          SELECT clock_timestamp() AS at
+        )
+        INSERT INTO youtube_delete_attempts(
+          id, execution_id, attempt_number, owner_id,
+          started_at, deadline_at
+        )
+        SELECT $1, $2, $3, $4, at, at + interval '30 seconds'
+        FROM moment
+      `,
+      [attemptId, executionId, attemptNumber, randomUUID()],
+    );
+
+    await admin.query(
+      `
+        UPDATE youtube_delete_attempts
+        SET status = $2,
+            finished_at = clock_timestamp(),
+            http_status = $3,
+            error_code = $4
+        WHERE id = $1
+      `,
+      [
+        attemptId,
+        attemptNumber === 1 ? 'NOT_SENT' : 'SUCCEEDED',
+        attemptNumber === 1 ? null : 204,
+        attemptNumber === 1 ? 'REQUEST_CANCELLED' : null,
+      ],
+    );
+  }
+
+  assert.deepEqual(await readActionStatistics(run), {
+    session_id: run.session_id,
+    delete: {
+      ...emptyActionCounts(),
+      total: 1,
+      succeeded: 1,
+    },
+    timeout: emptyActionCounts(),
+    ban: emptyActionCounts(),
+  });
 });

@@ -1,12 +1,14 @@
 import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 
 import {
+  historyActionStatistics,
   historyStatistics,
   savedSession,
   savedSessionsCursor,
   savedSessionsPage,
   savedSessionsQuery,
   uuid,
+  type ActionExecutionCounts,
 } from '@moderator/contracts';
 
 import { DatabaseService } from '../database.module';
@@ -15,6 +17,126 @@ import { failure, type ApiRequest } from '../http';
 @Controller('v1/youtube/sessions')
 export class SavedSessionsController {
   constructor(private readonly database: DatabaseService) {}
+
+  @Get(':session_id/action-statistics')
+  async actionStatistics(@Param('session_id') sessionId: string, @Req() request: ApiRequest) {
+    if (!uuid.safeParse(sessionId).success) {
+      throw failure(422, 'VALIDATION_ERROR', 'Provide a valid session ID.');
+    }
+
+    const result = await this.database.pool.query<{
+      session_id: string;
+      action: 'DELETE' | 'TIMEOUT' | 'BAN' | null;
+      status: string | null;
+      execution_count: string | null;
+    }>(
+      `
+        WITH accessible_session AS (
+          SELECT s.id, s.channel_id
+          FROM stream_sessions s
+          JOIN youtube_broadcasts b
+            ON b.session_id = s.id
+            AND b.channel_id = s.channel_id
+          JOIN channel_memberships membership
+            ON membership.channel_id = s.channel_id
+            AND membership.account_id = $1
+            AND membership.role IN ('OWNER', 'MODERATOR')
+          WHERE s.id = $2
+        ),
+        execution_outcomes AS (
+          SELECT 'DELETE'::text AS action, latest.status
+          FROM youtube_delete_executions e
+          JOIN accessible_session s
+            ON s.id = e.session_id
+            AND s.channel_id = e.channel_id
+          JOIN LATERAL (
+            SELECT a.status
+            FROM youtube_delete_attempts a
+            WHERE a.execution_id = e.id
+            ORDER BY a.attempt_number DESC
+            LIMIT 1
+          ) latest ON true
+
+          UNION ALL
+
+          SELECT e.action, a.status
+          FROM youtube_ban_executions e
+          JOIN accessible_session s
+            ON s.id = e.session_id
+            AND s.channel_id = e.channel_id
+          JOIN youtube_ban_attempts a
+            ON a.execution_id = e.id
+        ),
+        grouped_outcomes AS (
+          SELECT action, status, count(*)::text AS execution_count
+          FROM execution_outcomes
+          GROUP BY action, status
+        )
+        SELECT
+          s.id AS session_id,
+          grouped.action,
+          grouped.status,
+          grouped.execution_count
+        FROM accessible_session s
+        LEFT JOIN grouped_outcomes grouped ON true
+      `,
+      [request.account!.id, sessionId],
+    );
+
+    if (!result.rows.length) {
+      throw failure(
+        404,
+        'SAVED_SESSION_NOT_FOUND',
+        'The saved session was not found or is not accessible.',
+      );
+    }
+
+    const emptyCounts = (): ActionExecutionCounts => ({
+      total: 0,
+      dispatched: 0,
+      succeeded: 0,
+      rejected: 0,
+      not_sent: 0,
+      unknown: 0,
+    });
+
+    const actions = {
+      DELETE: emptyCounts(),
+      TIMEOUT: emptyCounts(),
+      BAN: emptyCounts(),
+    };
+
+    const statusFields = {
+      DISPATCHED: 'dispatched',
+      SUCCEEDED: 'succeeded',
+      REJECTED: 'rejected',
+      NOT_SENT: 'not_sent',
+      UNKNOWN: 'unknown',
+    } as const;
+
+    for (const row of result.rows) {
+      // An accessible session with no attempts produces one empty join row.
+      if (row.action === null) continue;
+
+      if (row.status === null || !Object.prototype.hasOwnProperty.call(statusFields, row.status)) {
+        throw new Error('Unexpected moderation attempt status.');
+      }
+
+      const field = statusFields[row.status as keyof typeof statusFields];
+      const count = Number(row.execution_count);
+      const action = actions[row.action];
+
+      action[field] += count;
+      action.total += count;
+    }
+
+    return historyActionStatistics.parse({
+      session_id: sessionId,
+      delete: actions.DELETE,
+      timeout: actions.TIMEOUT,
+      ban: actions.BAN,
+    });
+  }
 
   @Get(':session_id/statistics')
   async statistics(@Param('session_id') sessionId: string, @Req() request: ApiRequest) {
