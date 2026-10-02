@@ -1,9 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-
 import { Button } from '@/components/ui/button';
-import { SavedSessionViewer } from '@/features/live/components/saved-session-viewer';
 import { useSavedSessions } from '@/features/live/hooks/use-saved-sessions';
 import { getErrorMessage } from '@/lib/api-client';
 
@@ -11,7 +8,6 @@ import { HistorySessionCard } from './history-session-card';
 
 export function HistorySessionList({ accountId }: { accountId: string }) {
   const sessions = useSavedSessions(accountId);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const items = [
     ...new Map(
@@ -20,8 +16,6 @@ export function HistorySessionList({ accountId }: { accountId: string }) {
       ),
     ).values(),
   ];
-
-  const selected = items.find((session) => session.session_id === selectedId);
 
   if (sessions.isPending) {
     return (
@@ -81,30 +75,8 @@ export function HistorySessionList({ accountId }: { accountId: string }) {
       ) : (
         <ul className="space-y-3">
           {items.map((session) => (
-            <li key={session.session_id} className="space-y-3">
-              <HistorySessionCard
-                session={session}
-                selected={selectedId === session.session_id}
-                onToggle={() =>
-                  setSelectedId((current) =>
-                    current === session.session_id ? null : session.session_id,
-                  )
-                }
-              />
-
-              {selected?.session_id === session.session_id && (
-                <section
-                  id="history-session-details"
-                  aria-label="Saved session details"
-                  className="rounded-lg border p-5"
-                >
-                  <SavedSessionViewer
-                    key={`${accountId}:${selected.session_id}`}
-                    accountId={accountId}
-                    session={selected}
-                  />
-                </section>
-              )}
+            <li key={session.session_id}>
+              <HistorySessionCard session={session} />
             </li>
           ))}
         </ul>

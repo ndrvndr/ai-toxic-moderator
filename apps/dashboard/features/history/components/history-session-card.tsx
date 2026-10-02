@@ -1,12 +1,12 @@
 'use client';
 
+import Link from 'next/link';
+
 import { Button } from '@/components/ui/button';
 import type { SavedSession } from '@moderator/contracts';
 
 type HistorySessionCardProps = {
   session: SavedSession;
-  selected: boolean;
-  onToggle: () => void;
 };
 
 const statusLabels: Record<NonNullable<SavedSession['latest_status']>, string> = {
@@ -17,7 +17,7 @@ const statusLabels: Record<NonNullable<SavedSession['latest_status']>, string> =
   FAILED: 'Failed',
 };
 
-export function HistorySessionCard({ session, selected, onToggle }: HistorySessionCardProps) {
+export function HistorySessionCard({ session }: HistorySessionCardProps) {
   const status =
     session.latest_status === null ? 'No monitoring run' : statusLabels[session.latest_status];
 
@@ -37,13 +37,8 @@ export function HistorySessionCard({ session, selected, onToggle }: HistorySessi
         </div>
       </div>
 
-      <Button
-        variant={selected ? 'secondary' : 'outline'}
-        aria-expanded={selected}
-        aria-controls={selected ? 'history-session-details' : undefined}
-        onClick={onToggle}
-      >
-        {selected ? 'Close session' : 'Open session'}
+      <Button asChild variant="outline">
+        <Link href={`/history/${session.session_id}`}>Open session</Link>
       </Button>
     </article>
   );
