@@ -141,8 +141,9 @@ function registerBroadcast() {
   return verified;
 }
 
-async function startRun() {
+async function startRun(title = 'Test livestream') {
   const broadcast = registerBroadcast();
+  broadcast.title = title;
   const response = await request('/v1/monitoring/start', {
     method: 'POST',
     headers: { 'Idempotency-Key': randomUUID() },
@@ -1716,4 +1717,134 @@ test('action statistics count only the latest deletion attempt', async () => {
     timeout: emptyActionCounts(),
     ban: emptyActionCounts(),
   });
+});
+
+test('saved session search matches titles case-insensitively and trims whitespace', async () => {
+  const marker = `search-${randomUUID()}`;
+  const matching = await startRun(`${marker} Gaming Night`);
+  await startRun(`${marker} Cooking Night`);
+
+  const query = new URLSearchParams({
+    q: `  ${marker.toUpperCase()} GAMING  `,
+    limit: '50',
+  });
+
+  const response = await request(`/v1/youtube/sessions?${query}`);
+
+  assert.equal(response.status, 200, await response.clone().text());
+
+  const page = savedSessionsPage.parse(await response.json());
+
+  assert.deepEqual(
+    page.items.map((item) => item.session_id),
+    [matching.session_id],
+  );
+  assert.equal(page.next_cursor, null);
+});
+
+test('saved session search treats wildcard characters as literal text', async () => {
+  const marker = `literal-${randomUUID()}`;
+  const matching = await startRun(`${marker} 100%_complete`);
+  await startRun(`${marker} 100XXcomplete`);
+
+  const query = new URLSearchParams({
+    q: `${marker} 100%_`,
+  });
+
+  const response = await request(`/v1/youtube/sessions?${query}`);
+  assert.equal(response.status, 200);
+
+  const page = savedSessionsPage.parse(await response.json());
+
+  assert.deepEqual(
+    page.items.map((item) => item.session_id),
+    [matching.session_id],
+  );
+});
+
+test('saved session search pagination preserves its search scope', async () => {
+  const marker = `pagination-${randomUUID()}`;
+  const firstRun = await startRun(`${marker} first`);
+  const secondRun = await startRun(`${marker} second`);
+
+  const firstQuery = new URLSearchParams({
+    q: marker,
+    limit: '1',
+  });
+
+  const firstResponse = await request(`/v1/youtube/sessions?${firstQuery}`);
+  assert.equal(firstResponse.status, 200);
+
+  const firstPage = savedSessionsPage.parse(await firstResponse.json());
+  assert.equal(firstPage.items.length, 1);
+  assert.ok(firstPage.next_cursor);
+
+  const secondQuery = new URLSearchParams({
+    q: marker,
+    limit: '1',
+    cursor: firstPage.next_cursor,
+  });
+
+  const secondResponse = await request(`/v1/youtube/sessions?${secondQuery}`);
+  assert.equal(secondResponse.status, 200);
+
+  const secondPage = savedSessionsPage.parse(await secondResponse.json());
+
+  assert.equal(secondPage.items.length, 1);
+  assert.equal(secondPage.next_cursor, null);
+
+  assert.deepEqual(
+    [...firstPage.items, ...secondPage.items].map((item) => item.session_id).sort(),
+    [firstRun.session_id, secondRun.session_id].sort(),
+  );
+
+  for (const q of ['', `${marker}-different`]) {
+    const wrongQuery = new URLSearchParams({
+      q,
+      cursor: firstPage.next_cursor,
+    });
+
+    const response = await request(`/v1/youtube/sessions?${wrongQuery}`);
+
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, 'INVALID_CURSOR');
+  }
+});
+
+test('saved session search respects membership and validates query length', async () => {
+  const marker = `access-${randomUUID()}`;
+  const run = await startRun(marker);
+  const query = new URLSearchParams({ q: marker });
+
+  assert.equal(
+    (
+      await request(`/v1/youtube/sessions?${query}`, {
+        headers: { Cookie: '' },
+      })
+    ).status,
+    401,
+  );
+
+  await admin.query(
+    `
+      UPDATE channel_memberships
+      SET role = 'OPERATOR'
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [run.channel_id, accountId],
+  );
+
+  const response = await request(`/v1/youtube/sessions?${query}`);
+  assert.equal(response.status, 200);
+
+  assert.deepEqual(savedSessionsPage.parse(await response.json()), {
+    items: [],
+    next_cursor: null,
+  });
+
+  const oversizedQuery = new URLSearchParams({
+    q: 'x'.repeat(101),
+  });
+
+  assert.equal((await request(`/v1/youtube/sessions?${oversizedQuery}`)).status, 422);
 });

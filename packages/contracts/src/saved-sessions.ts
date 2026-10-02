@@ -5,12 +5,14 @@ import { monitoringStatus, youtubeBroadcastId } from './monitoring';
 export const savedSessionsQuery = z.strictObject({
   limit: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().min(1).max(1024).optional(),
+  q: z.string().trim().max(100).default(''),
 });
 
 export const savedSessionsCursor = z.strictObject({
   account_id: z.uuid(),
   created_at: z.iso.datetime({ offset: true, precision: 6 }),
   session_id: z.uuid(),
+  q: z.string().trim().max(100).default(''),
 });
 
 export const savedSession = z.strictObject({
