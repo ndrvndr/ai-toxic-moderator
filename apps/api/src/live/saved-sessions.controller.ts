@@ -335,7 +335,7 @@ COALESCE(
     }
 
     const accountId = request.account!.id;
-    const { limit, cursor, q } = parsed.data;
+    const { limit, cursor, q, status } = parsed.data;
     let position: { created_at: string; session_id: string } | null = null;
 
     if (cursor) {
@@ -354,6 +354,10 @@ COALESCE(
 
         if (decoded.q !== q) {
           throw new Error('Cursor search mismatch.');
+        }
+
+        if (decoded.status !== status) {
+          throw new Error('Cursor status mismatch.');
         }
 
         position = decoded;
@@ -405,10 +409,21 @@ COALESCE(
   $5::text = ''
   OR strpos(lower(s.label), lower($5::text)) > 0
 )
+  AND (
+  $6::text IS NULL
+  OR latest.status = $6::text
+)
         ORDER BY s.created_at DESC, s.id DESC
         LIMIT $4
       `,
-      [accountId, position?.created_at ?? null, position?.session_id ?? null, limit + 1, q],
+      [
+        accountId,
+        position?.created_at ?? null,
+        position?.session_id ?? null,
+        limit + 1,
+        q,
+        status ?? null,
+      ],
     );
 
     const items = result.rows.slice(0, limit);
@@ -422,6 +437,7 @@ COALESCE(
               created_at: last.created_at,
               session_id: last.session_id,
               q,
+              status,
             }),
           ).toString('base64url')
         : null;

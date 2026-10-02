@@ -1848,3 +1848,87 @@ test('saved session search respects membership and validates query length', asyn
 
   assert.equal((await request(`/v1/youtube/sessions?${oversizedQuery}`)).status, 422);
 });
+
+test('saved session status filtering combines with title search', async () => {
+  const marker = `status-${randomUUID()}`;
+  const starting = await startRun(`${marker} starting`);
+  const stopped = await startRun(`${marker} stopped`);
+
+  const stopResponse = await request(`${runPath(stopped)}/stop`, {
+    method: 'POST',
+    body: {},
+  });
+
+  assert.equal(stopResponse.status, 200);
+
+  for (const [status, expectedId] of [
+    ['STARTING', starting.session_id],
+    ['STOPPED', stopped.session_id],
+  ]) {
+    const query = new URLSearchParams({
+      q: marker,
+      status,
+    });
+
+    const response = await request(`/v1/youtube/sessions?${query}`);
+    assert.equal(response.status, 200);
+
+    const page = savedSessionsPage.parse(await response.json());
+
+    assert.deepEqual(
+      page.items.map((item) => item.session_id),
+      [expectedId],
+    );
+    assert.equal(page.items[0].latest_status, status);
+  }
+
+  const invalid = await request('/v1/youtube/sessions?status=INVALID');
+  assert.equal(invalid.status, 422);
+});
+
+test('saved session cursors cannot cross status filters', async () => {
+  const marker = `status-cursor-${randomUUID()}`;
+  await startRun(`${marker} first`);
+  await startRun(`${marker} second`);
+
+  const query = new URLSearchParams({
+    q: marker,
+    status: 'STARTING',
+    limit: '1',
+  });
+
+  const response = await request(`/v1/youtube/sessions?${query}`);
+  assert.equal(response.status, 200);
+
+  const firstPage = savedSessionsPage.parse(await response.json());
+  assert.ok(firstPage.next_cursor);
+
+  const nextQuery = new URLSearchParams({
+    q: marker,
+    status: 'STARTING',
+    limit: '1',
+    cursor: firstPage.next_cursor,
+  });
+
+  const nextResponse = await request(`/v1/youtube/sessions?${nextQuery}`);
+  assert.equal(nextResponse.status, 200);
+
+  const secondPage = savedSessionsPage.parse(await nextResponse.json());
+  assert.equal(secondPage.items.length, 1);
+  assert.equal(secondPage.next_cursor, null);
+  assert.notEqual(secondPage.items[0].session_id, firstPage.items[0].session_id);
+
+  for (const status of ['STOPPED', undefined]) {
+    const wrongQuery = new URLSearchParams({
+      q: marker,
+      cursor: firstPage.next_cursor,
+    });
+
+    if (status) wrongQuery.set('status', status);
+
+    const wrongResponse = await request(`/v1/youtube/sessions?${wrongQuery}`);
+
+    assert.equal(wrongResponse.status, 400);
+    assert.equal((await wrongResponse.json()).error.code, 'INVALID_CURSOR');
+  }
+});
