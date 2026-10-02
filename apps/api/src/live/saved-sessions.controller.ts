@@ -1,6 +1,12 @@
-import { Controller, Get, Query, Req } from '@nestjs/common';
+import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 
-import { savedSessionsCursor, savedSessionsPage, savedSessionsQuery } from '@moderator/contracts';
+import {
+  savedSession,
+  savedSessionsCursor,
+  savedSessionsPage,
+  savedSessionsQuery,
+  uuid,
+} from '@moderator/contracts';
 
 import { DatabaseService } from '../database.module';
 import { failure, type ApiRequest } from '../http';
@@ -8,6 +14,58 @@ import { failure, type ApiRequest } from '../http';
 @Controller('v1/youtube/sessions')
 export class SavedSessionsController {
   constructor(private readonly database: DatabaseService) {}
+
+  @Get(':session_id')
+  async detail(@Param('session_id') sessionId: string, @Req() request: ApiRequest) {
+    if (!uuid.safeParse(sessionId).success) {
+      throw failure(422, 'VALIDATION_ERROR', 'Provide a valid session ID.');
+    }
+
+    const result = await this.database.pool.query(
+      `
+        SELECT
+          s.id AS session_id,
+          s.channel_id,
+          b.youtube_broadcast_id,
+          s.label AS title,
+          to_char(
+            s.created_at AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          ) AS created_at,
+          latest.status AS latest_status
+        FROM stream_sessions s
+        JOIN youtube_broadcasts b
+          ON b.session_id = s.id
+          AND b.channel_id = s.channel_id
+        JOIN channel_memberships membership
+          ON membership.channel_id = s.channel_id
+          AND membership.account_id = $1
+          AND membership.role IN ('OWNER', 'MODERATOR')
+        LEFT JOIN LATERAL (
+          SELECT status
+          FROM monitoring_runs
+          WHERE channel_id = s.channel_id
+            AND session_id = s.id
+          ORDER BY requested_at DESC, id DESC
+          LIMIT 1
+        ) latest ON true
+        WHERE s.id = $2
+      `,
+      [request.account!.id, sessionId],
+    );
+
+    const session = result.rows[0];
+
+    if (!session) {
+      throw failure(
+        404,
+        'SAVED_SESSION_NOT_FOUND',
+        'The saved session was not found or is not accessible.',
+      );
+    }
+
+    return savedSession.parse(session);
+  }
 
   @Get()
   async list(@Query() raw: unknown, @Req() request: ApiRequest) {

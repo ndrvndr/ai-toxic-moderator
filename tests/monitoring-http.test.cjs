@@ -11,6 +11,7 @@ const {
   stopMonitoringResponse,
   monitoringStatusResponse,
   chatPage,
+  savedSession,
   savedSessionsPage,
 } = require('@moderator/contracts');
 
@@ -1196,4 +1197,96 @@ test('chat exposes candidate evidence without confirming the request or affectin
     ),
     { code: '42501' },
   );
+});
+
+test('saved session detail requires authentication and a valid identifier', async () => {
+  const run = await startRun();
+
+  const unauthenticated = await request(`/v1/youtube/sessions/${run.session_id}`, {
+    headers: { Cookie: '' },
+  });
+
+  assert.equal(unauthenticated.status, 401);
+
+  const invalid = await request('/v1/youtube/sessions/not-a-uuid');
+  assert.equal(invalid.status, 422);
+
+  const missing = await request(`/v1/youtube/sessions/${randomUUID()}`);
+  assert.equal(missing.status, 404);
+});
+
+test('owners and moderators can read saved session details after monitoring stops', async () => {
+  const run = await startRun();
+
+  const stopped = await request(`${runPath(run)}/stop`, {
+    method: 'POST',
+    body: {},
+  });
+
+  assert.equal(stopped.status, 200);
+
+  for (const role of ['OWNER', 'MODERATOR']) {
+    await admin.query(
+      `
+        UPDATE channel_memberships
+        SET role = $3
+        WHERE channel_id = $1 AND account_id = $2
+      `,
+      [run.channel_id, accountId, role],
+    );
+
+    const response = await request(`/v1/youtube/sessions/${run.session_id}`);
+
+    assert.equal(response.status, 200, await response.clone().text());
+
+    const body = await response.json();
+    const session = savedSession.parse(body);
+
+    assert.equal(session.session_id, run.session_id);
+    assert.equal(session.channel_id, run.channel_id);
+    assert.equal(session.youtube_broadcast_id, run.youtube_broadcast_id);
+    assert.equal(session.title, 'Test livestream');
+    assert.equal(session.latest_status, 'STOPPED');
+
+    assert.deepEqual(Object.keys(body).sort(), [
+      'channel_id',
+      'created_at',
+      'latest_status',
+      'session_id',
+      'title',
+      'youtube_broadcast_id',
+    ]);
+  }
+});
+
+test('saved session detail enforces membership changes on every read', async () => {
+  const run = await startRun();
+  const path = `/v1/youtube/sessions/${run.session_id}`;
+
+  assert.equal((await request(path)).status, 200);
+
+  await admin.query(
+    `
+      UPDATE channel_memberships
+      SET role = 'OPERATOR'
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [run.channel_id, accountId],
+  );
+
+  const operator = await request(path);
+  assert.equal(operator.status, 404);
+  assert.equal((await operator.json()).error.code, 'SAVED_SESSION_NOT_FOUND');
+
+  await admin.query(
+    `
+      DELETE FROM channel_memberships
+      WHERE channel_id = $1 AND account_id = $2
+    `,
+    [run.channel_id, accountId],
+  );
+
+  const removed = await request(path);
+  assert.equal(removed.status, 404);
+  assert.equal((await removed.json()).error.code, 'SAVED_SESSION_NOT_FOUND');
 });
