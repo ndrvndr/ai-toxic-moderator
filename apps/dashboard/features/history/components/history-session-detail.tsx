@@ -5,6 +5,7 @@ import { SavedSessionViewer } from '@/features/live/components/saved-session-vie
 import { ApiError, getErrorMessage } from '@/lib/api-client';
 
 import { useHistorySession } from '../hooks/use-history-session';
+import { HistoryStatisticsPanel } from './history-statistics-panel';
 
 type HistorySessionDetailProps = {
   accountId: string;
@@ -69,6 +70,12 @@ export function HistorySessionDetail({ accountId, sessionId }: HistorySessionDet
           Review stored chat and moderation results. Opening this page does not start monitoring.
         </p>
       </header>
+
+      <HistoryStatisticsPanel
+        key={`${accountId}:${saved.session_id}`}
+        accountId={accountId}
+        sessionId={saved.session_id}
+      />
 
       <section aria-label="Saved session chat" className="rounded-lg border p-5">
         <SavedSessionViewer
