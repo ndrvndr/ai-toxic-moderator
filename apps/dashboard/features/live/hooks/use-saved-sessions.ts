@@ -5,18 +5,23 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { SESSION_QUERY_KEY } from '@/features/auth/hooks/use-session';
 import { ApiError } from '@/lib/api-client';
 
+import { SavedSession } from '@moderator/contracts';
 import { getSavedSessions } from '../api/saved-sessions-api';
 
-export function useSavedSessions(accountId: string, search = '') {
+export function useSavedSessions(
+  accountId: string,
+  search = '',
+  status?: NonNullable<SavedSession['latest_status']>,
+) {
   const queryClient = useQueryClient();
   const q = search.trim();
 
   return useInfiniteQuery({
-    queryKey: ['saved-sessions', accountId, q],
+    queryKey: ['saved-sessions', accountId, q, status ?? ''],
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam, signal }) => {
       try {
-        return await getSavedSessions(pageParam, signal, q);
+        return await getSavedSessions(pageParam, signal, q, status);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           void queryClient.invalidateQueries({

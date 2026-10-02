@@ -3,16 +3,19 @@
 import { Button } from '@/components/ui/button';
 import { useSavedSessions } from '@/features/live/hooks/use-saved-sessions';
 import { getErrorMessage } from '@/lib/api-client';
+import type { SavedSession } from '@moderator/contracts';
 
 import { HistorySessionCard } from './history-session-card';
 
 type HistorySessionListProps = {
   accountId: string;
   search?: string;
+  status?: NonNullable<SavedSession['latest_status']>;
 };
 
-export function HistorySessionList({ accountId, search = '' }: HistorySessionListProps) {
-  const sessions = useSavedSessions(accountId, search);
+export function HistorySessionList({ accountId, search = '', status }: HistorySessionListProps) {
+  const sessions = useSavedSessions(accountId, search, status);
+  const hasFilters = search !== '' || status !== undefined;
 
   const items = [
     ...new Map(
@@ -72,9 +75,14 @@ export function HistorySessionList({ accountId, search = '' }: HistorySessionLis
 
       {items.length === 0 ? (
         <div className="space-y-2 rounded-lg border border-dashed p-6">
-          <h2 className="font-medium">No saved sessions yet</h2>
+          <h2 className="font-medium">
+            {hasFilters ? 'No matching sessions' : 'No saved sessions yet'}
+          </h2>
+
           <p className="text-sm text-muted-foreground">
-            Sessions will appear here after you start monitoring a livestream.
+            {hasFilters
+              ? 'Try another title or monitoring status, or clear the filters.'
+              : 'Sessions will appear here after you start monitoring a livestream.'}
           </p>
         </div>
       ) : (
