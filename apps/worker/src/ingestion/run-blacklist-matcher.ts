@@ -43,7 +43,9 @@ export class RunBlacklistMatcher {
       [runId, channelId, sessionId],
     );
     if (result.rows.length !== 1) {
-      throw new Error('The monitoring run has no unique blacklist snapshot in the requested scope.');
+      throw new Error(
+        'The monitoring run has no unique blacklist snapshot in the requested scope.',
+      );
     }
     const { session_id: selectedSessionId, ...row } = result.rows[0]!;
     const selected = customBlacklistSnapshot.parse(row);
@@ -66,7 +68,11 @@ export class RunBlacklistMatcher {
     return { matcher: new CustomBlacklistMatcher(selected.configuration), provenance };
   }
 
-  async match(client: PoolClient, scope: RunBlacklistScope, rawText: string): Promise<RunBlacklistDecision> {
+  async match(
+    client: PoolClient,
+    scope: RunBlacklistScope,
+    rawText: string,
+  ): Promise<RunBlacklistDecision> {
     const { matcher, provenance } = await this.resolve(client, scope);
     return { ...matcher.match(rawText), provenance };
   }

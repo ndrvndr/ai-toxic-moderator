@@ -4,7 +4,7 @@
 
 Strict public contracts, a revision store, automatic run snapshots, authorized
 HTTP endpoints, the Settings editor, a pure literal matcher, and a worker snapshot
-reader are implemented. Blacklist entries are not yet
+reader, and a combined action planner are implemented. Blacklist entries are not yet
 evaluated by the worker. Saving an enabled blacklist does not yet
 enable moderation actions. Existing moderation settings retain their current format.
 
@@ -146,8 +146,8 @@ fits a single request. Oversized requests return HTTP 413 without writing a revi
 ## Remaining implementation
 
 1. Invoke the run snapshot matcher before AI processing in the classification pipeline.
-2. Combined message/author action plans with separate execution outcomes and
-   idempotency. Ban takes priority over timeout; deletion remains independent.
+2. Persist combined message/author action decisions atomically with captured
+   provenance and idempotency, then connect the existing independent executors.
 3. Decision provenance in chat and History, plus integration and live verification.
 
 ## Settings editor
@@ -205,8 +205,9 @@ all matching IDs are returned in ascending order. Reordering entries cannot chan
 the result. Every match still requests message deletion independently of the
 selected author action. Matcher version: `blacklist-literal-1`.
 
-These are policy decisions only. The existing single-action plan format still
-needs an integration change before deletion and an author action can execute together.
+These are policy decisions only. The combined planner creates compatible individual
+plans, but persistence and pipeline integration are still required before deletion
+and an author action can execute together.
 
 ## Worker snapshot reader
 
@@ -225,8 +226,37 @@ policy is cached or queried by this reader.
 
 This helper is not yet invoked by `ClassificationStore` or the AI coordinator.
 It does not persist decisions, skip inference, or send moderation requests.
-The next integration step must preserve captured decision provenance and support
-independent deletion and author action plans in the same transaction.
+The next integration step must persist captured decision provenance and independent
+deletion and author action plans in the same transaction.
+
+## Combined action planner
+
+`BlacklistActionPlanner` takes a validated captured run snapshot and computes the
+match itself. The caller supplies classification/run/channel/session scope, the
+original message ID, and an author channel ID or null. Run and channel must match
+the snapshot; the worker reader and future persistence layer must also verify
+classification/session scope and targets against database observations.
+
+The `blacklistActionBundle` contract groups the selected entry/action, all matching
+entry IDs, captured blacklist revision, matcher version, and zero to two individual
+plans. A matched message always gets a `DELETE` plan. Timeout and ban selections
+also get an author plan when the author has a valid YouTube channel ID. An invalid
+or unavailable author produces `TARGET_UNAVAILABLE` while preserving deletion.
+This status describes planning, not a provider response or a current restriction.
+
+Each individual plan keeps the existing `moderationActionPlan` format. A deterministic
+base policy version includes the matcher version and original run ID. Message plans
+use the `:message` suffix and author plans use `:author`, so they have separate keys
+under the existing `(classification_id, policy_version)` uniqueness constraint.
+There is no change to applied migrations or existing built-in action planning.
+Opaque message IDs are preserved, and no request outcomes are inferred or included.
+
+Bundle validation rejects conflicting scopes, duplicate/swapped plan slots,
+unexpected execution fields, missing deletion, incompatible author actions, and
+inconsistent durations or match metadata. It does not prove that a supplied target
+belongs to the classification; future persistence must revalidate both targets and
+recompute the decision from its immutable snapshot before committing the bundle.
+The pure planner is not yet wired into the runtime and does not send requests.
 
 ## Manual validation
 
@@ -244,6 +274,7 @@ npm run db:worker
 npm run test:custom-blacklist-contracts
 npm run test:custom-blacklist-matcher
 npm run test:run-blacklist-matcher
+npm run test:blacklist-action-planner
 npm run test:custom-blacklist-store
 npm run build --workspace @moderator/api
 npm run test:custom-blacklist-http

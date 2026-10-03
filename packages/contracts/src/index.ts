@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { category, outcome } from './moderation-enums';
 
 export * from './ai-shadow';
+export * from './blacklist-action-plan';
 export * from './chat';
 export * from './custom-blacklist';
 export * from './history-action-statistics';
