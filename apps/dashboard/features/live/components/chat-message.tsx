@@ -1,5 +1,6 @@
 import type { ChatObservation } from '@moderator/contracts';
 
+import { ChatAiShadow } from './chat-ai-shadow';
 import { ChatAuthorAction } from './chat-author-action';
 import { ChatDeletion } from './chat-deletion';
 import { ChatEvaluation } from './chat-evaluation';
@@ -46,6 +47,7 @@ export function ChatMessage({ message }: { message: ChatObservation }) {
       </div>
 
       <ChatEvaluation evaluation={message.evaluation} />
+      <ChatAiShadow result={message.ai_shadow} />
       <ChatDeletion deletion={message.deletion} />
       <ChatAuthorAction action={message.author_action} />
     </li>

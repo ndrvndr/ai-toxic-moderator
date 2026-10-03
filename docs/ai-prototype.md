@@ -269,7 +269,7 @@ npm run db:worker
 
 Start the configured process with `npm run dev:worker`. AI results are included in
 chat API responses and publish WebSocket invalidation events as described below.
-They are not yet displayed in the dashboard or used for moderation decisions.
+They are displayed in the shared dashboard chat renderer and are not used for moderation decisions.
 Lifecycle tests use fake inference; real child startup
 and model output still require the later integration verification.
 
@@ -304,8 +304,8 @@ The existing WebSocket feed delivers this committed event using its normal repla
 and authorization checks. The frame carries the sequence, run ID, and event type;
 clients refetch the authorized chat snapshot for AI output. Raw text and model
 output are not sent in the event frame. Existing dashboard cache invalidation for
-`chat.updated` therefore needs no new protocol event type. Visible AI presentation
-is the next step.
+`chat.updated` therefore needs no new protocol event type. The shared chat component
+renders the model output described below.
 
 Run checks manually after formatting and building the shared contracts:
 
@@ -328,6 +328,45 @@ HTTP tests use real access guards and PostgreSQL with an API runtime role. Write
 tests cover competing transactions using worker permissions, replay, uncommitted
 visibility, and rollback of both result and event. These checks do not verify
 native inference or a browser receiving new model output.
+
+### Live and History presentation
+
+`ChatAiShadow` renders the optional `ai_shadow` response field inside the shared
+`ChatMessage` component. Both the Live panel and the saved-session viewer used by
+History use this renderer. No additional request, polling loop, or client-side
+inference is introduced. Existing WebSocket invalidation refreshes the chat snapshot;
+the component displays the updated result when that snapshot changes.
+
+Absent or null output renders no AI panel. This does not claim that inference is
+pending, disabled, or complete. Successful output shows a model rating (Safe,
+Abusive, Hate, or Severe), its numeric rating, and expected severity on a 0–1 scale.
+The copy states that this is model output and does not change moderation decisions.
+A safe model label is not the application's Allowed decision, and the severity
+score is not a policy-violation probability.
+
+Truncated input includes a notice that the model did not evaluate the full message.
+Error output includes a description of its safe error code, without a fabricated
+rating, severity score, or latency. No retry button is offered because persisted
+error results are terminal for their observation/model identity.
+
+Expandable Model details shows the full model ID, commit revision, variant, adapter
+version, and either inference duration or error code. It states that the latest
+stored revision may differ from the currently configured model. Model output remains
+separate from rule evaluation, message deletion, and author action results.
+
+```powershell
+npm run format
+npm run build:core
+npm run check
+npm run test:live-hooks
+npm run build --workspace @moderator/dashboard
+```
+
+`chat-ai-shadow.test.mts` covers missing output, all supported ratings and errors,
+truncation, model provenance, and updates that preserve existing moderation results.
+It also renders both the Live panel and the saved-session viewer with mocked query
+hooks. These are presentation checks; actual inference, WebSocket delivery, and
+browser appearance still need the next end-to-end verification step.
 
 ### Expanded local run: developer reported, 2026-10-03
 
