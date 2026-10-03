@@ -182,6 +182,50 @@ test('invalid action configuration never reaches persisted history', async () =>
   assert.equal((await save(f, 0)).revision, 1);
 });
 
+test('authorization is rechecked after a waiting save acquires the channel lock', async () => {
+  const f = await fixture();
+  await admin.query(
+    "INSERT INTO channel_memberships(channel_id, account_id, role) VALUES($1, $2, 'OWNER')",
+    [f.channelId, f.accountId],
+  );
+  const blocker = await pool.connect();
+  let waiting;
+  let locked = false;
+  try {
+    await blocker.query('BEGIN');
+    locked = true;
+    await blocker.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+      `moderation-settings:${f.channelId}`,
+    ]);
+    waiting = store
+      .save(f.channelId, f.accountId, { expected_revision: 0, configuration }, async (client) => {
+        const result = await client.query(
+          'SELECT role FROM channel_memberships WHERE channel_id = $1 AND account_id = $2 FOR SHARE',
+          [f.channelId, f.accountId],
+        );
+        if (result.rows[0]?.role !== 'OWNER') throw new Error('Access revoked');
+      })
+      .then(
+        () => ({ saved: true }),
+        (error) => ({ saved: false, error }),
+      );
+    await admin.query(
+      "UPDATE channel_memberships SET role = 'MODERATOR' WHERE channel_id = $1 AND account_id = $2",
+      [f.channelId, f.accountId],
+    );
+    await blocker.query('COMMIT');
+    locked = false;
+    const outcome = await waiting;
+    assert.equal(outcome.saved, false);
+    assert.equal(outcome.error.message, 'Access revoked');
+    assert.equal(await store.getLatest(f.channelId), null);
+  } finally {
+    if (locked) await blocker.query('ROLLBACK');
+    blocker.release();
+    if (waiting) await waiting;
+  }
+});
+
 test('database constraints enforce consecutive revisions and configuration structure', async () => {
   const f = await fixture();
   for (const revision of [0, 2]) {

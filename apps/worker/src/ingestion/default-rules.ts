@@ -1,31 +1,32 @@
+import { BUILTIN_MODERATION_RULE_CATALOG } from '@moderator/contracts';
 import type { DetectionRule } from '@moderator/moderation-core';
 
-export const DEFAULT_RULES: readonly DetectionRule[] = [
-  {
-    id: 'id.harassment.direct-insult',
-    version: '1',
-    category: 'HARASSMENT',
-    severity: 2,
-    strength: 'STRONG',
+const implementations: Record<string, Pick<DetectionRule, 'intent' | 'pattern'>> = {
+  'id.harassment.direct-insult': {
     intent: 'DIRECT_INSULT',
     pattern: /\b(?:bodoh|tolol|goblok|idiot)\b/giu,
   },
-  {
-    id: 'id.gambling.promotion',
-    version: '1',
-    category: 'GAMBLING',
-    severity: 1,
-    strength: 'AMBIGUOUS',
+  'id.gambling.promotion': {
     intent: 'GAMBLING_PROMOTION',
     pattern: /\b(?:judi|slot|gacor)\b/giu,
   },
-  {
-    id: 'generic.suspicious-link',
-    version: '1',
-    category: 'SUSPICIOUS_LINK',
-    severity: 1,
-    strength: 'AMBIGUOUS',
+  'generic.suspicious-link': {
     intent: 'SUSPICIOUS_LINK',
     pattern: /(?:https?:\/\/|www\.)\S+/giu,
   },
-];
+};
+
+export const DEFAULT_RULES: readonly DetectionRule[] = BUILTIN_MODERATION_RULE_CATALOG.map(
+  (rule) => {
+    const implementation = implementations[rule.rule_id];
+    if (!implementation) throw new Error('Built-in rule implementation is missing.');
+    return {
+      id: rule.rule_id,
+      version: rule.rule_version,
+      category: rule.category,
+      severity: rule.severity,
+      strength: rule.strength,
+      ...implementation,
+    };
+  },
+);

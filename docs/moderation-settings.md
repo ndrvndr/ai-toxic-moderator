@@ -3,8 +3,8 @@
 ## Current implementation
 
 Shared Zod contracts, an immutable settings table, a transactional API-side
-store, and validation/integration tests are available. Authenticated settings
-endpoints, the Settings page, and worker integration are not implemented yet.
+store, authenticated settings endpoints, and validation/integration tests are
+available. The Settings page and worker integration are not implemented yet.
 These changes do not alter existing classification or controlled development
 action behavior.
 
@@ -42,9 +42,35 @@ enable enforcement for that rule.
   application configuration bound, not a statement of YouTube's provider limits.
 - Configuration supports at most 100 rules.
 
-Schema validation checks the payload shape. It does not establish that a rule
-exists or that its detection quality is suitable for enforcement. The settings
-API must validate references against the supported rule catalog when implemented.
+Schema validation checks the payload shape. The API additionally checks exact
+rule/version references against the shared built-in catalog. Ambiguous rules
+have no supported automatic actions and cannot be configured for enforcement,
+including in disabled configurations. Controlled development marker rules are
+not part of this catalog.
+
+The catalog provides selectable capabilities; it does not establish classifier
+accuracy or suitability of an action for production. The current worker uses
+the same rule metadata with its existing detection patterns.
+
+## Authenticated API
+
+| Method | Endpoint                                             | Purpose                                   |
+| ------ | ---------------------------------------------------- | ----------------------------------------- |
+| GET    | `/v1/channels/:channel_id/moderation-settings`       | Read latest settings, or `settings: null` |
+| GET    | `/v1/channels/:channel_id/moderation-settings/rules` | Read supported rule metadata and actions  |
+| POST   | `/v1/channels/:channel_id/moderation-settings`       | Save a new settings revision              |
+
+All endpoints require a current application session and channel access. OWNER
+and MODERATOR can read settings and the catalog. Only OWNER can save changes.
+Operators and accounts without a permitted membership are denied access.
+
+POST requires JSON and an Origin matching `DASHBOARD_ORIGIN`. The write body is
+shown below. Successful saves return HTTP 200 with `{ "settings": ... }`.
+Stale revisions return HTTP 409 with code `SETTINGS_REVISION_CONFLICT`.
+Malformed configuration and unsupported rule/action references return HTTP 422.
+
+Saving settings currently persists configuration only; it does not start
+monitoring or apply that configuration to the worker.
 
 ## Versioned updates
 
@@ -80,17 +106,18 @@ configuration shape. Full action-specific validation runs through the shared Zod
 schema in the store. Database triggers reject row updates and deletion; the API
 role receives SELECT and INSERT only on this table.
 
-The store is not an authorization boundary. The upcoming service must authorize
-channel access and obtain the actor from the authenticated session before calling
-it. Monitoring integration must still preserve the selected settings revision for
+The store is not an authorization boundary. The service authorizes access and
+gets the actor from the authenticated request, not the write body. Before saving,
+it rechecks OWNER membership inside the store transaction, after acquiring the
+channel lock. A shared membership row lock prevents that membership from changing
+until the save completes. Monitoring integration must still preserve the selected settings revision for
 audit and reproducible action planning.
 
 ## Remaining implementation sequence
 
-1. Add authorized read/write APIs and supported-rule validation.
-2. Build the channel Settings page with TanStack Query.
-3. Connect persisted configuration snapshots to classification and action planning.
-4. Verify enabled/disabled behavior, concurrent edits, channel access, and historical
+1. Build the channel Settings page with TanStack Query.
+2. Connect persisted configuration snapshots to classification and action planning.
+3. Verify enabled/disabled behavior, concurrent edits, channel access, and historical
    result consistency.
 
 Existing execution guards, repeated-timeout scheduling, and UNKNOWN handling must
@@ -104,10 +131,14 @@ Run from the repository root:
 npm run format
 npm run typecheck
 npm run build:core
+npm run build --workspace @moderator/api
 npm run db:migrate
 npm run db:runtime
 npm run test:moderation-settings-contracts
 npm run test:moderation-settings-store
+npm run test:moderation-settings-http
+npm run test:moderation-core
+npm run test:classification-store
 npm test
 npm run check
 ```
@@ -118,7 +149,12 @@ setup. They migrate an isolated schema and exercise the store with API runtime
 permissions. They cover concurrent initial/subsequent saves, stale revisions,
 channel scoping, failed-insert rollback, and immutable history.
 
+HTTP tests use the real local API, database, and runtime role. They cover owner
+writes, moderator reads, denied cross-channel/operator access, current sessions,
+trusted Origin, unsupported rules, metadata injection, and HTTP revision conflicts.
+Store tests additionally cover authorization rechecks after waiting on the channel
+lock. No Google or YouTube transport is called by the Settings tests.
+
 Contract tests validate configuration boundaries, action-specific fields, duplicate
-rule references, strict write metadata, and public exports. Neither suite sends
-requests to YouTube. Test code is available; execution results must be confirmed
+rule references, strict write metadata, and public exports. Test code is available; execution results must be confirmed
 by running these commands locally.

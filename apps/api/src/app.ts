@@ -15,6 +15,7 @@ import { HealthModule } from './health.module';
 import { ApiExceptionFilter, type ApiRequest, type ApiResponse } from './http';
 import { LiveModule } from './live/live.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
+import { SettingsModule } from './settings/settings.module';
 
 export async function createApi(config: AppConfig, pool?: DatabasePool) {
   @Module({
@@ -26,6 +27,7 @@ export async function createApi(config: AppConfig, pool?: DatabasePool) {
       MonitoringModule,
       ChatModule,
       LiveModule,
+      SettingsModule,
     ],
   })
   class ApiModule {}

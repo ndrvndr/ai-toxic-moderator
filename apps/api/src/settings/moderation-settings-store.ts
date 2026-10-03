@@ -30,6 +30,7 @@ export class ModerationSettingsStore {
     channelId: string,
     accountId: string,
     input: ModerationSettingsUpdate,
+    authorize?: (client: PoolClient) => Promise<void>,
   ): Promise<ModerationSettingsRecord> {
     const channel = uuid.parse(channelId).toLowerCase();
     const actor = uuid.parse(accountId).toLowerCase();
@@ -40,6 +41,9 @@ export class ModerationSettingsStore {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
         `moderation-settings:${channel}`,
       ]);
+
+      // The service can lock and recheck membership within the same transaction.
+      if (authorize) await authorize(client);
 
       const current = await this.readLatest(client, channel);
       const revision = current?.revision ?? 0;
