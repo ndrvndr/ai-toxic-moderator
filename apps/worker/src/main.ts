@@ -15,6 +15,7 @@ import {
 } from '@moderator/provider-adapters';
 
 import { ActorResolver } from './ingestion/actor-resolver';
+import { createAiShadowCycle, type AiShadowCycle } from './ingestion/ai-shadow-cycle';
 import { BanCandidateStore } from './ingestion/ban-candidate-store';
 import { BanCoordinator } from './ingestion/ban-coordinator';
 import { BanEligibilityStore } from './ingestion/ban-eligibility-store';
@@ -59,6 +60,7 @@ async function bootstrap() {
 
   const pool = createPool(config.DATABASE_URL);
   let runtime: WorkerRuntime | undefined;
+  let shadow: AiShadowCycle | undefined;
 
   try {
     const role = await pool.query<{
@@ -199,11 +201,40 @@ async function bootstrap() {
       bans = new BanCoordinator(new BanCandidateStore(pool), banExecutor, enabled);
     }
 
-    runtime = new WorkerRuntime(coordinator, pool, deletions, recovery, {
-      dispatch: bans,
-      recovery: banRecovery,
-      evidence: new BanEvidenceCoordinator(new BanEvidenceReader(pool), new BanEvidenceStore(pool)),
-    });
+    if (config.AI_SHADOW_ENABLED) {
+      try {
+        await pool.query(`SELECT id, observation_id, model_revision, status
+          FROM youtube_ai_shadow_results LIMIT 0`);
+        const selectedRun = await pool.query('SELECT id FROM monitoring_runs WHERE id=$1', [
+          config.AI_SHADOW_RUN_ID,
+        ]);
+        if (!selectedRun.rows[0]) throw new Error('AI shadow run does not exist.');
+        shadow = createAiShadowCycle(config, pool);
+        console.log(
+          'AI shadow is enabled for the configured run. Moderation decisions remain unchanged.',
+        );
+      } catch {
+        console.error(
+          'AI shadow initialization failed. Check its run, migrations, and worker permissions. Ingestion continues.',
+        );
+      }
+    }
+
+    runtime = new WorkerRuntime(
+      coordinator,
+      pool,
+      deletions,
+      recovery,
+      {
+        dispatch: bans,
+        recovery: banRecovery,
+        evidence: new BanEvidenceCoordinator(
+          new BanEvidenceReader(pool),
+          new BanEvidenceStore(pool),
+        ),
+      },
+      shadow,
+    );
 
     @Module({
       providers: [{ provide: WorkerRuntime, useValue: runtime }],
@@ -221,7 +252,13 @@ async function bootstrap() {
     console.log('YouTube ingestion worker started.');
   } catch (error) {
     if (runtime) await runtime.onApplicationShutdown();
-    else await pool.end();
+    else {
+      try {
+        await shadow?.dispose();
+      } finally {
+        await pool.end();
+      }
+    }
 
     throw error;
   }

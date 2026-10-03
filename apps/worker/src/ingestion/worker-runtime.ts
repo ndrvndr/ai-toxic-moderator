@@ -15,6 +15,8 @@ type BanCycles = {
   evidence?: WorkerCycle;
 };
 
+type ShadowCycle = WorkerCycle & { dispose(): Promise<void> };
+
 export class WorkerRuntime {
   private readonly abort = new AbortController();
   private running: Promise<void> | undefined;
@@ -26,6 +28,7 @@ export class WorkerRuntime {
     private readonly deletions?: WorkerCycle,
     private readonly recovery?: WorkerCycle,
     private readonly bans?: BanCycles,
+    private readonly shadow?: ShadowCycle,
   ) {}
 
   start(): void {
@@ -57,6 +60,10 @@ export class WorkerRuntime {
       loops.push(this.loop(this.bans.evidence, 'Moderation evidence'));
     }
 
+    if (this.shadow) {
+      loops.push(this.loop(this.shadow, 'AI shadow'));
+    }
+
     // Every loop must finish before the shared pool closes.
     const results = await Promise.allSettled(loops);
 
@@ -74,7 +81,15 @@ export class WorkerRuntime {
     this.abort.abort();
 
     try {
-      await this.running;
+      // Dispose first so native inference cannot delay shutdown until its full deadline.
+      // Drain both inference cleanup and database work before closing the shared pool.
+      const results = await Promise.allSettled([
+        this.running,
+        Promise.resolve().then(() => this.shadow?.dispose()),
+      ]);
+      if (results.some((result) => result.status === 'rejected')) {
+        console.error('Worker shutdown encountered a cleanup failure.');
+      }
     } finally {
       await this.pool.end();
     }

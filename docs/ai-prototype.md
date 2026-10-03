@@ -119,8 +119,8 @@ Only one inference is accepted at a time; `AI_ADAPTER_BUSY` is backpressure for
 the future coordinator to defer, not a terminal error to persist for a message.
 Disposal waits for active inference and releases the native session once.
 
-This adapter is not yet wired into worker startup or monitoring. No timeout is
-implemented inside the adapter itself: the isolated runner below enforces deadlines and recovers
+The worker uses this adapter through the opt-in isolated runner described below. No timeout is
+implemented inside the adapter itself: the runner enforces deadlines and recovers
 from native crashes or hangs. A Promise timeout alone cannot cancel native work.
 Dependency pinning cannot guarantee native binary compatibility after an incomplete
 installation; the earlier local prototype needed `npm ci` to repair its environment.
@@ -152,7 +152,7 @@ redispatched. Only a new request starts a replacement, after the old process exi
 Three consecutive process/protocol failures disable further restarts for that
 runner instance. Successful responses reset that failure counter.
 
-One prediction is accepted at a time. Busy requests are deferred by the future
+One prediction is accepted at a time. Busy requests are deferred by the
 coordinator. Disposal stops the child and settles pending work. If termination
 cannot be confirmed within two seconds, the runner closes and will not spawn a
 replacement. This is native crash isolation, not a sandbox for untrusted model code.
@@ -189,8 +189,8 @@ pending; a later tick may infer it again. No database client or transaction is h
 while the model runs.
 
 This coordinator does not create classifications, plan or execute moderation,
-publish live events, or scan all historical runs automatically. Worker startup,
-explicit opt-in configuration, and scheduling are the next integration step.
+publish live events, or scan all historical runs automatically. The opt-in worker
+integration below schedules it for one explicitly selected run.
 The coordinator and reader tests use simulated inference; they do not verify the
 native model.
 
@@ -198,6 +198,79 @@ native model.
 npm run test:ai-shadow-coordinator
 npm run test:ai-shadow-schema
 ```
+
+### Opt-in worker lifecycle
+
+The shared development configuration defaults `AI_SHADOW_ENABLED` to `false`.
+When disabled, the worker does not construct the AI runner, query the shadow
+table, read model artifacts, or spawn an inference child. Enabling shadow requires
+the worker flag, one monitoring run UUID, and a pinned 40-character model revision.
+The existing ingestion worker still requires Google OAuth and its managed database
+role, even when shadow processes messages from a stopped run.
+
+Configure `.env` manually after downloading the artifacts and creating a monitoring
+run with stored text messages:
+
+```dotenv
+AI_SHADOW_ENABLED=true
+AI_SHADOW_RUN_ID=REPLACE_WITH_MONITORING_RUN_UUID
+AI_SHADOW_MODEL_REVISION=REPLACE_WITH_REVISION_FROM_LOCAL_MANIFEST
+AI_SHADOW_CACHE_DIRECTORY=.cache/ai-prototype
+AI_SHADOW_STARTUP_TIMEOUT_MS=30000
+AI_SHADOW_INFERENCE_TIMEOUT_MS=5000
+```
+
+Replace both placeholders before starting. Use `run.id` from the monitoring API
+response, not `run.session_id` or a YouTube broadcast ID. Copy the revision from
+`.cache/ai-prototype/manifest.json`; it must match the cached artifacts. Cache paths
+are resolved relative to the worker process working directory. Start from the
+repository root. No automatic download is performed.
+
+At startup the worker checks shadow table access and that the configured run exists.
+If this optional initialization fails, it logs a safe message and continues ingestion
+without the AI loop. Invalid environment configuration is rejected by `loadConfig`
+before startup. A successful enablement log indicates scheduling, not successful
+model loading: the child loads the model lazily on the first pending message.
+Missing artifacts, revision mismatch, or native startup failures become terminal
+`MODEL_UNAVAILABLE` results for those observation/model identities.
+
+The AI loop handles one message per tick, waits one second between ticks, and runs
+independently of ingestion and moderation loops. Its own cycle errors use safe
+logging without chat text, paths, credentials, or raw exceptions. Stored messages
+from the selected run are eligible even after monitoring stops. Other runs are
+excluded. To select another run or disable shadow, edit `.env` and restart the
+worker. `AI_SHADOW_ENABLED=false` stops new AI processing after restart; persisted
+results remain available. Shadow itself makes no YouTube requests, but ingestion
+can still consume quota for active monitoring runs.
+
+Shutdown aborts all loops, disposes the inference child, and drains in-progress
+database work before closing the shared pool. Disposal also happens if startup
+fails after runtime construction, or before the runtime ever starts. Startup does
+not import native model libraries into the main worker process.
+
+```powershell
+npm run format
+npm run build:core
+npm run check
+npm run test:ai-shadow-cycle
+npm run test:worker-runtime
+npm run test:ai-shadow-coordinator
+npm run test:ai-shadow-runner
+npm run build --workspace @moderator/worker
+```
+
+Provision migrations and worker permissions if migration 020 has not been applied:
+
+```powershell
+npm run db:migrate
+npm run db:worker
+```
+
+Start the configured process with `npm run dev:worker`. This step adds opt-in
+scheduling and persistence only. AI results are not yet included in chat API
+responses, published through WebSocket events, displayed in the dashboard, or used
+for moderation decisions. Lifecycle tests use fake inference; real child startup
+and model output still require the later integration verification.
 
 ### Expanded local run: developer reported, 2026-10-03
 

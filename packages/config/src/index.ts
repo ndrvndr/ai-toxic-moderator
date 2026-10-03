@@ -17,6 +17,22 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  AI_SHADOW_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  AI_SHADOW_RUN_ID: z.union([z.literal(''), z.uuid()]).default(''),
+  AI_SHADOW_MODEL_REVISION: z
+    .union([z.literal(''), z.string().regex(/^[a-f0-9]{40}$/)])
+    .default(''),
+  AI_SHADOW_CACHE_DIRECTORY: z
+    .string()
+    .min(1)
+    .max(1000)
+    .refine((value) => !value.includes('\0'))
+    .default('.cache/ai-prototype'),
+  AI_SHADOW_STARTUP_TIMEOUT_MS: z.coerce.number().int().min(1).max(300_000).default(30_000),
+  AI_SHADOW_INFERENCE_TIMEOUT_MS: z.coerce.number().int().min(1).max(300_000).default(5_000),
   YOUTUBE_DELETE_ENABLED: z
     .enum(['true', 'false'])
     .default('false')
@@ -73,6 +89,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         result.error.issues.map((i) => i.path.join('.')).join(', '),
     );
   const host = new URL(result.data.DATABASE_URL).hostname;
+  if (
+    result.data.AI_SHADOW_ENABLED &&
+    (!result.data.WORKER_ENABLED ||
+      !result.data.AI_SHADOW_RUN_ID ||
+      !result.data.AI_SHADOW_MODEL_REVISION)
+  ) {
+    throw new Error(
+      'AI shadow requires the worker, an explicit run ID, and a pinned model revision.',
+    );
+  }
   const banTestFields = [
     result.data.YOUTUBE_BAN_TEST_SESSION_ID,
     result.data.YOUTUBE_BAN_TEST_AUTHOR_ID,
