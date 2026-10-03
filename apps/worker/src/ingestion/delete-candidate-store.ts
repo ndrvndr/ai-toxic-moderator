@@ -25,6 +25,7 @@ export class DeleteCandidateStore {
          ORDER BY a.attempt_number DESC LIMIT 1
        ) latest ON true
        WHERE p.action = 'DELETE' AND r.status = 'RUNNING' AND r.stop_requested_at IS NULL
+         AND p.policy_version NOT LIKE 'blacklist-%'
          AND ($1::uuid IS NULL OR p.id > $1::uuid)
          AND (latest.id IS NULL OR latest.retry_due)
        ORDER BY p.id LIMIT 1`,

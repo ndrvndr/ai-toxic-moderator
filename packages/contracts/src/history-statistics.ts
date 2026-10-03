@@ -6,7 +6,7 @@ import { category } from './moderation-enums';
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 
 export const flaggedReasonSummary = z.strictObject({
-  category,
+  category: category.nullable(),
   reason_code: classificationReasonCode,
   message_count: count.min(1),
 });

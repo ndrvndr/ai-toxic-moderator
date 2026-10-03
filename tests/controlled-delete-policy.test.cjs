@@ -82,10 +82,35 @@ test('the actual classification factory remains opt-in and persists a test plan 
         },
       },
       enabled ? scope : undefined,
+      undefined,
+      {
+        async save(_client, bundle) {
+          assert.equal(enabled, false);
+          assert.equal(bundle.source, 'DEFAULT');
+          assert.deepEqual(bundle.plans, []);
+        },
+      },
     );
     let snapshotReads = 0;
     const client = {
       async query(sql, params) {
+        if (sql.includes('FROM youtube_chat_classifications')) return { rows: [] };
+        if (sql.includes('FROM monitoring_blacklist_snapshots')) {
+          assert.equal(enabled, false);
+          return {
+            rows: [
+              {
+                run_id: params[0],
+                channel_id: params[1],
+                session_id: params[2],
+                blacklist_id: null,
+                blacklist_revision: null,
+                source: 'DEFAULT',
+                configuration: { schema_version: 1, enabled: false, rules: [] },
+              },
+            ],
+          };
+        }
         if (sql.includes('FROM monitoring_settings_snapshots')) {
           assert.equal(enabled, false, 'Controlled policy must not read normal settings.');
           assert.deepEqual(params, [

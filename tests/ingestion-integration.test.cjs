@@ -347,7 +347,7 @@ test('HTTP start, scheduled ingestion and HTTP stop complete across runtime role
   assert.equal(classificationsStored.rows[0].outcome, 'ALLOW');
   assert.equal(classificationsStored.rows[0].primary_category, null);
   assert.equal(classificationsStored.rows[0].severity, 0);
-  assert.equal(classificationsStored.rows[0].classifier_version, 'rules-1');
+  assert.equal(classificationsStored.rows[0].classifier_version, 'rules-blacklist-1');
   assert.equal(classificationsStored.rows[0].policy_version, 'policy-1');
   const firstPlans = await readPlans(run);
   assert.equal(firstPlans.length, 1);

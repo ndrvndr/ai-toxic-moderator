@@ -33,6 +33,7 @@ export const classificationReasonCode = z.enum([
   'GAMBLING_PROMOTION',
   'DIRECT_INSULT',
   'PROCESSING_FAILED',
+  'BLACKLIST_MATCH',
 ]);
 
 export const chatEvaluation = z.strictObject({

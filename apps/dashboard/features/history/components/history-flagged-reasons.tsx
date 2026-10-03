@@ -8,6 +8,7 @@ const reasonLabels: Record<FlaggedReasons[number]['reason_code'], string> = {
   GAMBLING_PROMOTION: 'Gambling promotion',
   DIRECT_INSULT: 'Direct insult',
   PROCESSING_FAILED: 'Processing failed',
+  BLACKLIST_MATCH: 'Custom blacklist match',
 };
 
 export function HistoryFlaggedReasons({ reasons }: { reasons: FlaggedReasons }) {
@@ -32,7 +33,9 @@ export function HistoryFlaggedReasons({ reasons }: { reasons: FlaggedReasons }) 
               className="flex items-center justify-between gap-4 p-4"
             >
               <div className="min-w-0">
-                <p className="text-sm font-medium">{reason.category.replaceAll('_', ' ')}</p>
+                <p className="text-sm font-medium">
+                  {reason.category?.replaceAll('_', ' ') ?? 'Streamer policy'}
+                </p>
                 <p className="text-sm text-muted-foreground">{reasonLabels[reason.reason_code]}</p>
               </div>
 

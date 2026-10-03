@@ -1,6 +1,125 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { source } = require('./helpers/source.cjs');
+const { CustomBlacklistMatcher } = source(
+  'packages/moderation-core/src/custom-blacklist-matcher.ts',
+);
+const { chatEvaluation, historyStatistics } = source('packages/contracts/src/index.ts');
+
+test('blacklist classification contracts preserve policy provenance without toxicity scores', () => {
+  const evaluation = {
+    outcome: 'ACTION_REQUIRED',
+    primary_category: null,
+    severity: null,
+    reason_code: 'BLACKLIST_MATCH',
+    reason: 'Custom blacklist match.',
+    classifier_version: 'rules-blacklist-1',
+    policy_version: 'policy-1',
+  };
+  assert.deepEqual(chatEvaluation.parse(evaluation), evaluation);
+  assert.equal(
+    historyStatistics.parse({
+      session_id: observation.sessionId,
+      total_messages: 1,
+      allowed_messages: 0,
+      flagged_messages: 1,
+      error_messages: 0,
+      unevaluated_messages: 0,
+      flagged_reasons: [{ category: null, reason_code: 'BLACKLIST_MATCH', message_count: 1 }],
+    }).flagged_messages,
+    1,
+  );
+});
+
+test('a matched blacklist skips detection and built-in planning using the caller transaction', async () => {
+  const snapshot = {
+    run_id: observation.runId,
+    channel_id: observation.channelId,
+    blacklist_id: '70000000-0000-4000-8000-000000000007',
+    blacklist_revision: 1,
+    source: 'SAVED',
+    configuration: {
+      schema_version: 1,
+      enabled: true,
+      rules: [
+        {
+          id: '80000000-0000-4000-8000-000000000008',
+          enabled: true,
+          match_type: 'WORD',
+          pattern: 'hello',
+          action: 'DELETE',
+        },
+      ],
+    },
+  };
+  let bundle;
+  let queries = 0;
+  const client = {
+    async query(sql, params) {
+      queries++;
+      if (sql.includes('SELECT')) return { rows: [] };
+      return {
+        rows: [
+          {
+            id: params[0],
+            run_id: params[4],
+            outcome: params[7],
+            primary_category: params[8],
+            severity: params[9],
+            reason_code: params[10],
+            reason: params[11],
+            signals: JSON.parse(params[12]),
+          },
+        ],
+      };
+    },
+  };
+  const fail = () => {
+    throw new Error('Built-in processing must not run.');
+  };
+  const store = new ClassificationStore(
+    { detect: fail },
+    { evaluate: fail },
+    'rules-blacklist-1',
+    'policy-1',
+    { planner: { plan: fail }, resolvePlanner: fail, store: { save: fail } },
+    {
+      resolver: {
+        async resolve(receivedClient, scope) {
+          assert.equal(receivedClient, client);
+          assert.equal(scope.runId, observation.runId);
+          return { snapshot, matcher: new CustomBlacklistMatcher(snapshot.configuration) };
+        },
+      },
+      store: {
+        async save(receivedClient, value) {
+          assert.equal(receivedClient, client);
+          bundle = value;
+        },
+      },
+    },
+  );
+  const result = await store.classify(client, observation);
+  assert.equal(result.decision.reason_code, 'BLACKLIST_MATCH');
+  assert.equal(result.decision.severity, null);
+  assert.equal(result.decision.primary_category, null);
+  assert.equal(bundle.plans.length, 1);
+  assert.equal(bundle.plans[0].action, 'DELETE');
+  assert.equal(bundle.classification_id, result.classificationId);
+  assert.equal(queries, 2);
+});
+
+test('non-text events with display messages do not enter classification', () => {
+  assert.equal(
+    toMessageInput({
+      ...observation,
+      payload: {
+        snippet: { type: 'userBannedEvent', displayMessage: 'Hello viewer' },
+      },
+    }),
+    null,
+  );
+});
 
 const { ClassificationStore, toMessageInput } = source(
   'apps/worker/src/ingestion/classification-store.ts',

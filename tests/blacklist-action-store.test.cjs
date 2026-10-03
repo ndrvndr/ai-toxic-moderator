@@ -9,6 +9,276 @@ const { BlacklistActionPlanner } = source(
   'packages/moderation-core/src/blacklist-action-planner.ts',
 );
 const { transaction } = source('packages/persistence/src/index.ts');
+const { createClassificationStore } = source(
+  'apps/worker/src/ingestion/create-classification-store.ts',
+);
+const { DeleteCandidateStore } = source('apps/worker/src/ingestion/delete-candidate-store.ts');
+const { BanCandidateStore } = source('apps/worker/src/ingestion/ban-candidate-store.ts');
+const { DeleteEligibilityStore } = source('apps/worker/src/ingestion/delete-eligibility-store.ts');
+const { BanEligibilityStore } = source('apps/worker/src/ingestion/ban-eligibility-store.ts');
+const { DeleteExecutionStore } = source('apps/worker/src/ingestion/delete-execution-store.ts');
+const { BanExecutionStore } = source('apps/worker/src/ingestion/ban-execution-store.ts');
+
+test('dispatch eligibility blocks staged blacklist plans while authorized built-in actions still qualify', async () => {
+  for (const staged of [true, false]) {
+    const f = await fixture();
+    let ids;
+    if (staged) {
+      const decision = await save(f);
+      ids = [decision.messagePlanId, decision.authorPlanId];
+    } else {
+      ids = await transaction(worker, async (client) => {
+        const plans = new ActionPlanStore();
+        const saved = [];
+        for (const [index, plan] of f.bundle.plans.entries()) {
+          saved.push(
+            (await plans.save(client, { ...plan, policy_version: `eligible-built-in-${index}` }))
+              .id,
+          );
+        }
+        return saved;
+      });
+    }
+    await admin.query(
+      "UPDATE monitoring_runs SET status = 'RUNNING', started_at = clock_timestamp() WHERE id = $1",
+      [f.runId],
+    );
+    await admin.query('INSERT INTO youtube_chat_checkpoints(session_id) VALUES ($1)', [
+      f.sessionId,
+    ]);
+    await admin.query(
+      `INSERT INTO google_credentials(account_id, access_token_ciphertext, refresh_token_ciphertext, expires_at, scopes)
+      VALUES ($1, 'test-only-access', 'test-only-refresh', clock_timestamp() + interval '1 hour', 'https://www.googleapis.com/auth/youtube.force-ssl')`,
+      [f.accountId],
+    );
+    const deletion = await new DeleteExecutionStore(worker).ensure(
+      ids[0],
+      f.channelId,
+      f.sessionId,
+    );
+    const timeout = await new BanExecutionStore(worker).ensure(ids[1], f.channelId, f.sessionId);
+    const expected = staged ? null : { accountId: f.accountId };
+    assert.deepEqual(
+      await new DeleteEligibilityStore(worker, () => true).resolve(deletion),
+      expected,
+    );
+    assert.deepEqual(await new BanEligibilityStore(worker, () => true).resolve(timeout), expected);
+    await admin.query(
+      "UPDATE monitoring_runs SET status = 'STOPPED', finished_at = clock_timestamp() WHERE id = $1",
+      [f.runId],
+    );
+  }
+});
+
+async function classifyFixture(
+  f,
+  store = createClassificationStore(),
+  observation = f.observation,
+) {
+  const result = await transaction(worker, (client) => store.classify(client, observation));
+  if (result.classificationId) f.classificationId = result.classificationId;
+  return result;
+}
+
+test('competing pipeline classifications reuse one classification, audit and pair of plans', async () => {
+  const f = await fixture({ seedClassification: false });
+  const settled = await Promise.allSettled(Array.from({ length: 4 }, () => classifyFixture(f)));
+  for (const result of settled) if (result.status === 'rejected') throw result.reason;
+  assert.equal(new Set(settled.map((result) => result.value.classificationId)).size, 1);
+  assert.deepEqual(await counts(f), { decisions: 1, plans: 2 });
+});
+
+test('database rejects blacklist reasons with inferred severity/category or an allow outcome', async () => {
+  const f = await fixture({ seedClassification: false });
+  for (const [outcome, category, severity, signals] of [
+    ['ALLOW', null, null, []],
+    ['REVIEW', null, null, []],
+    ['ACTION_REQUIRED', 'SPAM', 1, []],
+    ['ACTION_REQUIRED', null, 1, []],
+    ['ACTION_REQUIRED', null, null, [{ rule_id: 'invented' }]],
+  ]) {
+    await assert.rejects(
+      admin.query(
+        `INSERT INTO youtube_chat_classifications(
+      id, channel_id, session_id, observation_id, run_id, classifier_version, policy_version,
+      outcome, primary_category, severity, reason_code, reason, signals)
+      VALUES ($1, $2, $3, $4, $5, 'invalid-blacklist-fixture', 'policy-1', $6, $7, $8,
+        'BLACKLIST_MATCH', 'Invalid blacklist classification.', $9::jsonb)`,
+        [
+          randomUUID(),
+          f.channelId,
+          f.sessionId,
+          f.observationId,
+          f.runId,
+          outcome,
+          category,
+          severity,
+          JSON.stringify(signals),
+        ],
+      ),
+      { code: '23514' },
+    );
+  }
+});
+
+test('normal pipeline saves blacklist decisions and paired plans without a competing built-in plan', async () => {
+  for (const action of ['DELETE', 'DELETE_TIMEOUT', 'DELETE_BAN']) {
+    const f = await fixture({ action, text: 'abc idiot', seedClassification: false });
+    const result = await classifyFixture(f);
+    assert.equal(result.decision.outcome, 'ACTION_REQUIRED');
+    assert.equal(result.decision.reason_code, 'BLACKLIST_MATCH');
+    assert.equal(result.decision.primary_category, null);
+    assert.equal(result.decision.severity, null);
+    assert.deepEqual(result.decision.signals, []);
+    const rows = (
+      await admin.query(
+        'SELECT bundle, message_plan_id, author_plan_id FROM youtube_blacklist_decisions WHERE classification_id = $1',
+        [f.classificationId],
+      )
+    ).rows;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].bundle.selected_action, action);
+    assert.ok(rows[0].message_plan_id);
+    assert.equal(Boolean(rows[0].author_plan_id), action !== 'DELETE');
+    assert.deepEqual(await counts(f), { decisions: 1, plans: action === 'DELETE' ? 1 : 2 });
+    const replay = await classifyFixture(f);
+    assert.equal(replay.classificationId, result.classificationId);
+    assert.deepEqual(await counts(f), { decisions: 1, plans: action === 'DELETE' ? 1 : 2 });
+  }
+});
+
+test('normal pipeline keeps unmatched/default policy planning and unavailable-author deletion', async () => {
+  for (const options of [
+    { text: 'Hello viewer' },
+    { saved: false, text: 'Hello viewer' },
+    { author: null },
+  ]) {
+    const f = await fixture({ ...options, seedClassification: false });
+    const result = await classifyFixture(f);
+    const bundle = (
+      await admin.query(
+        'SELECT bundle FROM youtube_blacklist_decisions WHERE classification_id = $1',
+        [f.classificationId],
+      )
+    ).rows[0].bundle;
+    assert.deepEqual(await counts(f), { decisions: 1, plans: 1 });
+    if (options.author === null) {
+      assert.equal(result.decision.reason_code, 'BLACKLIST_MATCH');
+      assert.equal(bundle.author_action_status, 'TARGET_UNAVAILABLE');
+      assert.equal(bundle.plans[0].action, 'DELETE');
+    } else {
+      assert.equal(result.decision.outcome, 'ALLOW');
+      assert.deepEqual(bundle.plans, []);
+      assert.equal(
+        (
+          await admin.query(
+            'SELECT action FROM youtube_moderation_action_plans WHERE classification_id = $1',
+            [f.classificationId],
+          )
+        ).rows[0].action,
+        'NONE',
+      );
+    }
+  }
+});
+
+test('pipeline replay retains original blacklist revision after another run captures disabled settings', async () => {
+  const f = await fixture({ seedClassification: false });
+  const original = await classifyFixture(f);
+  const beforeReplay = (
+    await admin.query(
+      'SELECT id, bundle, message_plan_id, author_plan_id FROM youtube_blacklist_decisions WHERE classification_id = $1',
+      [f.classificationId],
+    )
+  ).rows[0];
+  await admin.query(
+    "UPDATE monitoring_runs SET status = 'STOPPED', finished_at = clock_timestamp() WHERE id = $1",
+    [f.runId],
+  );
+  await admin.query(
+    'INSERT INTO channel_custom_blacklists(id, channel_id, revision, configuration, created_by) VALUES ($1, $2, 2, $3::jsonb, $4)',
+    [
+      randomUUID(),
+      f.channelId,
+      JSON.stringify({ schema_version: 1, enabled: false, rules: [] }),
+      f.accountId,
+    ],
+  );
+  const newRun = randomUUID();
+  await admin.query(
+    'INSERT INTO monitoring_runs(id, channel_id, session_id, requested_by_account_id, credential_account_id) VALUES ($1, $2, $3, $4, $4)',
+    [newRun, f.channelId, f.sessionId, f.accountId],
+  );
+  const replay = await classifyFixture(f, createClassificationStore(), {
+    ...f.observation,
+    runId: newRun,
+  });
+  assert.equal(replay.classificationId, original.classificationId);
+  assert.deepEqual(
+    (
+      await admin.query(
+        'SELECT id, bundle, message_plan_id, author_plan_id FROM youtube_blacklist_decisions WHERE classification_id = $1',
+        [f.classificationId],
+      )
+    ).rows[0],
+    beforeReplay,
+  );
+});
+
+test('outer ingestion rollback removes classification, decision and paired plans', async () => {
+  const f = await fixture({ seedClassification: false });
+  await assert.rejects(
+    transaction(worker, async (client) => {
+      const result = await createClassificationStore().classify(client, f.observation);
+      f.classificationId = result.classificationId;
+      assert.deepEqual(await counts(f, client), { decisions: 1, plans: 2 });
+      throw new Error('Rollback ingestion');
+    }),
+    /Rollback ingestion/,
+  );
+  assert.deepEqual(await counts(f), { decisions: 0, plans: 0 });
+  assert.equal(
+    (
+      await admin.query('SELECT id FROM youtube_chat_classifications WHERE observation_id = $1', [
+        f.observationId,
+      ])
+    ).rowCount,
+    0,
+  );
+});
+
+test('blacklist plans remain undiscoverable until dispatch provenance support is enabled', async () => {
+  const f = await fixture({ seedClassification: false });
+  await classifyFixture(f);
+  await admin.query(
+    "UPDATE monitoring_runs SET status = 'RUNNING', started_at = clock_timestamp() WHERE id = $1",
+    [f.runId],
+  );
+  assert.equal(await new DeleteCandidateStore(worker).next(null), null);
+  assert.equal(await new BanCandidateStore(worker).next(null), null);
+  await admin.query(
+    "UPDATE monitoring_runs SET status = 'STOPPED', finished_at = clock_timestamp() WHERE id = $1",
+    [f.runId],
+  );
+});
+
+test('pipeline skips moderation events with display text and rejects missing run snapshots', async () => {
+  const event = await fixture({ eventType: 'userBannedEvent', seedClassification: false });
+  assert.deepEqual(await classifyFixture(event), { classified: false });
+  const f = await fixture({ seedClassification: false });
+  await assert.rejects(
+    classifyFixture(f, createClassificationStore(), { ...f.observation, runId: randomUUID() }),
+    /no unique blacklist snapshot/,
+  );
+  assert.equal(
+    (
+      await admin.query('SELECT id FROM youtube_chat_classifications WHERE observation_id = $1', [
+        f.observationId,
+      ])
+    ).rowCount,
+    0,
+  );
+});
 
 const schema = `blacklist_plans_${randomUUID().replaceAll('-', '')}`;
 const workerRole = `bl_worker_${randomUUID().replaceAll('-', '')}`;
@@ -69,6 +339,7 @@ async function fixture({
   text = 'abc',
   saved = true,
   eventType = 'textMessageEvent',
+  seedClassification = true,
 } = {}) {
   const f = {
     channelId: randomUUID(),
@@ -153,12 +424,13 @@ async function fixture({
       createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
     ],
   );
-  await admin.query(
-    `INSERT INTO youtube_chat_classifications(id, channel_id, session_id, observation_id, run_id,
+  if (seedClassification)
+    await admin.query(
+      `INSERT INTO youtube_chat_classifications(id, channel_id, session_id, observation_id, run_id,
     classifier_version, policy_version, outcome, primary_category, severity, reason_code, reason, signals)
     VALUES ($1, $2, $3, $4, $5, 'fixture-1', 'policy-1', 'ALLOW', NULL, 0, 'NO_RULE_MATCH', 'Fixture baseline classification.', '[]'::jsonb)`,
-    [f.classificationId, f.channelId, f.sessionId, f.observationId, f.runId],
-  );
+      [f.classificationId, f.channelId, f.sessionId, f.observationId, f.runId],
+    );
   const selected = (
     await admin.query(
       'SELECT run_id, channel_id, blacklist_id, blacklist_revision, configuration, source FROM monitoring_blacklist_snapshots WHERE run_id = $1',
@@ -176,6 +448,15 @@ async function fixture({
     },
     text,
   );
+  f.observation = {
+    channelId: f.channelId,
+    sessionId: f.sessionId,
+    runId: f.runId,
+    observationId: f.observationId,
+    externalMessageId: f.externalMessageId,
+    publishedAt: '2026-10-04T00:00:00Z',
+    payload,
+  };
   return f;
 }
 function save(f, bundle = f.bundle, store = new BlacklistActionStore()) {

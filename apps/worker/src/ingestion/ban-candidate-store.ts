@@ -36,6 +36,7 @@ export class BanCandidateStore {
           AND e.session_id = p.session_id
           AND e.observation_id = o.id
         WHERE p.action IN ('TIMEOUT', 'BAN')
+          AND p.policy_version NOT LIKE 'blacklist-%'
           AND r.status = 'RUNNING'
           AND r.stop_requested_at IS NULL
           AND ($1::uuid IS NULL OR p.id > $1::uuid)

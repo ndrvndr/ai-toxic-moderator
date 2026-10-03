@@ -43,6 +43,7 @@ export class DeleteEligibilityStore implements DeleteEligibility {
          AND e.external_message_id = $5 AND o.external_message_id = e.external_message_id
          AND p.action = 'DELETE' AND o.event_type = 'textMessageEvent'
          AND (p.policy_version NOT LIKE 'delete-test-%' OR p.policy_version = $6)
+         AND p.policy_version NOT LIKE 'blacklist-%'
          AND r.status = 'RUNNING' AND r.stop_requested_at IS NULL AND r.finished_at IS NULL
          AND s.source = 'YOUTUBE' AND s.closed_at IS NULL AND cp.chat_ended_at IS NULL
          AND credential_member.role IN ('OWNER', 'MODERATOR')

@@ -54,6 +54,7 @@ export class BanEligibilityStore implements BanEligibility {
          AND p.duration_seconds IS NOT DISTINCT FROM e.duration_seconds
          AND COALESCE(o.payload #>> '{authorDetails,channelId}', o.payload #>> '{snippet,authorChannelId}') = e.author_channel_id
          AND p.action IN ('TIMEOUT', 'BAN') AND o.event_type = 'textMessageEvent'
+         AND p.policy_version NOT LIKE 'blacklist-%'
          AND r.status = 'RUNNING' AND r.stop_requested_at IS NULL AND r.finished_at IS NULL
          AND s.source = 'YOUTUBE' AND s.closed_at IS NULL AND cp.chat_ended_at IS NULL
          AND credential_member.role IN ('OWNER', 'MODERATOR')

@@ -2,11 +2,13 @@
 
 ## Implementation status
 
-Strict public contracts, a revision store, automatic run snapshots, authorized
-HTTP endpoints, the Settings editor, a pure literal matcher, and a worker snapshot
-reader, a combined action planner, and transactional decision persistence are implemented. Blacklist entries are not yet
-evaluated by the worker. Saving an enabled blacklist does not yet
-enable moderation actions. Existing moderation settings retain their current format.
+Public contracts, revision storage, automatic run snapshots, authorized HTTP
+endpoints, the Settings editor, literal matching, combined planning, transactional
+persistence, and classification pipeline integration are implemented. The normal
+worker evaluates the captured blacklist before built-in rules. Blacklist plans are
+temporarily excluded from discovery and dispatch eligibility until executor
+provenance validation is implemented. Saving an enabled blacklist does not yet
+send blacklist moderation requests. Existing moderation settings keep their format.
 
 ## Entry contract
 
@@ -145,10 +147,10 @@ fits a single request. Oversized requests return HTTP 413 without writing a revi
 
 ## Remaining implementation
 
-1. Invoke the run snapshot matcher before AI processing in the classification pipeline.
-2. Connect captured blacklist decisions and independent plans to the existing
+1. Connect captured blacklist decisions and independent plans to the existing
    executors, including their dispatch eligibility checks.
-3. Decision provenance in chat and History, plus integration and live verification.
+2. Skip AI shadow inference for messages matched by the captured blacklist.
+3. Display decision provenance in Live and History, then verify the combined flow.
 
 ## Settings editor
 
@@ -206,7 +208,7 @@ the result. Every match still requests message deletion independently of the
 selected author action. Matcher version: `blacklist-literal-1`.
 
 These are policy decisions only. The combined planner creates compatible individual
-plans, but pipeline and dispatch integration are still required before deletion
+plans, but dispatch integration is still required before deletion
 and an author action can execute together.
 
 ## Worker snapshot reader
@@ -224,10 +226,9 @@ classification run ID, as the existing settings planner does. A new run can capt
 a newer revision without changing an earlier run's result. No mutable channel
 policy is cached or queried by this reader.
 
-This helper is not yet invoked by `ClassificationStore` or the AI coordinator.
-It does not persist decisions, skip inference, or send moderation requests.
-Transactional persistence is available separately; the classification pipeline
-must invoke it using the original run and the same ingestion transaction.
+`ClassificationStore` invokes this reader and saves the decision through the same
+ingestion transaction. The reader itself does not persist decisions or send
+requests. AI shadow scheduling is still independent and will be updated separately.
 
 ## Combined action planner
 
@@ -256,7 +257,8 @@ unexpected execution fields, missing deletion, incompatible author actions, and
 inconsistent durations or match metadata. It does not prove that a supplied target
 belongs to the classification. The persistence store revalidates both targets and
 recomputes the decision from its immutable snapshot before saving the bundle.
-The planner and store are not yet wired into the runtime and do not send requests.
+The normal classification pipeline invokes the planner and store. Neither sends
+provider requests; dispatch integration is a separate step.
 
 ## Transactional decision persistence
 
@@ -288,8 +290,34 @@ settings or starting another run never changes the original captured decision.
 
 The worker receives SELECT/INSERT on decisions; the API receives SELECT only.
 Neither runtime role can update, delete, or truncate decision history. Provision
-both roles after migration. No provider requests or new runtime enforcement are
-introduced by this persistence step.
+both roles after migration. Persistence itself does not send provider requests.
+
+## Classification pipeline
+
+The normal factory uses classifier version `rules-blacklist-1`. It first looks up
+any persisted classification, then resolves its original run snapshot. A fresh
+blacklist match bypasses built-in detection and action planning and records
+`ACTION_REQUIRED` with reason `BLACKLIST_MATCH`, empty signals, and null category
+and severity. This is explicit streamer policy, not a model toxicity assessment.
+Migration `023_blacklist_classification_reason.sql` supports this decision without
+rewriting earlier migrations. Live evaluation and History reason contracts accept
+the new reason; History displays uncategorized policy matches as Streamer policy.
+
+Matched decisions save independent deletion and optional timeout/ban plans. If the
+author target is unavailable, deletion is retained. No-match decisions also retain
+their captured provenance, then use the existing built-in rules and settings
+planner. Controlled development delete/ban policies keep their isolated behavior.
+Explicit non-text YouTube events are skipped even when they contain display text.
+
+Classification, blacklist audit, and action plans share the ingestion transaction;
+a failed batch rolls them back together. Replay reuses the persisted classification
+and its original run even when the caller supplies a newer run. The persistence
+store rechecks database text, observed targets, and captured configuration.
+
+As a temporary rollout gate, both candidate stores and eligibility stores exclude
+policy versions beginning with `blacklist-`. Existing built-in plans retain their
+authorization checks. The next step replaces this exclusion with validation of
+the immutable decision and its individual plan links before provider dispatch.
 
 ## Manual validation
 
@@ -309,8 +337,13 @@ npm run test:custom-blacklist-matcher
 npm run test:run-blacklist-matcher
 npm run test:blacklist-action-planner
 npm run test:blacklist-action-store
+npm run test:classification-store
+npm run test:controlled-delete-policy
+npm run test:controlled-ban-policy
+npm run build --workspace @moderator/worker
 npm run test:custom-blacklist-store
 npm run build --workspace @moderator/api
+npm run test:ingestion-integration
 npm run test:custom-blacklist-http
 npm run test:moderation-settings-http
 npm run test:moderation-settings-contracts
