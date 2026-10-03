@@ -6,3 +6,4 @@ export interface DetectionEngine {
 export * from './action-planner';
 export * from './policy-evaluator';
 export * from './rule-engine';
+export * from './settings-action-planner';

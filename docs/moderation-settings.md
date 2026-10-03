@@ -5,9 +5,9 @@
 Shared Zod contracts, an immutable settings table, a transactional API-side
 store, authenticated settings endpoints, and validation/integration tests are
 available. The Settings page is available at `/settings/moderation`.
-Worker integration is not implemented yet.
-These changes do not alter existing classification or controlled development
-action behavior.
+Normal worker action planning consumes the immutable settings snapshot of the
+classification's monitoring run. Classification rules and the controlled
+development marker policies remain unchanged.
 
 ## Configuration
 
@@ -70,8 +70,8 @@ shown below. Successful saves return HTTP 200 with `{ "settings": ... }`.
 Stale revisions return HTTP 409 with code `SETTINGS_REVISION_CONFLICT`.
 Malformed configuration and unsupported rule/action references return HTTP 422.
 
-Saving settings currently persists configuration only; it does not start
-monitoring or apply that configuration to the worker.
+Saving settings does not start monitoring or change an existing run. A new run
+captures the saved configuration for worker action planning.
 
 ## Versioned updates
 
@@ -111,8 +111,62 @@ The store is not an authorization boundary. The service authorizes access and
 gets the actor from the authenticated request, not the write body. Before saving,
 it rechecks OWNER membership inside the store transaction, after acquiring the
 channel lock. A shared membership row lock prevents that membership from changing
-until the save completes. Monitoring integration must still preserve the selected settings revision for
-audit and reproducible action planning.
+until the save completes.
+
+## Monitoring run snapshots
+
+Migration `019_monitoring_settings_snapshots.sql` records one immutable settings
+snapshot per monitoring run. An AFTER INSERT trigger captures the latest committed
+channel revision visible when the run is inserted. The run and snapshot commit or
+roll back together. The trigger runs with the caller's permissions; the API role
+has SELECT and INSERT, and the worker role has SELECT only on the snapshot table.
+
+`SAVED` snapshots include the settings ID, revision, and configuration. Channels
+without saved settings receive a `DEFAULT` snapshot with automatic actions disabled
+and an empty rule list. Existing runs are backfilled as `LEGACY` with the same
+disabled fallback, without assigning today's settings retrospectively. LEGACY does
+not establish which policy was actually used for historical messages.
+
+Reusing an active run or replaying an earlier start request preserves its snapshot.
+A new run after monitoring stops captures the configuration visible at that new
+start. Saving another revision never changes an existing run's snapshot. A save
+concurrent with starting monitoring may be selected by that run or a later run,
+depending on which revision is committed and visible at capture time.
+
+The normal worker reads this snapshot through the batch transaction client. It
+never reads the channel's latest settings during classification. Missing or invalid
+snapshots fail the batch transaction rather than selecting an unrecorded policy.
+On classification replay, planning uses persisted signals and the original
+classification run, even if replay was requested from a later run.
+
+## Worker action planning
+
+Normal plans use `settings-run-<run_id>` as their action policy version, linking
+each plan to the immutable snapshot. Classification retains its detector and
+classification policy versions; preferences change action selection, not detection.
+
+Disabled, DEFAULT, and LEGACY configurations produce NONE plans. Enabled settings
+require an exact rule/version reference, a STRONG detection and supported catalog
+entry, the catalog category, and the configured minimum severity. Removed or
+unsupported catalog references do not select actions. If several signals qualify,
+the highest severity wins, followed by rule ID and rule version for deterministic
+selection. One classification selects at most one action.
+
+DELETE targets the classified message. TIMEOUT and BAN target its author and require
+a valid YouTube channel ID; missing or fallback author identities select NONE.
+TIMEOUT uses the snapshot's configured duration. ActionPlanStore checks targets
+against the persisted observation before saving the plan.
+
+Planning does not establish execution success. Dispatch continues to require the
+existing authorization, run/session lifecycle, credential scope, and execution
+guards. `YOUTUBE_DELETE_ENABLED` gates deletion dispatch; `YOUTUBE_BAN_ENABLED`
+gates timeout and ban dispatch. Repeated-timeout scheduling and UNKNOWN handling
+remain unchanged. Stopping monitoring prevents new dispatch under its run guards.
+
+A configured controlled development scope selects its dedicated marker detector
+and planner instead of Settings for that worker instance. Do not use test scopes
+when verifying normal Settings enforcement. Runtime switches remain the immediate
+dispatch controls; saving disabled Settings only affects subsequently created runs.
 
 ## Dashboard Settings page
 
@@ -139,14 +193,14 @@ explicit reload. Reload refreshes settings and the catalog and discards draft
 changes. Background window-focus refresh is disabled for these queries so it
 cannot replace edits during form entry.
 
-The page explicitly explains that saved settings are not yet used for live
-moderation. Enabling the preference currently stores configuration only.
+The page explains that saved preferences apply to new monitoring runs and that
+corresponding worker action switches must also be enabled for dispatch.
 
 ## Remaining implementation sequence
 
-1. Connect persisted configuration snapshots to classification and action planning.
-2. Verify enabled/disabled behavior, concurrent edits, channel access, and historical
-   result consistency.
+1. Verify normal Settings-driven actions with a controlled live test account.
+2. Confirm enabled/disabled behavior, run restart semantics, channel access, and
+   historical result consistency in browser verification.
 
 Existing execution guards, repeated-timeout scheduling, and UNKNOWN handling must
 continue to apply when configurable policies are connected.
@@ -162,11 +216,19 @@ npm run build:core
 npm run build --workspace @moderator/api
 npm run db:migrate
 npm run db:runtime
+npm run db:worker
+npm run test:monitoring-start
 npm run test:moderation-settings-contracts
 npm run test:moderation-settings-store
 npm run test:moderation-settings-http
 npm run test:moderation-core
 npm run test:classification-store
+npm run test:settings-planner
+npm run test:controlled-delete-policy
+npm run test:controlled-ban-policy
+npm run build --workspace @moderator/worker
+npm run test:ingestion-integration
+npm run test:delete-execution-store
 npm run test:live-hooks
 npm run build --workspace @moderator/dashboard
 npm test
@@ -184,6 +246,12 @@ writes, moderator reads, denied cross-channel/operator access, current sessions,
 trusted Origin, unsupported rules, metadata injection, and HTTP revision conflicts.
 Store tests additionally cover authorization rechecks after waiting on the channel
 lock. No Google or YouTube transport is called by the Settings tests.
+
+Monitoring start tests cover default and saved snapshots, exact revision capture,
+channel isolation, active-run reuse, old-key replay, revision selection on restart,
+immutable rows, invalid snapshot metadata, and transaction rollback. Google
+broadcast verification is mocked in these tests. The monitoring HTTP suite also
+exercises run creation with the API runtime role and its snapshot permissions.
 
 Contract tests validate configuration boundaries, action-specific fields, duplicate
 rule references, strict write metadata, and public exports. Test code is available; execution results must be confirmed
@@ -211,5 +279,13 @@ access errors, and response scope validation.
    draft does not appear in the new channel.
 8. With a MODERATOR membership, verify read-only controls and no Save button.
 
-These browser checks verify settings persistence and editing behavior. They do
-not verify enforcement by the worker, which remains a separate implementation step.
+These browser checks verify settings persistence and editing behavior. Normal
+Settings enforcement requires separate live verification with a new monitoring
+run, supported configured rules, and the relevant worker dispatch switches.
+
+Planner tests use real rule detections to verify DELETE, TIMEOUT, BAN, safe messages,
+disabled settings, thresholds, unsupported references, and invalid author targets.
+Ingestion integration tests exercise snapshots and action plan persistence with
+the actual API and worker database roles, including settings edits during an
+active run and disabled configuration after restart. They send no real moderation
+requests to YouTube. Test execution and live outcomes must be verified locally.

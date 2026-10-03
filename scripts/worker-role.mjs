@@ -50,6 +50,7 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA ${schemaSql} FROM ${roleSql}`);
     for (const table of [
       'monitoring_runs',
+      'monitoring_settings_snapshots',
       'youtube_broadcasts',
       'channel_memberships',
       'stream_sessions',

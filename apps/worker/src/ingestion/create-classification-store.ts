@@ -5,6 +5,7 @@ import { ClassificationStore } from './classification-store';
 import { controlledBanPolicy, type ControlledBanScope } from './controlled-ban-policy';
 import { controlledDeletePolicy, type ControlledDeleteScope } from './controlled-delete-policy';
 import { DEFAULT_RULES } from './default-rules';
+import { RunSettingsPlanner } from './run-settings-planner';
 
 export function createClassificationStore(
   actionPlans: Pick<ActionPlanStore, 'save'> = new ActionPlanStore(),
@@ -21,6 +22,8 @@ export function createClassificationStore(
       ? controlledDeletePolicy(testScope)
       : undefined;
 
+  const snapshots = new RunSettingsPlanner();
+
   return new ClassificationStore(
     controlled?.engine ?? new RuleDetectionEngine(DEFAULT_RULES),
     new ModerationPolicy(),
@@ -29,6 +32,11 @@ export function createClassificationStore(
     {
       planner: controlled?.planner ?? new ActionPlanner({ version: 'actions-1', delete_rules: [] }),
       store: actionPlans,
+      ...(!controlled
+        ? {
+            resolvePlanner: snapshots.resolve.bind(snapshots),
+          }
+        : {}),
     },
   );
 }

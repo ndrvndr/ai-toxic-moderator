@@ -18,7 +18,8 @@ export function ModerationSettingsPage() {
         </p>
       </header>
       <p className="rounded-lg border p-4 text-sm">
-        Settings are saved, but they are not yet used for live moderation.
+        Saved settings apply when a new monitoring run starts. Changes do not affect an existing
+        run. Automatic actions also require the corresponding worker action switches to be enabled.
       </p>
       {session.isPending ? (
         <p role="status">Loading account…</p>

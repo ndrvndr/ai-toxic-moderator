@@ -206,12 +206,35 @@ test('classification factory persists controlled author plans only when scoped',
         enabled ? { ...scope, action } : undefined,
       );
 
+      let snapshotReads = 0;
       const client = {
-        async query(_sql, params) {
+        async query(sql, params) {
+          if (sql.includes('FROM monitoring_settings_snapshots')) {
+            assert.equal(enabled, false, 'Controlled policy must not read normal settings.');
+            assert.deepEqual(params, [
+              context.classification_id,
+              context.channel_id,
+              scope.sessionId,
+            ]);
+            snapshotReads++;
+            return {
+              rows: [
+                {
+                  run_id: params[0],
+                  settings_id: null,
+                  settings_revision: null,
+                  source: 'DEFAULT',
+                  configuration: { schema_version: 1, automatic_actions_enabled: false, rules: [] },
+                },
+              ],
+            };
+          }
+          assert.match(sql, /INSERT INTO youtube_chat_classifications/);
           return {
             rows: [
               {
                 id: params[0],
+                run_id: params[4],
                 outcome: params[7],
                 primary_category: params[8],
                 severity: params[9],
@@ -249,8 +272,11 @@ test('classification factory persists controlled author plans only when scoped',
       assert.equal(plans[0].action, enabled ? action : 'NONE');
       assert.equal(
         plans[0].policy_version,
-        enabled ? controlledBanVersion({ ...scope, action }) : 'actions-1',
+        enabled
+          ? controlledBanVersion({ ...scope, action })
+          : `settings-run-${context.classification_id}`,
       );
+      assert.equal(snapshotReads, enabled ? 0 : 1);
     }
   }
 });

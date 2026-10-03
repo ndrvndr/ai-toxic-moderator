@@ -211,3 +211,74 @@ test('classification does not write non-text events', async () => {
 
   assert.deepEqual(result, { classified: false });
 });
+
+test('snapshot planning on replay uses the original classification run and persisted signals', async () => {
+  const originalRun = '60000000-0000-4000-8000-000000000006';
+  const stored = {
+    id: '50000000-0000-4000-8000-000000000005',
+    run_id: originalRun,
+    outcome: 'ALLOW',
+    primary_category: null,
+    severity: 0,
+    reason_code: 'NO_RULE_MATCH',
+    reason: 'Persisted decision.',
+    signals: [],
+  };
+  let queries = 0;
+  let saved = false;
+  const client = {
+    async query() {
+      return { rows: ++queries === 1 ? [] : [stored] };
+    },
+  };
+  const store = new ClassificationStore(
+    {
+      async detect() {
+        return [];
+      },
+    },
+    {
+      evaluate() {
+        return { ...stored, signals: [{ rule_id: 'new-computation' }] };
+      },
+    },
+    'rules-1',
+    'policy-1',
+    {
+      planner: {
+        plan() {
+          throw new Error('The fixed planner must not be used.');
+        },
+      },
+      async resolvePlanner(receivedClient, receivedObservation) {
+        assert.equal(receivedClient, client);
+        assert.equal(receivedObservation.runId, originalRun);
+        assert.equal(receivedObservation.channelId, observation.channelId);
+        return {
+          plan(input) {
+            assert.deepEqual(input.signals, stored.signals);
+            assert.equal(input.author_channel_id, 'viewer-1');
+            return {
+              classification_id: stored.id,
+              channel_id: observation.channelId,
+              session_id: observation.sessionId,
+              policy_version: `settings-run-${originalRun}`,
+              action: 'NONE',
+              reason: 'Original run configuration.',
+            };
+          },
+        };
+      },
+      store: {
+        async save(receivedClient, plan) {
+          assert.equal(receivedClient, client);
+          assert.equal(plan.policy_version, `settings-run-${originalRun}`);
+          saved = true;
+        },
+      },
+    },
+  );
+  const result = await store.classify(client, observation);
+  assert.equal(saved, true);
+  assert.equal('run_id' in result.decision, false);
+});

@@ -24,6 +24,7 @@ export type ActionPlannerInput = {
   channel_id: string;
   session_id: string;
   external_message_id: string;
+  author_channel_id?: string;
   signals: readonly Signal[];
 };
 

@@ -68,6 +68,10 @@ export class ClassificationStore {
     private readonly policyVersion: string,
     private readonly actions?: {
       planner: Pick<ActionPlanner, 'plan'>;
+      resolvePlanner?: (
+        client: PoolClient,
+        observation: ClassificationObservation,
+      ) => Promise<Pick<ActionPlanner, 'plan'>>;
       store: Pick<ActionPlanStore, 'save'>;
     },
   ) {}
@@ -89,7 +93,7 @@ export class ClassificationStore {
     const signals = await this.engine.detect(input);
     const decision = this.policy.evaluate(signals);
 
-    const inserted = await client.query<PolicyDecision & { id: string }>(
+    const inserted = await client.query<PolicyDecision & { id: string; run_id: string }>(
       `
         INSERT INTO youtube_chat_classifications(
           id,
@@ -113,7 +117,7 @@ export class ClassificationStore {
         )
         ON CONFLICT(observation_id, classifier_version, policy_version)
         DO NOTHING
-        RETURNING id, outcome, primary_category, severity, reason_code, reason, signals
+        RETURNING id, run_id, outcome, primary_category, severity, reason_code, reason, signals
       `,
       [
         randomUUID(),
@@ -135,9 +139,9 @@ export class ClassificationStore {
     let stored = inserted.rows[0];
 
     if (!stored) {
-      const existing = await client.query<PolicyDecision & { id: string }>(
+      const existing = await client.query<PolicyDecision & { id: string; run_id: string }>(
         `
-          SELECT id, outcome, primary_category, severity, reason_code, reason, signals
+          SELECT id, run_id, outcome, primary_category, severity, reason_code, reason, signals
           FROM youtube_chat_classifications
           WHERE observation_id = $1
             AND classifier_version = $2
@@ -160,15 +164,20 @@ export class ClassificationStore {
       throw new Error('The classification could not be read after insertion.');
     }
 
-    const { id: classificationId, ...persistedDecision } = stored;
+    const { id: classificationId, run_id: classificationRunId, ...persistedDecision } = stored;
 
     // Use the persisted decision on replay, not a newly computed result.
     if (this.actions) {
-      const plan = this.actions.planner.plan({
+      // A replay belongs to the original classification run, even after restart.
+      const planner = this.actions.resolvePlanner
+        ? await this.actions.resolvePlanner(client, { ...observation, runId: classificationRunId })
+        : this.actions.planner;
+      const plan = planner.plan({
         classification_id: classificationId,
         channel_id: observation.channelId,
         session_id: observation.sessionId,
         external_message_id: observation.externalMessageId,
+        author_channel_id: input.author_external_id,
         signals: persistedDecision.signals,
       });
       await this.actions.store.save(client, plan);

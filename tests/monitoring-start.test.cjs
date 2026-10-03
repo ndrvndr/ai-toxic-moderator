@@ -5,6 +5,7 @@ const { Client, Pool } = require('pg');
 const { source } = require('./helpers/source.cjs');
 
 const { MonitoringService } = source('apps/api/src/monitoring/monitoring.service.ts');
+const { ModerationSettingsStore } = source('apps/api/src/settings/moderation-settings-store.ts');
 
 const schema = `monitoring_start_${randomUUID().replaceAll('-', '')}`;
 
@@ -156,6 +157,12 @@ test('concurrent requests with the same key create one run and one request recor
   );
 
   assert.equal(requests.rows.length, 1);
+
+  const snapshots = await pool.query(
+    'SELECT run_id FROM monitoring_settings_snapshots WHERE run_id = $1',
+    [results[0].run.id],
+  );
+  assert.equal(snapshots.rows.length, 1);
 });
 
 test('different keys reuse an active run and each retain their request mapping', async () => {
@@ -287,4 +294,217 @@ test('invalid input is rejected before Google verification', async () => {
   }
 
   assert.equal(f.verificationCalls, 0);
+});
+
+async function readSnapshot(runId) {
+  const result = await pool.query(
+    `SELECT run_id, channel_id, settings_id, settings_revision, configuration, source
+     FROM monitoring_settings_snapshots WHERE run_id = $1`,
+    [runId],
+  );
+  assert.equal(result.rows.length, 1);
+  return result.rows[0];
+}
+
+async function finishRun(runId) {
+  await pool.query(
+    "UPDATE monitoring_runs SET status = 'STOPPED', finished_at = clock_timestamp() WHERE id = $1",
+    [runId],
+  );
+}
+
+test('settings changes affect new run snapshots, never active reuse or old-key replay', async () => {
+  const f = await fixture();
+  const firstKey = randomUUID();
+  const first = await f.start(firstKey);
+  const fallback = {
+    schema_version: 1,
+    automatic_actions_enabled: false,
+    rules: [],
+  };
+  const initial = await readSnapshot(first.run.id);
+  assert.deepEqual(initial, {
+    run_id: first.run.id,
+    channel_id: first.run.channel_id,
+    settings_id: null,
+    settings_revision: null,
+    configuration: fallback,
+    source: 'DEFAULT',
+  });
+
+  const store = new ModerationSettingsStore(pool);
+  const configuration = {
+    schema_version: 1,
+    automatic_actions_enabled: true,
+    rules: [
+      {
+        rule_id: 'id.harassment.direct-insult',
+        rule_version: '1',
+        minimum_severity: 2,
+        action: 'TIMEOUT',
+        duration_seconds: 30,
+      },
+    ],
+  };
+  const revisionOne = await store.save(first.run.channel_id, f.accountId, {
+    expected_revision: 0,
+    configuration,
+  });
+
+  assert.equal((await f.start()).run.id, first.run.id);
+  assert.deepEqual(await readSnapshot(first.run.id), initial);
+  await finishRun(first.run.id);
+  assert.equal((await f.start(firstKey)).run.id, first.run.id);
+  assert.deepEqual(await readSnapshot(first.run.id), initial);
+
+  const secondKey = randomUUID();
+  const second = await f.start(secondKey);
+  const selected = await readSnapshot(second.run.id);
+  assert.deepEqual(selected, {
+    run_id: second.run.id,
+    channel_id: second.run.channel_id,
+    settings_id: revisionOne.id,
+    settings_revision: 1,
+    configuration,
+    source: 'SAVED',
+  });
+
+  const revisionTwo = await store.save(first.run.channel_id, f.accountId, {
+    expected_revision: 1,
+    configuration: fallback,
+  });
+  assert.equal((await f.start()).run.id, second.run.id);
+  assert.deepEqual(await readSnapshot(second.run.id), selected);
+  await finishRun(second.run.id);
+  assert.equal((await f.start(secondKey)).run.id, second.run.id);
+  assert.deepEqual(await readSnapshot(second.run.id), selected);
+
+  const third = await f.start();
+  const latest = await readSnapshot(third.run.id);
+  assert.equal(latest.settings_id, revisionTwo.id);
+  assert.equal(latest.settings_revision, 2);
+  assert.equal(latest.source, 'SAVED');
+  assert.deepEqual(latest.configuration, fallback);
+
+  const other = await fixture();
+  const unrelated = await other.start();
+  assert.equal((await readSnapshot(unrelated.run.id)).source, 'DEFAULT');
+});
+
+test('snapshots are immutable, unique per run, and cannot reference a missing run', async () => {
+  const f = await fixture();
+  const started = await f.start();
+  for (const sql of [
+    "UPDATE monitoring_settings_snapshots SET source = 'LEGACY' WHERE run_id = $1",
+    'DELETE FROM monitoring_settings_snapshots WHERE run_id = $1',
+  ]) {
+    await assert.rejects(pool.query(sql, [started.run.id]), (error) => error.code === '23514');
+  }
+
+  const config = JSON.stringify({
+    schema_version: 1,
+    automatic_actions_enabled: false,
+    rules: [],
+  });
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO monitoring_settings_snapshots(run_id, channel_id, configuration, source)
+     VALUES ($1, $2, $3::jsonb, 'DEFAULT')`,
+      [started.run.id, started.run.channel_id, config],
+    ),
+    (error) => error.code === '23505',
+  );
+
+  const other = await fixture();
+  const otherRun = await other.start();
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO monitoring_settings_snapshots(run_id, channel_id, configuration, source)
+     VALUES ($1, $2, $3::jsonb, 'DEFAULT')`,
+      [randomUUID(), otherRun.run.channel_id, config],
+    ),
+    (error) => error.code === '23503',
+  );
+});
+
+test('saved snapshot metadata must match its referenced channel settings', async () => {
+  const f = await fixture();
+  const started = await f.start();
+  const store = new ModerationSettingsStore(pool);
+  const configuration = {
+    schema_version: 1,
+    automatic_actions_enabled: false,
+    rules: [],
+  };
+  const settings = await store.save(started.run.channel_id, f.accountId, {
+    expected_revision: 0,
+    configuration,
+  });
+  const other = await fixture();
+  const otherRun = await other.start();
+
+  for (const [channelId, revision, config] of [
+    [started.run.channel_id, 2, configuration],
+    [started.run.channel_id, 1, { ...configuration, automatic_actions_enabled: true }],
+    [otherRun.run.channel_id, 1, configuration],
+  ]) {
+    await assert.rejects(
+      pool.query(
+        `INSERT INTO monitoring_settings_snapshots (
+        run_id, channel_id, settings_id, settings_revision, configuration, source
+      ) VALUES ($1, $2, $3, $4, $5::jsonb, 'SAVED')`,
+        [randomUUID(), channelId, settings.id, revision, JSON.stringify(config)],
+      ),
+      (error) => error.code === '23514',
+    );
+  }
+
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO monitoring_settings_snapshots(run_id, channel_id, configuration, source)
+     VALUES ($1, $2, $3::jsonb, 'LEGACY')`,
+      [randomUUID(), started.run.channel_id, JSON.stringify(configuration)],
+    ),
+    (error) => error.code === '23514',
+  );
+});
+
+test('rolling back run creation also removes its automatically captured snapshot', async () => {
+  const f = await fixture();
+  const started = await f.start();
+  await finishRun(started.run.id);
+  const runId = randomUUID();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO monitoring_runs (
+        id, channel_id, session_id, requested_by_account_id, credential_account_id, status
+      ) VALUES ($1, $2, $3, $4, $4, 'STARTING')`,
+      [runId, started.run.channel_id, started.run.session_id, f.accountId],
+    );
+    const inside = await client.query(
+      'SELECT run_id FROM monitoring_settings_snapshots WHERE run_id = $1',
+      [runId],
+    );
+    assert.equal(inside.rows.length, 1);
+  } finally {
+    try {
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+  }
+  assert.equal(
+    (await pool.query('SELECT id FROM monitoring_runs WHERE id = $1', [runId])).rowCount,
+    0,
+  );
+  assert.equal(
+    (
+      await pool.query('SELECT run_id FROM monitoring_settings_snapshots WHERE run_id = $1', [
+        runId,
+      ])
+    ).rowCount,
+    0,
+  );
 });

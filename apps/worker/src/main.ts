@@ -87,6 +87,8 @@ async function bootstrap() {
     await pool.query('SELECT revision, chat_ended_at FROM youtube_chat_checkpoints LIMIT 0');
     await pool.query('SELECT id FROM youtube_chat_classifications LIMIT 0');
     await pool.query('SELECT id FROM youtube_moderation_action_plans LIMIT 0');
+    await pool.query(`SELECT run_id, settings_id, settings_revision, source, configuration
+      FROM monitoring_settings_snapshots LIMIT 0`);
     await pool.query('SELECT id, status, deadline_at FROM youtube_delete_attempts LIMIT 0');
     await pool.query('SELECT id FROM youtube_ban_executions LIMIT 0');
     await pool.query(`
