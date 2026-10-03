@@ -2,10 +2,10 @@
 
 ## Implementation status
 
-Strict public contracts, a revision store, and automatic run snapshots are now
-implemented. Blacklist entries are not yet accepted by an HTTP endpoint, shown in
-the dashboard, or evaluated by the worker. Persistence does not enable moderation
-actions. Existing moderation settings retain their current format.
+Strict public contracts, a revision store, automatic run snapshots, and authorized
+HTTP endpoints are implemented. Blacklist entries are not yet shown in the
+dashboard or evaluated by the worker. Saving an enabled blacklist does not yet
+enable moderation actions. Existing moderation settings retain their current format.
 
 ## Entry contract
 
@@ -87,14 +87,68 @@ or truncate them. The worker can only read captured blacklist snapshots, not edi
 them or select current channel blacklist revisions. This keeps future enforcement
 bound to a run rather than mutable current settings.
 
+## HTTP API
+
+| Method | Route                                | Access                                                |
+| ------ | ------------------------------------ | ----------------------------------------------------- |
+| `GET`  | `/v1/channels/:channel_id/blacklist` | Current OWNER or MODERATOR membership                 |
+| `POST` | `/v1/channels/:channel_id/blacklist` | Current OWNER membership and trusted dashboard Origin |
+
+Both routes require a current authenticated dashboard session. Operator membership
+and membership in another channel do not grant access. GET returns
+`{ "blacklist": null }` when no revision exists; otherwise it returns the latest
+record. Responses use the API's existing `Cache-Control: no-store` behavior.
+
+POST replaces the complete configuration by appending a new immutable revision:
+
+```json
+{
+  "expected_revision": 0,
+  "configuration": {
+    "schema_version": 1,
+    "enabled": true,
+    "rules": [
+      {
+        "id": "10000000-0000-4000-8000-000000000001",
+        "enabled": true,
+        "match_type": "WORD",
+        "pattern": "abc",
+        "action": "DELETE_TIMEOUT",
+        "duration_seconds": 300
+      }
+    ]
+  }
+}
+```
+
+Use revision zero only when no record exists. Later updates send the revision
+returned by GET or the previous POST. Successful saves return HTTP 200 and
+`{ "blacklist": <record> }`. Removing an entry means submitting a new configuration
+without it; disabling retains the entry with `enabled: false`. Neither operation
+deletes prior revisions or changes existing run snapshots.
+
+Stale or competing writes return HTTP 409 with `BLACKLIST_REVISION_CONFLICT`.
+Reload the latest record before deliberately applying another edit; do not
+automatically overwrite it. Validation failures return HTTP 422 with field paths
+and safe error codes. Moderator writes return HTTP 403 with
+`BLACKLIST_WRITE_FORBIDDEN`. Unauthorized channel access is rejected before body
+validation or revision lookup. The service rechecks and locks owner membership
+inside the save transaction after acquiring the channel revision lock.
+
+Pattern, action, and duration validation uses the shared contract. Author targets,
+message IDs, server ownership metadata, and arbitrary regex matching modes cannot
+be injected through the request. Client entry IDs identify configuration entries,
+not YouTube targets. The API's existing 16 KB JSON body limit also applies: the
+100-entry contract limit does not guarantee that every maximum-length combination
+fits a single request. Oversized requests return HTTP 413 without writing a revision.
+
 ## Remaining implementation
 
-1. Authorized blacklist API endpoints and revision-conflict responses.
-2. Settings editor for creating, editing, disabling, and removing entries.
-3. Literal matcher and deterministic conflict handling before AI processing.
-4. Combined message/author action plans with separate execution outcomes and
+1. Settings editor for creating, editing, disabling, and removing entries.
+2. Literal matcher and deterministic conflict handling before AI processing.
+3. Combined message/author action plans with separate execution outcomes and
    idempotency. Ban takes priority over timeout; deletion remains independent.
-5. Decision provenance in chat and History, plus integration and live verification.
+4. Decision provenance in chat and History, plus integration and live verification.
 
 Exceptions and AI thresholds are separate follow-up work. Blacklist matches are
 explicit streamer policy; AI scores do not change their configured action.
@@ -112,6 +166,9 @@ npm run db:runtime
 npm run db:worker
 npm run test:custom-blacklist-contracts
 npm run test:custom-blacklist-store
+npm run build --workspace @moderator/api
+npm run test:custom-blacklist-http
+npm run test:moderation-settings-http
 npm run test:moderation-settings-contracts
 npm run test:moderation-settings-store
 npm run test:monitoring-start
@@ -122,3 +179,9 @@ isolated random schemas and temporary runtime roles, then clean them up. They co
 competing writers, validation, authorization rechecks, permissions, snapshot
 immutability, uncommitted revisions, rollback, and legacy backfill. They do not call
 YouTube or execute moderation. Commands and tests are executed manually by the developer.
+
+HTTP tests boot the actual built NestJS API with an isolated PostgreSQL schema and
+API runtime role. They cover authentication, Origin checks, current channel roles,
+revision conflicts, normalization, invalid input, membership changes, immutable
+history, and oversized request errors. Build the shared packages and API before
+running them to avoid testing stale generated files.
