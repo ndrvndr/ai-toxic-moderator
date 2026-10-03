@@ -10,6 +10,7 @@
     "node": ">=22.12.0 <23 || >=24.0.0"
   },
   "scripts": {
+    "test:custom-blacklist-contracts": "node --experimental-test-isolation=none --test tests/custom-blacklist-contracts.test.cjs",
     "test:ai-shadow-cycle": "node --experimental-test-isolation=none --test tests/ai-shadow-cycle.test.cjs",
     "test:ai-shadow-coordinator": "node --experimental-test-isolation=none --test tests/ai-shadow-coordinator.test.cjs",
     "test:ai-shadow-runner": "node --experimental-test-isolation=none --test tests/ai-shadow-runner.test.cjs",

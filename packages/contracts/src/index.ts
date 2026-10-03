@@ -4,6 +4,7 @@ import { category, outcome } from './moderation-enums';
 
 export * from './ai-shadow';
 export * from './chat';
+export * from './custom-blacklist';
 export * from './history-action-statistics';
 export * from './history-statistics';
 export * from './moderation-action';
