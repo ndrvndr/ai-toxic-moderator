@@ -10,11 +10,12 @@
 
 ## Pending
 
-- Reconnection after restarting the API.
-- Cursor replay after reconnect.
-- WebSocket cleanup after leaving the Live page.
-- Monitoring stop confirmation.
 - Production HTTPS/WSS verification.
+
+The developer explicitly reported successful API reconnect, cursor resume,
+navigation cleanup, and stop confirmation in the October 3, 2026 fresh-database
+[end-to-end verification](end-to-end-verification.md). These are reported browser
+results; automated failure/replay coverage remains a separate source of evidence.
 
 ## Current Limitation
 
@@ -25,7 +26,8 @@ are covered separately.
 ## Phase Status
 
 Phase 6 implementation is complete.
-Manual browser verification is partially complete.
+The local browser scenarios in the fresh-database E2E procedure were reported
+complete on October 3, 2026. Production verification remains pending.
 
 ## Chat Classification Verification
 
@@ -182,5 +184,6 @@ Reported checks covered normal Settings, with controlled marker scopes cleared:
 
 See [Moderation Settings](moderation-settings.md) for immutable run snapshot
 semantics, dispatch switches, and automated test coverage. These reported checks
-do not resolve the pending reconnect, cleanup, production HTTPS/WSS, or classifier
-accuracy checks listed separately in this document.
+did not independently resolve reconnect and cleanup checks at that stage. The later
+[fresh-database E2E report](end-to-end-verification.md) covers those local browser
+scenarios. Production HTTPS/WSS and classifier accuracy remain separate work.

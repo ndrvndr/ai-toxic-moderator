@@ -420,6 +420,13 @@ and write permissions separately for the API and worker.
 
 ## Live verification
 
+On October 3, 2026 (Asia/Jakarta), the developer explicitly reported that all
+fresh-database E2E scenarios passed: Google login, monitoring, rule-based chat
+classification, WebSocket reconnect/navigation cleanup, History, Settings snapshots,
+DELETE, repeated TIMEOUT, BAN, and logout. See [the E2E report](docs/end-to-end-verification.md)
+for supplied evidence and remaining verification limits. The assistant did not
+execute these checks, and the result does not establish production readiness.
+
 On 2026-09-15, the developer reported a successful test against a real
 YouTube livestream:
 
@@ -458,6 +465,7 @@ readiness.
 - [Monitoring lifecycle](docs/monitoring-lifecycle.md)
 - [YouTube ingestion](docs/youtube-ingestion.md)
 - [Live dashboard verification](docs/live-dashboard-verification.md)
+- [Fresh-database E2E verification](docs/end-to-end-verification.md)
 - [Livestream history verification](docs/history-verification.md)
 - [Moderation Settings](docs/moderation-settings.md)
 - [Moderation reconciliation](docs/moderation-reconciliation.md)

@@ -73,8 +73,11 @@ has only one page.
 
 ## Verification limits and next work
 
-This record covers the reported chat filter checks. It does not establish a
-complete production acceptance result for History.
+The October 3, 2026 [fresh-database E2E verification](end-to-end-verification.md)
+also records the developer's explicit confirmation of initial empty History,
+stored session chat and reasons, filters, full-session statistics, per-message
+action results, page reload persistence, and protected-data cleanup on logout.
+This does not establish a complete production acceptance result for History.
 
 Independent browser checks for history list search, monitoring status filters,
 direct-link reloads, and access revocation should be recorded when performed.

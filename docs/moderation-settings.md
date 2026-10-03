@@ -198,6 +198,12 @@ corresponding worker action switches must also be enabled for dispatch.
 
 ## Reported live verification
 
+The developer subsequently explicitly confirmed that all scenarios in the
+[fresh-database E2E procedure](end-to-end-verification.md) passed on October 3,
+2026, including Settings-driven DELETE, run snapshot/restart behavior, repeated
+TIMEOUT, and BAN. That report supplements the earlier workflow-based confirmation
+below and records the available session evidence and remaining limits.
+
 On October 3, 2026 (Asia/Jakarta), the developer indicated that each preceding
 verification step passed by asking to continue, following the agreed convention
 that continuing means the previous checks are safe and committed. These results
