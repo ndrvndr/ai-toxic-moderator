@@ -51,6 +51,7 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     for (const table of [
       'monitoring_runs',
       'monitoring_settings_snapshots',
+      'monitoring_blacklist_snapshots',
       'youtube_broadcasts',
       'channel_memberships',
       'stream_sessions',

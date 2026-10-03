@@ -98,3 +98,52 @@ export const customBlacklistConfiguration = z
 
 export type CustomBlacklistRule = z.infer<typeof customBlacklistRule>;
 export type CustomBlacklistConfiguration = z.infer<typeof customBlacklistConfiguration>;
+
+export const customBlacklistUpdate = z.strictObject({
+  expected_revision: z.number().int().nonnegative().safe(),
+  configuration: customBlacklistConfiguration,
+});
+
+export const customBlacklistRecord = z.strictObject({
+  id: z.uuid(),
+  channel_id: z.uuid(),
+  revision: z.number().int().positive().safe(),
+  configuration: customBlacklistConfiguration,
+  created_by: z.uuid(),
+  created_at: z.iso.datetime({ offset: true }),
+});
+
+export const customBlacklistResponse = z.strictObject({
+  blacklist: customBlacklistRecord.nullable(),
+});
+
+export const customBlacklistSnapshot = z
+  .strictObject({
+    run_id: z.uuid(),
+    channel_id: z.uuid(),
+    blacklist_id: z.uuid().nullable(),
+    blacklist_revision: z.number().int().positive().safe().nullable(),
+    configuration: customBlacklistConfiguration,
+    source: z.enum(['SAVED', 'DEFAULT', 'LEGACY']),
+  })
+  .superRefine((value, context) => {
+    if (value.source === 'SAVED') {
+      if (value.blacklist_id === null || value.blacklist_revision === null) {
+        context.addIssue({ code: 'custom', message: 'Saved snapshots require revision metadata.' });
+      }
+    } else if (
+      value.blacklist_id !== null ||
+      value.blacklist_revision !== null ||
+      value.configuration.enabled ||
+      value.configuration.rules.length > 0
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Default and legacy snapshots must be empty and disabled.',
+      });
+    }
+  });
+
+export type CustomBlacklistUpdate = z.infer<typeof customBlacklistUpdate>;
+export type CustomBlacklistRecord = z.infer<typeof customBlacklistRecord>;
+export type CustomBlacklistSnapshot = z.infer<typeof customBlacklistSnapshot>;

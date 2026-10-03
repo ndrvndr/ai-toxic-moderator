@@ -5,6 +5,12 @@ const { source } = require('./helpers/source.cjs');
 const { customBlacklistRule, customBlacklistConfiguration, normalizeBlacklistPattern } = source(
   'packages/contracts/src/custom-blacklist.ts',
 );
+const {
+  customBlacklistUpdate,
+  customBlacklistRecord,
+  customBlacklistResponse,
+  customBlacklistSnapshot,
+} = source('packages/contracts/src/custom-blacklist.ts');
 
 function rule(overrides = {}) {
   return {
@@ -20,6 +26,76 @@ function rule(overrides = {}) {
 function configuration(rules = [], enabled = true) {
   return { schema_version: 1, enabled, rules };
 }
+
+test('revision updates reject coercion and client-supplied ownership metadata', () => {
+  const input = { expected_revision: 0, configuration: configuration([rule()]) };
+  assert.deepEqual(customBlacklistUpdate.parse(input), input);
+  for (const expected_revision of [-1, 1.5, '0', undefined, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(customBlacklistUpdate.safeParse({ ...input, expected_revision }).success, false);
+  }
+  for (const field of ['channel_id', 'created_by', 'revision', 'id']) {
+    assert.equal(customBlacklistUpdate.safeParse({ ...input, [field]: 'injected' }).success, false);
+  }
+});
+
+test('records require server metadata and missing blacklist state is explicit', () => {
+  const record = {
+    id: '10000000-0000-4000-8000-000000000001',
+    channel_id: '20000000-0000-4000-8000-000000000002',
+    revision: 1,
+    configuration: configuration(),
+    created_by: '30000000-0000-4000-8000-000000000003',
+    created_at: '2026-10-03T00:00:00Z',
+  };
+  assert.deepEqual(customBlacklistRecord.parse(record), record);
+  assert.deepEqual(customBlacklistResponse.parse({ blacklist: record }), { blacklist: record });
+  assert.deepEqual(customBlacklistResponse.parse({ blacklist: null }), { blacklist: null });
+  assert.equal(customBlacklistResponse.safeParse({}).success, false);
+  assert.equal(customBlacklistRecord.safeParse({ ...record, revision: 0 }).success, false);
+  assert.equal(
+    customBlacklistRecord.safeParse({ ...record, channel_id: 'invalid' }).success,
+    false,
+  );
+});
+
+test('snapshots distinguish saved revisions from disabled default and legacy policy', () => {
+  const base = {
+    run_id: '10000000-0000-4000-8000-000000000001',
+    channel_id: '20000000-0000-4000-8000-000000000002',
+    blacklist_id: null,
+    blacklist_revision: null,
+    configuration: configuration([], false),
+    source: 'DEFAULT',
+  };
+  for (const source of ['DEFAULT', 'LEGACY']) {
+    assert.deepEqual(customBlacklistSnapshot.parse({ ...base, source }), { ...base, source });
+    for (const change of [
+      { blacklist_id: base.run_id },
+      { blacklist_revision: 1 },
+      { configuration: configuration([], true) },
+      { configuration: configuration([rule()], false) },
+    ])
+      assert.equal(
+        customBlacklistSnapshot.safeParse({ ...base, source, ...change }).success,
+        false,
+      );
+  }
+  const saved = {
+    ...base,
+    source: 'SAVED',
+    blacklist_id: base.run_id,
+    blacklist_revision: 1,
+    configuration: configuration([rule()]),
+  };
+  assert.deepEqual(customBlacklistSnapshot.parse(saved), saved);
+  for (const change of [
+    { blacklist_id: null },
+    { blacklist_revision: null },
+    { blacklist_revision: 0 },
+  ]) {
+    assert.equal(customBlacklistSnapshot.safeParse({ ...saved, ...change }).success, false);
+  }
+});
 
 test('blacklist actions always delete and author actions have distinct duration requirements', () => {
   for (const entry of [

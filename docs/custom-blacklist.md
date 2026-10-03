@@ -2,10 +2,10 @@
 
 ## Implementation status
 
-The first step defines strict public contracts and validation tests. Blacklist
-entries are not yet accepted by the Settings API, persisted, shown in the dashboard,
-or evaluated by the worker. Adding a contract does not enable moderation actions.
-Existing settings and historical run snapshots retain their current format.
+Strict public contracts, a revision store, and automatic run snapshots are now
+implemented. Blacklist entries are not yet accepted by an HTTP endpoint, shown in
+the dashboard, or evaluated by the worker. Persistence does not enable moderation
+actions. Existing moderation settings retain their current format.
 
 ## Entry contract
 
@@ -52,9 +52,44 @@ Example validated entry:
 }
 ```
 
+## Immutable revisions and run snapshots
+
+Migration `021_custom_blacklists.sql` adds `channel_custom_blacklists` and
+`monitoring_blacklist_snapshots`, without changing applied migrations. Blacklist
+revisions are independent of built-in moderation settings revisions.
+
+`CustomBlacklistStore.save` validates and normalizes the full configuration,
+serializes channel writers with an advisory transaction lock, requires an
+authorization callback inside the transaction, and compares `expected_revision`
+before appending a revision. Zero means no saved revision exists. A stale write
+raises `CustomBlacklistConflict`; failed writes do not consume a revision.
+The caller must separately authorize reads.
+
+The database checks top-level configuration shape and consecutive revisions.
+Detailed pattern/action validation is performed by the store; direct database
+insertion is not a substitute for contract validation. Revision history is immutable.
+
+Creating a monitoring run captures the latest committed blacklist revision visible
+to the capture statement in the same transaction. Snapshot metadata and configuration
+must exactly match that channel's saved revision. No saved blacklist produces an
+empty, disabled `DEFAULT` snapshot. Prior runs receive empty, disabled `LEGACY`
+snapshots during migration, without implying that this was their historical policy.
+
+Editing the blacklist does not modify existing runs. Active-run reuse and old start
+request replay retain the original snapshot because they do not insert a new run.
+After monitoring stops, a new run captures the latest committed revision. Run and
+snapshot roll back together. Uncommitted writes are not adopted; snapshots for
+built-in settings and blacklist are separate version selections, not a combined
+settings revision.
+
+The API role can select/insert revision and snapshot rows but cannot update, delete,
+or truncate them. The worker can only read captured blacklist snapshots, not edit
+them or select current channel blacklist revisions. This keeps future enforcement
+bound to a run rather than mutable current settings.
+
 ## Remaining implementation
 
-1. Versioned settings persistence, API validation, and immutable run snapshots.
+1. Authorized blacklist API endpoints and revision-conflict responses.
 2. Settings editor for creating, editing, disabling, and removing entries.
 3. Literal matcher and deterministic conflict handling before AI processing.
 4. Combined message/author action plans with separate execution outcomes and
@@ -71,10 +106,19 @@ Run from the repository root:
 ```powershell
 npm run format
 npm run check
-npm run test:custom-blacklist-contracts
-npm run test:moderation-settings-contracts
 npm run build:core
+npm run db:migrate
+npm run db:runtime
+npm run db:worker
+npm run test:custom-blacklist-contracts
+npm run test:custom-blacklist-store
+npm run test:moderation-settings-contracts
+npm run test:moderation-settings-store
+npm run test:monitoring-start
 ```
 
-No migration or environment change is required for this contract-only step.
-Commands and tests are executed manually by the developer.
+Database tests require an admin-capable local `TEST_DATABASE_URL`. They create
+isolated random schemas and temporary runtime roles, then clean them up. They cover
+competing writers, validation, authorization rechecks, permissions, snapshot
+immutability, uncommitted revisions, rollback, and legacy backfill. They do not call
+YouTube or execute moderation. Commands and tests are executed manually by the developer.
