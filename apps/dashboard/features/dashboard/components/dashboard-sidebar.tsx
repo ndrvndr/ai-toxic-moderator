@@ -54,7 +54,9 @@ export function DashboardSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton disabled>Moderation — Coming soon</SidebarMenuButton>
+                <SidebarMenuButton asChild isActive={pathname === '/settings/moderation'}>
+                  <Link href="/settings/moderation">Moderation</Link>
+                </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton disabled>Integrations — Coming soon</SidebarMenuButton>

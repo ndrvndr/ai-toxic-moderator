@@ -4,7 +4,8 @@
 
 Shared Zod contracts, an immutable settings table, a transactional API-side
 store, authenticated settings endpoints, and validation/integration tests are
-available. The Settings page and worker integration are not implemented yet.
+available. The Settings page is available at `/settings/moderation`.
+Worker integration is not implemented yet.
 These changes do not alter existing classification or controlled development
 action behavior.
 
@@ -113,11 +114,38 @@ channel lock. A shared membership row lock prevents that membership from changin
 until the save completes. Monitoring integration must still preserve the selected settings revision for
 audit and reproducible action planning.
 
+## Dashboard Settings page
+
+The Moderation sidebar link opens `/settings/moderation`. The page uses the
+authenticated account's OWNER/MODERATOR memberships for channel selection.
+Channel IDs are shown because the membership response currently has no channel
+display names. Operators do not receive an editable or readable settings form.
+
+The route renders a feature page. Separate components handle channel selection,
+loading/error states, the configuration form, and individual rule controls.
+TanStack Query owns server data and mutations; draft edits are local to the
+selected account/channel and are discarded when either changes.
+
+Owners can select an action and minimum severity for supported rules and set a
+timeout duration. Ambiguous rules appear as information without action controls.
+Moderators receive a read-only form. Historical references absent from the current
+catalog remain visible; owners must explicitly remove them before saving.
+
+Save sends the last loaded revision and performs no optimistic update or automatic
+retry. Duplicate in-flight submits are blocked. A confirmed response updates only
+the selected account/channel cache and displays the saved revision. A conflict or
+unconfirmed save preserves the draft, disables further saves, and asks for an
+explicit reload. Reload refreshes settings and the catalog and discards draft
+changes. Background window-focus refresh is disabled for these queries so it
+cannot replace edits during form entry.
+
+The page explicitly explains that saved settings are not yet used for live
+moderation. Enabling the preference currently stores configuration only.
+
 ## Remaining implementation sequence
 
-1. Build the channel Settings page with TanStack Query.
-2. Connect persisted configuration snapshots to classification and action planning.
-3. Verify enabled/disabled behavior, concurrent edits, channel access, and historical
+1. Connect persisted configuration snapshots to classification and action planning.
+2. Verify enabled/disabled behavior, concurrent edits, channel access, and historical
    result consistency.
 
 Existing execution guards, repeated-timeout scheduling, and UNKNOWN handling must
@@ -139,6 +167,8 @@ npm run test:moderation-settings-store
 npm run test:moderation-settings-http
 npm run test:moderation-core
 npm run test:classification-store
+npm run test:live-hooks
+npm run build --workspace @moderator/dashboard
 npm test
 npm run check
 ```
@@ -158,3 +188,28 @@ lock. No Google or YouTube transport is called by the Settings tests.
 Contract tests validate configuration boundaries, action-specific fields, duplicate
 rule references, strict write metadata, and public exports. Test code is available; execution results must be confirmed
 by running these commands locally.
+
+Frontend Settings tests are included in `npm run test:live-hooks`. They cover
+owner saves, explicit conflict reload, moderator read-only controls, unavailable
+rules, duration validation, duplicate submissions, account/channel draft isolation,
+access errors, and response scope validation.
+
+## Manual dashboard verification
+
+1. Start the API and dashboard. The ingestion worker can remain stopped.
+2. Sign in and open `/settings/moderation` from the sidebar.
+3. Select a channel where your account is OWNER. Keep automatic actions disabled
+   while checking persistence.
+4. Choose Timeout author for a supported rule, set a duration, and save. Check
+   the success notice and saved revision.
+5. Reload the page and verify that the same values are loaded from the API.
+6. Open the page in two tabs at the same saved revision. Save a change in the first,
+   then submit a different draft in the second. The second must show a revision
+   conflict and retain its draft. Reload saved settings to discard the draft and
+   load the current revision.
+7. Change channel while editing and confirm that the previous channel's unsaved
+   draft does not appear in the new channel.
+8. With a MODERATOR membership, verify read-only controls and no Save button.
+
+These browser checks verify settings persistence and editing behavior. They do
+not verify enforcement by the worker, which remains a separate implementation step.
