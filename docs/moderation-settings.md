@@ -2,10 +2,11 @@
 
 ## Current implementation
 
-Shared Zod contracts and source-based validation tests are available.
-Persistence, authenticated settings endpoints, the Settings page, and worker
-integration are not implemented yet. These contracts do not change existing
-classification or controlled development action behavior.
+Shared Zod contracts, an immutable settings table, a transactional API-side
+store, and validation/integration tests are available. Authenticated settings
+endpoints, the Settings page, and worker integration are not implemented yet.
+These changes do not alter existing classification or controlled development
+action behavior.
 
 ## Configuration
 
@@ -67,20 +68,29 @@ positive revisions and include server-assigned ID, channel ID, creating account,
 and creation timestamp. A read response with `settings: null` explicitly means
 that no record has been saved.
 
-The persistence step must serialize writes per channel, compare the expected
-revision, and reject stale updates. Saving a revision must create an immutable
-record rather than rewriting historical configuration. Monitoring integration
-must preserve the selected settings revision for audit and reproducible action
-planning. These guarantees are requirements for the following steps, not behavior
-provided by the Zod contracts alone.
+The store serializes writes per channel with a transaction-scoped advisory lock,
+compares the expected revision, and throws `ModerationSettingsConflict` on stale
+updates. Each successful save inserts a new immutable record. Two competing
+writes with the same expected revision cannot both succeed. A failed insert rolls
+back without consuming a revision.
+
+Migration `018_channel_moderation_settings.sql` enforces consecutive revisions,
+unique channel/revision pairs, account/channel references, and the top-level JSON
+configuration shape. Full action-specific validation runs through the shared Zod
+schema in the store. Database triggers reject row updates and deletion; the API
+role receives SELECT and INSERT only on this table.
+
+The store is not an authorization boundary. The upcoming service must authorize
+channel access and obtain the actor from the authenticated session before calling
+it. Monitoring integration must still preserve the selected settings revision for
+audit and reproducible action planning.
 
 ## Remaining implementation sequence
 
-1. Add immutable settings revisions and transactional concurrency checks.
-2. Add authorized read/write APIs and supported-rule validation.
-3. Build the channel Settings page with TanStack Query.
-4. Connect persisted configuration snapshots to classification and action planning.
-5. Verify enabled/disabled behavior, concurrent edits, channel access, and historical
+1. Add authorized read/write APIs and supported-rule validation.
+2. Build the channel Settings page with TanStack Query.
+3. Connect persisted configuration snapshots to classification and action planning.
+4. Verify enabled/disabled behavior, concurrent edits, channel access, and historical
    result consistency.
 
 Existing execution guards, repeated-timeout scheduling, and UNKNOWN handling must
@@ -93,11 +103,22 @@ Run from the repository root:
 ```powershell
 npm run format
 npm run typecheck
+npm run build:core
+npm run db:migrate
+npm run db:runtime
 npm run test:moderation-settings-contracts
+npm run test:moderation-settings-store
 npm test
 npm run check
 ```
 
-These tests validate configuration boundaries, action-specific fields, duplicate
-rule references, strict write metadata, and public contract exports. They do not
-send requests to YouTube or test database concurrency.
+Store tests require a local `TEST_DATABASE_URL` with permission to create temporary
+schemas and provision temporary roles, following the existing integration-test
+setup. They migrate an isolated schema and exercise the store with API runtime
+permissions. They cover concurrent initial/subsequent saves, stale revisions,
+channel scoping, failed-insert rollback, and immutable history.
+
+Contract tests validate configuration boundaries, action-specific fields, duplicate
+rule references, strict write metadata, and public exports. Neither suite sends
+requests to YouTube. Test code is available; execution results must be confirmed
+by running these commands locally.
