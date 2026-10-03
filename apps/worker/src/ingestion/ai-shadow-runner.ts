@@ -5,7 +5,7 @@ import {
   type AiShadowIdentity,
   type AiShadowResult,
 } from '@moderator/contracts';
-import { fork, type ChildProcess } from 'node:child_process';
+import { fork, type ChildProcess, type ForkOptions, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
@@ -63,7 +63,7 @@ export class AiShadowRunner {
       spawn ??
       (() => {
         // The inference child needs local runtime paths, not application credentials.
-        const env: NodeJS.ProcessEnv = {};
+        const env: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV ?? 'development' };
         for (const [key, value] of Object.entries(process.env)) {
           if (
             [
@@ -80,12 +80,13 @@ export class AiShadowRunner {
           )
             env[key] = value;
         }
-        return fork(path.join(__dirname, 'ai-shadow-child.js'), [], {
+        const forkOptions: ForkOptions & Pick<SpawnOptions, 'windowsHide'> = {
           env,
           execArgv: [],
           stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
           windowsHide: true,
-        });
+        };
+        return fork(path.join(__dirname, 'ai-shadow-child.js'), [], forkOptions);
       });
   }
 

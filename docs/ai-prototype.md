@@ -166,6 +166,39 @@ npm run build --workspace @moderator/worker
 Runner tests simulate IPC, crash, timeout, restart, and cleanup using fake child
 processes. Real process inference and monitoring integration are not yet verified.
 
+### Stored-message shadow coordinator
+
+`AiShadowCandidateReader` selects one pending, nonempty text message from an
+explicit monitoring run. It uses the observation's original run and skips results
+already stored for the same model, revision, variant, and adapter version. Both
+successful results and terminal error results are skipped after restart. A new
+model revision can evaluate the observation separately. Non-text events and
+missing or invalid text do not enter inference.
+
+`AiShadowCoordinator.tick(runId, signal)` performs selection, inference, identity
+validation, and persistence in that order. Each tick handles at most one message;
+overlapping ticks and runner backpressure return `BUSY`. Cancellation before
+selection or during inference prevents a new write. A write already in progress
+may finish. Shutdown must also dispose the runner to stop its native child.
+
+`AiShadowResultWriter` starts a short transaction only after inference finishes.
+Competing worker instances may compute the same message, but the store retains
+one committed result and returns that result to the loser. This is idempotent
+persistence, not exactly-once inference. A database failure leaves the message
+pending; a later tick may infer it again. No database client or transaction is held
+while the model runs.
+
+This coordinator does not create classifications, plan or execute moderation,
+publish live events, or scan all historical runs automatically. Worker startup,
+explicit opt-in configuration, and scheduling are the next integration step.
+The coordinator and reader tests use simulated inference; they do not verify the
+native model.
+
+```powershell
+npm run test:ai-shadow-coordinator
+npm run test:ai-shadow-schema
+```
+
 ### Expanded local run: developer reported, 2026-10-03
 
 The developer supplied outputs for all 40 probes. Compared with proposed labels,

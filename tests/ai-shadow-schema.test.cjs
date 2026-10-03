@@ -191,13 +191,15 @@ async function fixture() {
   };
 }
 
-async function insertObservation(f, id = randomUUID()) {
+async function insertObservation(f, id = randomUUID(), snippet = {}) {
   const payload = {
     authorDetails: { channelId: 'test-viewer-channel' },
     snippet: {
       type: 'textMessageEvent',
       liveChatId: 'test-live-chat',
       publishedAt: '2026-09-20T00:00:00Z',
+      textMessageDetails: { messageText: 'Hello shadow fixture' },
+      ...snippet,
     },
     text: 'Test classification message',
   };
@@ -224,13 +226,22 @@ async function insertObservation(f, id = randomUUID()) {
         $3,
         $4,
         $5,
-        'textMessageEvent',
+        $8,
         clock_timestamp(),
         $6::jsonb,
         $7
       )
     `,
-    [id, f.channelId, f.sessionId, f.runId, `message-${id}`, serialized, payloadHash],
+    [
+      id,
+      f.channelId,
+      f.sessionId,
+      f.runId,
+      `message-${id}`,
+      serialized,
+      payloadHash,
+      payload.snippet.type,
+    ],
   );
 
   return id;
@@ -280,6 +291,98 @@ async function insertShadow(f, observationId, overrides = {}) {
   );
   return row.id;
 }
+
+test('shadow coordinator drains only text in the selected run and skips persisted errors after restart', async () => {
+  const { AiShadowCandidateReader } = source(
+    'apps/worker/src/ingestion/ai-shadow-candidate-reader.ts',
+  );
+  const { AiShadowResultWriter } = source('apps/worker/src/ingestion/ai-shadow-result-writer.ts');
+  const { AiShadowCoordinator } = source('apps/worker/src/ingestion/ai-shadow-coordinator.ts');
+  const pool = new Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+    max: 2,
+    connectionTimeoutMillis: 2000,
+    options: `-c search_path=${schema}`,
+    statement_timeout: 5000,
+  });
+  const model = {
+    model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
+    model_revision: 'c'.repeat(40),
+    model_variant: 'INT8',
+    adapter_version: 'coordinator-test-1',
+  };
+  try {
+    const f = await fixture();
+    const other = await fixture();
+    const firstId = await insertObservation(f);
+    const secondId = await insertObservation(f, randomUUID(), {
+      textMessageDetails: null,
+      displayMessage: 'Fallback display text',
+    });
+    await insertObservation(f, randomUUID(), { type: 'userBannedEvent' });
+    await insertObservation(f, randomUUID(), { textMessageDetails: { messageText: ' \t\n ' } });
+    await insertObservation(f, randomUUID(), { textMessageDetails: { messageText: 123 } });
+    const foreignId = await insertObservation(other);
+    const reader = new AiShadowCandidateReader(pool, model);
+    const writer = new AiShadowResultWriter(pool);
+    const inferred = [];
+    const runner = {
+      async predict(identity, text) {
+        // Both connections must remain available while inference runs.
+        const connections = await Promise.allSettled([pool.connect(), pool.connect()]);
+        for (const connection of connections) {
+          if (connection.status === 'fulfilled') connection.value.release();
+        }
+        for (const connection of connections) {
+          if (connection.status === 'rejected') throw connection.reason;
+        }
+        inferred.push({ id: identity.observation_id, text });
+        return {
+          ...identity,
+          status: 'ERROR',
+          rating: null,
+          severity_score: null,
+          truncated: null,
+          inference_ms: null,
+          error_code: 'INFERENCE_TIMEOUT',
+        };
+      },
+    };
+    const first = new AiShadowCoordinator(reader, runner, writer);
+    const signal = new AbortController().signal;
+    assert.equal((await first.tick(f.runId, signal)).kind, 'INSERTED');
+    const restarted = new AiShadowCoordinator(
+      new AiShadowCandidateReader(pool, model),
+      runner,
+      writer,
+    );
+    assert.equal((await restarted.tick(f.runId, signal)).kind, 'INSERTED');
+    assert.equal((await restarted.tick(f.runId, signal)).kind, 'IDLE');
+    assert.deepEqual(
+      inferred.map((entry) => entry.id),
+      [firstId, secondId],
+    );
+    assert.deepEqual(
+      inferred.map((entry) => entry.text),
+      ['Hello shadow fixture', 'Fallback display text'],
+    );
+    const stored = await client.query(
+      'SELECT observation_id, status FROM youtube_ai_shadow_results WHERE run_id=$1',
+      [f.runId],
+    );
+    assert.equal(stored.rowCount, 2);
+    assert.ok(stored.rows.every((row) => row.status === 'ERROR'));
+    assert.equal((await reader.next(other.runId)).identity.observation_id, foreignId);
+    const revised = new AiShadowCandidateReader(pool, { ...model, model_revision: 'd'.repeat(40) });
+    assert.equal((await revised.next(f.runId)).identity.observation_id, firstId);
+    for (const table of ['youtube_chat_classifications', 'youtube_moderation_action_plans']) {
+      const rows = await client.query(`SELECT count(*)::int AS count FROM ${table}`);
+      assert.equal(rows.rows[0].count, 0);
+    }
+  } finally {
+    await pool.end();
+  }
+});
 
 test('shadow migration is repeatable', async () => {
   await migrate(client);
