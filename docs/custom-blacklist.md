@@ -3,8 +3,8 @@
 ## Implementation status
 
 Strict public contracts, a revision store, automatic run snapshots, and authorized
-HTTP endpoints are implemented. Blacklist entries are not yet shown in the
-dashboard or evaluated by the worker. Saving an enabled blacklist does not yet
+HTTP endpoints and the Settings editor are implemented. Blacklist entries are not yet
+evaluated by the worker. Saving an enabled blacklist does not yet
 enable moderation actions. Existing moderation settings retain their current format.
 
 ## Entry contract
@@ -144,11 +144,30 @@ fits a single request. Oversized requests return HTTP 413 without writing a revi
 
 ## Remaining implementation
 
-1. Settings editor for creating, editing, disabling, and removing entries.
-2. Literal matcher and deterministic conflict handling before AI processing.
-3. Combined message/author action plans with separate execution outcomes and
+1. Literal matcher and deterministic conflict handling before AI processing.
+2. Combined message/author action plans with separate execution outcomes and
    idempotency. Ban takes priority over timeout; deletion remains independent.
-4. Decision provenance in chat and History, plus integration and live verification.
+3. Decision provenance in chat and History, plus integration and live verification.
+
+## Settings editor
+
+Open `/settings/moderation` and select a channel. Owners can add, edit, disable,
+and remove entries in the Custom blacklist section. Moderators can read the saved
+configuration. Choose Word, Phrase, or Domain and an action for each entry.
+Timeout actions require a duration in seconds. All patterns are literal and are
+normalized when saved. The editor validates duplicates, durations, entry limits,
+and the 16 KB request size before submission.
+
+Saving appends a revision using the currently loaded revision number. Conflicts
+and uncertain save failures retain the draft and block further writes until
+Reload blacklist and discard changes is selected. Reloading replaces the draft
+with the latest server record. Switching account or channel also resets the draft.
+Background requests do not overwrite unsaved edits. Access failures hide the
+entries and clear the scoped blacklist cache. Writes are never automatically retried.
+
+The editor uses account/channel-scoped TanStack Query caches and validates the
+response channel and saved revision. It clearly indicates that blacklist enforcement
+is still pending. Saved changes are captured only by newly created monitoring runs.
 
 Exceptions and AI thresholds are separate follow-up work. Blacklist matches are
 explicit streamer policy; AI scores do not change their configured action.
@@ -160,6 +179,8 @@ Run from the repository root:
 ```powershell
 npm run format
 npm run check
+npm run test:live-hooks
+npm run build --workspace @moderator/dashboard
 npm run build:core
 npm run db:migrate
 npm run db:runtime

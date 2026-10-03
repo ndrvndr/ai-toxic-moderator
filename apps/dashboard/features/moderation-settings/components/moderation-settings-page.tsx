@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useSession } from '@/features/auth/hooks/use-session';
 import { getErrorMessage } from '@/lib/api-client';
 
+import { CustomBlacklistEditor } from './custom-blacklist-editor';
 import { ModerationSettingsEditor } from './moderation-settings-editor';
 
 export function ModerationSettingsPage() {
@@ -82,6 +83,23 @@ function ChannelSettings({
         channelId={active.channel_id}
         canEdit={active.role === 'OWNER'}
       />
+      <section
+        aria-labelledby="custom-blacklist-heading"
+        className="space-y-4 rounded-lg border p-5"
+      >
+        <h2 id="custom-blacklist-heading" className="text-lg font-semibold">
+          Custom blacklist
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Configure words, phrases, and domains with separate actions for each entry. Blacklist
+          enforcement is not available yet; saving entries currently does not moderate messages.
+        </p>
+        <CustomBlacklistEditor
+          accountId={accountId}
+          channelId={active.channel_id}
+          canEdit={active.role === 'OWNER'}
+        />
+      </section>
     </div>
   );
 }
