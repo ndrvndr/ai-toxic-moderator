@@ -10,6 +10,8 @@
     "node": ">=22.12.0 <23 || >=24.0.0"
   },
   "scripts": {
+    "test:ai-shadow-contracts": "node --experimental-test-isolation=none --test tests/ai-shadow-contracts.test.cjs",
+    "test:ai-shadow-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/ai-shadow-schema.test.cjs",
     "build": "node scripts/build.mjs",
     "check": "npm run typecheck && npm run format:check",
     "test": "node --experimental-test-isolation=none --test tests/contracts.test.cjs tests/config.test.cjs",
@@ -73,12 +75,14 @@
     "format:check": "node scripts/organize-imports.mjs --check && prettier --check ."
   },
   "devDependencies": {
+    "@huggingface/transformers": "3.8.1",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.9.0",
-    "prettier": "3.6.2"
+    "onnxruntime-node": "1.21.0",
+    "prettier": "3.6.2",
+    "typescript": "^5.9.0"
   },
   "overrides": {
     "multer": "2.3.0"

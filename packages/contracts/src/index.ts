@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { category, outcome } from './moderation-enums';
 
+export * from './ai-shadow';
 export * from './chat';
 export * from './history-action-statistics';
 export * from './history-statistics';

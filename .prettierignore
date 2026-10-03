@@ -10,3 +10,4 @@ package-lock.json
 packages/persistence/migrations/
 .env*
 *.tsbuildinfo
+.cache/

@@ -446,6 +446,7 @@ See [YouTube ingestion](docs/youtube-ingestion.md) for the verification scope.
 
 Next, develop and evaluate the AI classification stage (phase 8), including model
 selection, an evaluation dataset, inference integration, and policy safeguards.
+The initial scope and dataset design are in the [AI classification plan](docs/ai-classification-plan.md).
 Integration/connection settings, remaining browser acceptance checks, and
 production security/deployment verification remain separate work.
 
@@ -460,6 +461,7 @@ readiness.
 
 ## Documentation
 
+- [AI classification plan](docs/ai-classification-plan.md)
 - [Development sessions](docs/dev-session-access.md)
 - [Google OAuth setup](docs/google-oauth.md)
 - [Monitoring lifecycle](docs/monitoring-lifecycle.md)

@@ -1,0 +1,282 @@
+[
+  {
+    "id": "safe-greeting",
+    "text": "halo semuanya, selamat sore",
+    "slice": "safe",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "A friendly greeting."
+  },
+  {
+    "id": "safe-compliment",
+    "text": "anjir keren banget bro",
+    "slice": "slang",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "An enthusiastic compliment, not an attack."
+  },
+  {
+    "id": "safe-animal",
+    "text": "anjing laut itu lucu",
+    "slice": "keyword-collision",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "An animal name, not an insult."
+  },
+  {
+    "id": "safe-negation",
+    "text": "jangan bilang goblok ke orang lain ya",
+    "slice": "negation",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Discourages insulting other people."
+  },
+  {
+    "id": "reported-insult",
+    "text": "dia bilang aku anjing, sedih banget",
+    "slice": "quotation",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Reports being insulted rather than attacking someone."
+  },
+  {
+    "id": "criticism",
+    "text": "filmnya jelek banget, buang-buang duit",
+    "slice": "criticism",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Criticizes a film rather than degrading a person."
+  },
+  {
+    "id": "direct-insult",
+    "text": "dasar goblok lu",
+    "slice": "direct-insult",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "A direct degrading insult."
+  },
+  {
+    "id": "direct-insult-mixed",
+    "text": "you are stupid banget",
+    "slice": "mixed-language",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "A directed insult in mixed language."
+  },
+  {
+    "id": "obfuscated-insult",
+    "text": "dasar g0bl0k lu",
+    "slice": "obfuscation",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "A directed insult with character substitution."
+  },
+  {
+    "id": "indonesian-threat",
+    "text": "awas lu, gw bacok kalau ketemu",
+    "slice": "known-limitation-threat",
+    "proposed_interpretation": "THREAT",
+    "rationale": "A violent threat; detecting abuse alone does not establish threat recognition."
+  },
+  {
+    "id": "safe-link",
+    "text": "dokumentasinya di https://example.com/docs",
+    "slice": "url",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "A documentation reference using a fictional domain."
+  },
+  {
+    "id": "unrelated-spam",
+    "text": "subscribe subscribe subscribe subscribe",
+    "slice": "outside-toxicity-scope",
+    "proposed_interpretation": "OUTSIDE_SCOPE",
+    "rationale": "Repetition may be spam without being toxic."
+  },
+  {
+    "id": "safe-thanks",
+    "text": "makasih sudah bantu jawab pertanyaanku",
+    "slice": "safe",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Expresses gratitude."
+  },
+  {
+    "id": "safe-question",
+    "text": "boleh jelasin lagi cara install aplikasinya?",
+    "slice": "safe",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "A normal technical question."
+  },
+  {
+    "id": "safe-disagreement",
+    "text": "aku kurang setuju, menurutku datanya belum cukup",
+    "slice": "criticism",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Disagrees with an argument without an insult."
+  },
+  {
+    "id": "safe-bug-report",
+    "text": "aplikasinya error lagi, tombolnya nggak bisa diklik",
+    "slice": "criticism",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Describes a software failure."
+  },
+  {
+    "id": "safe-pet",
+    "text": "aku lagi ngajak anjingku jalan sore",
+    "slice": "keyword-collision",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Describes a pet."
+  },
+  {
+    "id": "safe-animal-question",
+    "text": "apa bedanya anjing laut dan singa laut?",
+    "slice": "keyword-collision",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Asks about animal species."
+  },
+  {
+    "id": "safe-no-insult",
+    "text": "kamu bukan orang bodoh, kita semua masih belajar",
+    "slice": "negation",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Reassures the reader and negates an insult."
+  },
+  {
+    "id": "safe-stop-harassment",
+    "text": "berhenti menghina dia, jangan panggil dia tolol",
+    "slice": "negation",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Counters harassment."
+  },
+  {
+    "id": "safe-moderation-discussion",
+    "text": "kata goblok sebaiknya tidak dipakai untuk menyerang penonton",
+    "slice": "educational",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Discusses moderation without targeting a viewer."
+  },
+  {
+    "id": "safe-mixed-thanks",
+    "text": "thanks bro, tutorialnya really helpful",
+    "slice": "mixed-language",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "A mixed-language compliment."
+  },
+  {
+    "id": "safe-slang-praise",
+    "text": "gila sih skill mainnya keren parah",
+    "slice": "slang",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Slang expressing admiration."
+  },
+  {
+    "id": "safe-emoji",
+    "text": "mantap bang 🔥🔥 semangat terus!",
+    "slice": "emoji",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Encouragement with emoji."
+  },
+  {
+    "id": "insult-tolol",
+    "text": "lu tolol banget, pertanyaan gampang aja nggak ngerti",
+    "slice": "direct-insult",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "Degrades a person for asking a question."
+  },
+  {
+    "id": "insult-bodoh",
+    "text": "kamu bodoh, keluar aja dari chat ini",
+    "slice": "direct-insult",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "An insult combined with exclusion."
+  },
+  {
+    "id": "insult-degrading",
+    "text": "dasar manusia nggak berguna",
+    "slice": "direct-insult",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "Degrading language without the baseline insult keywords."
+  },
+  {
+    "id": "insult-english",
+    "text": "you are a worthless idiot",
+    "slice": "english",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "A direct English insult."
+  },
+  {
+    "id": "insult-elongated",
+    "text": "dasar goblooook lu",
+    "slice": "obfuscation",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "An insult with repeated characters."
+  },
+  {
+    "id": "insult-spaced",
+    "text": "lu g o b l o k banget",
+    "slice": "obfuscation",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "An insult split by spaces."
+  },
+  {
+    "id": "insult-censored",
+    "text": "dasar g*bl*k lu",
+    "slice": "obfuscation",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "An insult with censored letters."
+  },
+  {
+    "id": "insult-mention",
+    "text": "@viewer kamu idiot banget",
+    "slice": "mention",
+    "proposed_interpretation": "ABUSIVE",
+    "rationale": "An insult directed at a fictional handle."
+  },
+  {
+    "id": "threat-indonesian-explicit",
+    "text": "gw bakal cari lu terus gw bunuh",
+    "slice": "known-limitation-threat",
+    "proposed_interpretation": "THREAT",
+    "rationale": "An explicit violent threat in Indonesian."
+  },
+  {
+    "id": "threat-english-explicit",
+    "text": "i will find you and kill your family",
+    "slice": "english-threat",
+    "proposed_interpretation": "THREAT",
+    "rationale": "An explicit violent threat in English."
+  },
+  {
+    "id": "safe-threat-negation",
+    "text": "jangan ancam orang dengan bilang akan membunuh mereka",
+    "slice": "negation",
+    "proposed_interpretation": "CLEAR",
+    "rationale": "Discourages threats rather than issuing one."
+  },
+  {
+    "id": "ambiguous-self-directed",
+    "text": "gue goblok banget tadi salah pencet",
+    "slice": "self-directed",
+    "proposed_interpretation": "AMBIGUOUS",
+    "rationale": "Self-directed profanity requires an explicit policy choice."
+  },
+  {
+    "id": "ambiguous-banter",
+    "text": "dasar anjing wkwk",
+    "slice": "context-required",
+    "proposed_interpretation": "AMBIGUOUS",
+    "rationale": "Could be hostile or friendly banter; context is missing."
+  },
+  {
+    "id": "ambiguous-reference",
+    "text": "dia emang begitu dari dulu",
+    "slice": "context-required",
+    "proposed_interpretation": "AMBIGUOUS",
+    "rationale": "The referent and intended meaning are unknown."
+  },
+  {
+    "id": "outside-gambling",
+    "text": "promo slot bonus besar daftar sekarang",
+    "slice": "outside-toxicity-scope",
+    "proposed_interpretation": "OUTSIDE_SCOPE",
+    "rationale": "Gambling promotion is a separate moderation concern."
+  },
+  {
+    "id": "outside-scam",
+    "text": "kirim kode OTP kamu supaya hadiah bisa dicairkan",
+    "slice": "outside-toxicity-scope",
+    "proposed_interpretation": "OUTSIDE_SCOPE",
+    "rationale": "A credential scam can contain no toxic language."
+  }
+]
