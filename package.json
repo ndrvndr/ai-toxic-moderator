@@ -10,6 +10,7 @@
     "node": ">=22.12.0 <23 || >=24.0.0"
   },
   "scripts": {
+    "test:laskar-shadow-adapter": "node --experimental-test-isolation=none --test tests/laskar-shadow-adapter.test.cjs",
     "test:ai-shadow-store": "node --experimental-test-isolation=none --test tests/ai-shadow-store.test.cjs",
     "test:ai-shadow-contracts": "node --experimental-test-isolation=none --test tests/ai-shadow-contracts.test.cjs",
     "test:ai-shadow-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/ai-shadow-schema.test.cjs",

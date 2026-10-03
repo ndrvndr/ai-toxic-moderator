@@ -104,6 +104,37 @@ npm run test:ai-shadow-schema
 The schema suite includes competing transactions using worker permissions, replay
 of the persisted output, and rollback of an inserted result.
 
+### Local worker adapter
+
+`loadLaskarShadow(cacheDirectory)` loads the manifest, metadata, tokenizer,
+remapping, and ONNX session once into a `LaskarShadowAdapter`. Pass the prototype
+cache directory; the adapter does not download artifacts. It validates the four
+rating mappings and runtime versions before native imports. CPU inference uses
+one intra-op and one inter-op thread.
+
+The adapter preserves normalization parity with the prototype, validates logits,
+and emits `AiShadowResult`. Empty or oversized input, invalid output, and inference
+failures produce error results with no fabricated score. Truncation is recorded.
+Only one inference is accepted at a time; `AI_ADAPTER_BUSY` is backpressure for
+the future coordinator to defer, not a terminal error to persist for a message.
+Disposal waits for active inference and releases the native session once.
+
+This adapter is not yet wired into worker startup or monitoring. No timeout is
+implemented: a future isolated inference runner must enforce deadlines and recover
+from native crashes or hangs. A Promise timeout alone cannot cancel native work.
+Dependency pinning cannot guarantee native binary compatibility after an incomplete
+installation; the earlier local prototype needed `npm ci` to repair its environment.
+
+Before wiring startup, add the pinned libraries as worker runtime dependencies:
+
+```powershell
+npm install --save-exact @huggingface/transformers@3.8.1 onnxruntime-node@1.21.0 --workspace @moderator/worker
+npm run test:laskar-shadow-adapter
+```
+
+Adapter tests use a fake backend and require neither artifact downloads nor native
+inference. Real adapter startup and inference have not yet been verified.
+
 ### Expanded local run: developer reported, 2026-10-03
 
 The developer supplied outputs for all 40 probes. Compared with proposed labels,
