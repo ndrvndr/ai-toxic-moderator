@@ -7,6 +7,7 @@ export * from './history-action-statistics';
 export * from './history-statistics';
 export * from './moderation-action';
 export { category, outcome } from './moderation-enums';
+export * from './moderation-settings';
 export * from './monitoring';
 export * from './saved-sessions';
 export * from './youtube-ingestion';

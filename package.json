@@ -38,6 +38,7 @@
     "test:classification-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/classification-schema.test.cjs",
     "test:classification-store": "node --experimental-test-isolation=none --test tests/classification-store.test.cjs",
     "test:moderation-action-contracts": "node --experimental-test-isolation=none --test tests/moderation-action-contracts.test.cjs",
+    "test:moderation-settings-contracts": "node --experimental-test-isolation=none --test tests/moderation-settings-contracts.test.cjs",
     "test:action-planner": "node --experimental-test-isolation=none --test tests/action-planner.test.cjs",
     "test:action-plan-store": "node --experimental-test-isolation=none --test tests/action-plan-store.test.cjs",
     "test:youtube-moderation": "node --experimental-test-isolation=none --test tests/youtube-moderation.test.cjs",
