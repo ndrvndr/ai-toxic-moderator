@@ -19,7 +19,7 @@ export class AiShadowCoordinator {
     uuid.parse(runId);
     this.busy = true;
     try {
-      const candidate = await this.reader.next(runId);
+      const candidate = await this.reader.next(runId, signal);
       if (signal.aborted) return { kind: 'CANCELLED' as const };
       if (!candidate) return { kind: 'IDLE' as const };
       const identity = aiShadowIdentity.parse(candidate.identity);

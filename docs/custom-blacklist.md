@@ -8,7 +8,8 @@ persistence, classification integration, and executor provenance validation are
 implemented. The normal worker evaluates the captured blacklist before built-in
 rules. Linked and verified plans can execute while monitoring is active and the
 corresponding worker action switches are enabled. Existing moderation settings
-keep their format. AI shadow inference is still scheduled independently.
+keep their format. AI shadow selection skips messages matched by the captured
+blacklist without creating a model result for them.
 
 ## Entry contract
 
@@ -147,9 +148,8 @@ fits a single request. Oversized requests return HTTP 413 without writing a revi
 
 ## Remaining implementation
 
-1. Skip AI shadow inference for messages matched by the captured blacklist.
-2. Display decision provenance in Live and History.
-3. Verify the complete flow through integration tests and a controlled livestream.
+1. Display decision provenance in Live and History.
+2. Verify the complete flow through integration tests and a controlled livestream.
 
 ## Settings editor
 
@@ -227,7 +227,7 @@ policy is cached or queried by this reader.
 
 `ClassificationStore` invokes this reader and saves the decision through the same
 ingestion transaction. The reader itself does not persist decisions or send
-requests. AI shadow scheduling is still independent and will be updated separately.
+requests. AI shadow selection separately checks the same original run snapshot.
 
 ## Combined action planner
 
@@ -343,6 +343,31 @@ results. A rejected deletion does not prevent a separately eligible timeout or b
 An unavailable author does not prevent deletion. Each request uses the existing
 execution claim and result persistence; blacklist planning never calls YouTube.
 
+## AI shadow exclusion
+
+`AiShadowCandidateReader` excludes observations with a persisted, scoped
+`BLACKLIST_MATCH` decision. For observations without that audit record, including
+historical and controlled-test observations, it evaluates text against the original
+run's captured snapshot. It never reads the current channel configuration. Missing,
+invalid, or foreign snapshots fail before inference. Disabled, `DEFAULT`, and
+`LEGACY` configurations retain normal shadow selection.
+
+The reader scans pages of 50 observations using a local timestamp/ID cursor,
+preserving PostgreSQL timestamp precision. Skipped observations do not prevent a
+later eligible message from being selected. Cancellation is checked between reads
+and rows. The cursor is local to selection and does not change ingestion checkpoints.
+
+Skipped messages invoke no model prediction and create no shadow result or shadow
+update event. They are not assigned a fabricated safe rating, error, or skipped
+status. Previously stored AI results remain unchanged; selecting another model
+revision still respects the captured blacklist. Nonmatching messages continue
+through the opt-in shadow pipeline without changing moderation decisions.
+
+Tests cover worker permissions, persisted audit exclusion, snapshot fallback across
+pages, changed channel revisions, new runs, restart, model revisions, and preserved
+historical output. Inference is simulated; these checks do not establish native
+model performance or a new browser/livestream verification result.
+
 ## Manual validation
 
 Run from the repository root:
@@ -361,6 +386,10 @@ npm run test:custom-blacklist-matcher
 npm run test:run-blacklist-matcher
 npm run test:blacklist-action-planner
 npm run test:blacklist-action-store
+npm run test:ai-shadow-coordinator
+npm run test:ai-shadow-cycle
+npm run test:ai-shadow-schema
+npm run test:ai-shadow-store
 npm run test:delete-execution-store
 npm run test:classification-store
 npm run test:controlled-delete-policy

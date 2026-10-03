@@ -124,7 +124,7 @@ after(async () => {
   }
 });
 
-async function fixture() {
+async function fixture(configuration = null) {
   const accountId = randomUUID();
   const channelId = randomUUID();
   const sessionId = randomUUID();
@@ -169,6 +169,11 @@ async function fixture() {
     [sessionId, channelId, `broadcast-${randomUUID()}`, `chat-${randomUUID()}`],
   );
 
+  if (configuration)
+    await client.query(
+      'INSERT INTO channel_custom_blacklists(id, channel_id, revision, configuration, created_by) VALUES ($1, $2, 1, $3::jsonb, $4)',
+      [randomUUID(), channelId, JSON.stringify(configuration), accountId],
+    );
   await client.query(
     `
       INSERT INTO monitoring_runs(
@@ -617,6 +622,188 @@ test('worker can insert and read shadow rows while API has read-only access', as
       if (!exists.rowCount) continue;
       await client.query(`DROP OWNED BY "${role}"`);
       await client.query(`DROP ROLE IF EXISTS "${role}"`);
+    }
+  }
+});
+
+test('worker shadow selection skips captured blacklist matches across pages and preserves historical output', async () => {
+  const { provisionWorkerRole } = await import('../scripts/worker-role.mjs');
+  const { AiShadowCandidateReader } = source(
+    'apps/worker/src/ingestion/ai-shadow-candidate-reader.ts',
+  );
+  const { AiShadowCoordinator } = source('apps/worker/src/ingestion/ai-shadow-coordinator.ts');
+  const { AiShadowResultWriter } = source('apps/worker/src/ingestion/ai-shadow-result-writer.ts');
+  const { createClassificationStore } = source(
+    'apps/worker/src/ingestion/create-classification-store.ts',
+  );
+  const { transaction } = source('packages/persistence/src/index.ts');
+  const role = `ai_blacklist_${randomUUID().replaceAll('-', '')}`;
+  let pool;
+  let provisioned = false;
+  try {
+    await provisionWorkerRole(client, {
+      role,
+      password: 'local-blacklist-shadow-test-only',
+      schema,
+    });
+    provisioned = true;
+    pool = new Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema} -c role=${role}`,
+      max: 2,
+      statement_timeout: 5000,
+    });
+    const configuration = {
+      schema_version: 1,
+      enabled: true,
+      rules: [
+        {
+          id: randomUUID(),
+          enabled: true,
+          match_type: 'WORD',
+          pattern: 'abc',
+          action: 'DELETE',
+        },
+      ],
+    };
+    const f = await fixture(configuration);
+    const auditedId = await insertObservation(f, randomUUID(), {
+      textMessageDetails: { messageText: 'abc' },
+    });
+    const audited = (
+      await client.query(
+        'SELECT external_message_id, payload FROM youtube_chat_observations WHERE id = $1',
+        [auditedId],
+      )
+    ).rows[0];
+    await transaction(pool, (connection) =>
+      createClassificationStore().classify(connection, {
+        channelId: f.channelId,
+        sessionId: f.sessionId,
+        runId: f.runId,
+        observationId: auditedId,
+        externalMessageId: audited.external_message_id,
+        publishedAt: '2026-09-20T00:00:00Z',
+        payload: audited.payload,
+      }),
+    );
+    // Unaudited observations exercise the captured-snapshot fallback and cross a full page.
+    const skipped = [auditedId];
+    for (let index = 0; index < 51; index++)
+      skipped.push(
+        await insertObservation(f, randomUUID(), {
+          textMessageDetails: { messageText: 'abc' },
+        }),
+      );
+    const historicalId = await insertObservation(f, randomUUID(), {
+      textMessageDetails: { messageText: 'abc' },
+    });
+    await insertShadow(f, historicalId);
+    const historical = (
+      await client.query('SELECT * FROM youtube_ai_shadow_results WHERE observation_id = $1', [
+        historicalId,
+      ])
+    ).rows[0];
+    const safeId = await insertObservation(f, randomUUID(), {
+      textMessageDetails: { messageText: 'Hello viewer' },
+    });
+    // Current channel edits cannot change the original run's captured exclusion.
+    await client.query(
+      'INSERT INTO channel_custom_blacklists(id, channel_id, revision, configuration, created_by) VALUES ($1, $2, 2, $3::jsonb, $4)',
+      [
+        randomUUID(),
+        f.channelId,
+        JSON.stringify({ schema_version: 1, enabled: false, rules: [] }),
+        f.accountId,
+      ],
+    );
+    const model = {
+      model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
+      model_revision: 'a'.repeat(40),
+      model_variant: 'INT8',
+      adapter_version: 'laskar-1',
+    };
+    const inferred = [];
+    const runner = {
+      async predict(identity, text) {
+        inferred.push({ id: identity.observation_id, text });
+        return {
+          ...identity,
+          status: 'SUCCEEDED',
+          rating: 0,
+          severity_score: 0.1,
+          truncated: false,
+          inference_ms: 5,
+          error_code: null,
+        };
+      },
+    };
+    const writer = new AiShadowResultWriter(pool);
+    const coordinator = () =>
+      new AiShadowCoordinator(new AiShadowCandidateReader(pool, model), runner, writer);
+    const signal = new AbortController().signal;
+    assert.equal((await coordinator().tick(f.runId, signal)).kind, 'INSERTED');
+    assert.deepEqual(inferred, [{ id: safeId, text: 'Hello viewer' }]);
+    assert.equal((await coordinator().tick(f.runId, signal)).kind, 'IDLE');
+    assert.equal(
+      (
+        await new AiShadowCandidateReader(pool, { ...model, model_revision: 'b'.repeat(40) }).next(
+          f.runId,
+        )
+      ).identity.observation_id,
+      safeId,
+    );
+    assert.equal(
+      (
+        await client.query(
+          'SELECT id FROM youtube_ai_shadow_results WHERE observation_id = ANY($1::uuid[])',
+          [skipped],
+        )
+      ).rowCount,
+      0,
+    );
+    assert.deepEqual(
+      (
+        await client.query('SELECT * FROM youtube_ai_shadow_results WHERE observation_id = $1', [
+          historicalId,
+        ])
+      ).rows[0],
+      historical,
+    );
+    assert.equal(
+      (await client.query('SELECT sequence FROM live_events WHERE run_id = $1', [f.runId]))
+        .rowCount,
+      1,
+    );
+    assert.equal(
+      (
+        await client.query('SELECT id FROM youtube_blacklist_decisions WHERE run_id = $1', [
+          f.runId,
+        ])
+      ).rowCount,
+      1,
+    );
+    // A new run can adopt the disabled revision without changing the old run's result.
+    await client.query(
+      "UPDATE monitoring_runs SET status = 'STOPPED', finished_at = clock_timestamp() WHERE id = $1",
+      [f.runId],
+    );
+    const newRun = randomUUID();
+    await client.query(
+      'INSERT INTO monitoring_runs(id, channel_id, session_id, requested_by_account_id, credential_account_id) VALUES ($1, $2, $3, $4, $4)',
+      [newRun, f.channelId, f.sessionId, f.accountId],
+    );
+    const newId = await insertObservation({ ...f, runId: newRun }, randomUUID(), {
+      textMessageDetails: { messageText: 'abc' },
+    });
+    assert.equal((await coordinator().tick(newRun, signal)).kind, 'INSERTED');
+    assert.deepEqual(inferred[1], { id: newId, text: 'abc' });
+    assert.equal((await coordinator().tick(f.runId, signal)).kind, 'IDLE');
+  } finally {
+    if (pool) await pool.end();
+    if (provisioned) {
+      await client.query(`DROP OWNED BY "${role}"`);
+      await client.query(`DROP ROLE "${role}"`);
     }
   }
 });

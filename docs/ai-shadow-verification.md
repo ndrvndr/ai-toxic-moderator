@@ -62,6 +62,24 @@ advance the session cursor.
 To disable new inference, stop the worker, set `AI_SHADOW_ENABLED=false`, and
 restart it. Existing results should remain visible. No database reset is needed.
 
+## Captured blacklist exclusion
+
+Shadow candidate selection now skips text matched by the original run's captured
+custom blacklist. Persisted scoped blacklist decisions are excluded in SQL;
+observations without a decision are checked with the same literal matcher and
+captured configuration. Current channel edits do not change an earlier run.
+Missing or invalid snapshots fail before model inference.
+
+Skipping creates no AI result or synthetic safe rating. Existing historical output,
+including the evidence recorded above, remains stored and visible. Nonmatching
+messages retain normal opt-in shadow processing. A different model revision does
+not override blacklist exclusion.
+
+The coordinator, cycle, and schema tests include simulated inference and database
+coverage for this behavior. Run them manually after building shared packages.
+This implementation update does not add native inference, browser, or livestream
+evidence to the verification record above.
+
 ## Model-use decision
 
 Keep AI in opt-in shadow mode. It stores and displays model output without creating

@@ -70,6 +70,14 @@ test('cycle scopes selection and persists terminal output using the configured r
     observation_id: '30000000-0000-4000-8000-000000000003',
     run_id: runId,
     text: 'Hello fixture',
+    snapshot: {
+      run_id: runId,
+      channel_id: '10000000-0000-4000-8000-000000000001',
+      blacklist_id: null,
+      blacklist_revision: null,
+      source: 'DEFAULT',
+      configuration: { schema_version: 1, enabled: false, rules: [] },
+    },
   };
   let output;
   let persisted = false;
@@ -82,6 +90,8 @@ test('cycle scopes selection and persists terminal output using the configured r
         revision,
         'INT8',
         'laskar-shadow-1',
+        null,
+        null,
       ]);
       return { rows: persisted ? [] : [row] };
     },

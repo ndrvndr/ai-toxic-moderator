@@ -23,6 +23,208 @@ const model = {
   model_variant: identity.model_variant,
   adapter_version: identity.adapter_version,
 };
+const defaultSnapshot = {
+  run_id: identity.run_id,
+  channel_id: identity.channel_id,
+  blacklist_id: null,
+  blacklist_revision: null,
+  source: 'DEFAULT',
+  configuration: { schema_version: 1, enabled: false, rules: [] },
+};
+const enabledSnapshot = {
+  ...defaultSnapshot,
+  source: 'SAVED',
+  blacklist_id: '50000000-0000-4000-8000-000000000005',
+  blacklist_revision: 1,
+  configuration: {
+    schema_version: 1,
+    enabled: true,
+    rules: [
+      {
+        id: '60000000-0000-4000-8000-000000000006',
+        enabled: true,
+        match_type: 'WORD',
+        pattern: 'abc',
+        action: 'DELETE',
+      },
+    ],
+  },
+};
+
+test('blacklist candidates are skipped without starving the next message or invoking inference', async () => {
+  const firstId = identity.observation_id;
+  const nextId = '70000000-0000-4000-8000-000000000007';
+  const receivedAt = '2026-10-04 12:00:00.123456+00';
+  let reads = 0;
+  const reader = new AiShadowCandidateReader(
+    {
+      async query(_sql, values) {
+        reads++;
+        assert.deepEqual(values.slice(5), reads === 1 ? [null, null] : [receivedAt, firstId]);
+        return {
+          rows: [
+            {
+              channel_id: identity.channel_id,
+              session_id: identity.session_id,
+              observation_id: reads === 1 ? firstId : nextId,
+              run_id: identity.run_id,
+              text: reads === 1 ? 'abc' : 'Hello fixture',
+              received_at: receivedAt,
+              snapshot: enabledSnapshot,
+            },
+          ],
+        };
+      },
+    },
+    model,
+  );
+  let inferred = 0;
+  const coordinator = new AiShadowCoordinator(
+    reader,
+    {
+      async predict(value, text) {
+        inferred++;
+        assert.equal(value.observation_id, nextId);
+        assert.equal(text, 'Hello fixture');
+        return { ...success, ...value };
+      },
+    },
+    {
+      async save(result) {
+        return { id: nextId, result, inserted: true };
+      },
+    },
+  );
+  assert.equal((await coordinator.tick(identity.run_id, signal())).kind, 'INSERTED');
+  assert.equal(reads, 2);
+  assert.equal(inferred, 1);
+});
+
+test('an all-blacklist queue does not infer, persist, or fabricate a shadow result', async () => {
+  let reads = 0;
+  const reader = new AiShadowCandidateReader(
+    {
+      async query() {
+        return {
+          rows:
+            ++reads === 1
+              ? [
+                  {
+                    channel_id: identity.channel_id,
+                    session_id: identity.session_id,
+                    observation_id: identity.observation_id,
+                    run_id: identity.run_id,
+                    text: 'abc',
+                    received_at: '2026-10-04 12:00:00.123456+00',
+                    snapshot: enabledSnapshot,
+                  },
+                ]
+              : [],
+        };
+      },
+    },
+    model,
+  );
+  const fail = () => assert.fail('Blacklisted text must not reach AI inference or persistence.');
+  const coordinator = new AiShadowCoordinator(reader, { predict: fail }, { save: fail });
+  assert.equal((await coordinator.tick(identity.run_id, signal())).kind, 'IDLE');
+});
+
+test('missing, invalid and foreign blacklist snapshots fail before inference', async () => {
+  for (const snapshot of [
+    null,
+    { ...defaultSnapshot, configuration: {} },
+    { ...defaultSnapshot, run_id: '90000000-0000-4000-8000-000000000009' },
+    { ...defaultSnapshot, channel_id: '90000000-0000-4000-8000-000000000009' },
+  ]) {
+    const reader = new AiShadowCandidateReader(
+      {
+        async query() {
+          return {
+            rows: [
+              {
+                channel_id: identity.channel_id,
+                session_id: identity.session_id,
+                observation_id: identity.observation_id,
+                run_id: identity.run_id,
+                text: 'Hello fixture',
+                snapshot,
+              },
+            ],
+          };
+        },
+      },
+      model,
+    );
+    const fail = () => assert.fail('Invalid snapshots must not reach inference or persistence.');
+    await assert.rejects(
+      new AiShadowCoordinator(reader, { predict: fail }, { save: fail }).tick(
+        identity.run_id,
+        signal(),
+      ),
+    );
+  }
+});
+
+test('cancellation during a blacklist scan stops before inference or another query', async () => {
+  const controller = new AbortController();
+  let reads = 0;
+  const reader = new AiShadowCandidateReader(
+    {
+      async query() {
+        reads++;
+        controller.abort();
+        return {
+          rows: [
+            {
+              channel_id: identity.channel_id,
+              session_id: identity.session_id,
+              observation_id: identity.observation_id,
+              run_id: identity.run_id,
+              text: 'abc',
+              received_at: '2026-10-04 12:00:00.123456+00',
+              snapshot: enabledSnapshot,
+            },
+          ],
+        };
+      },
+    },
+    model,
+  );
+  const fail = () => assert.fail('Cancelled selection must not infer or persist.');
+  const coordinator = new AiShadowCoordinator(reader, { predict: fail }, { save: fail });
+  assert.equal((await coordinator.tick(identity.run_id, controller.signal)).kind, 'CANCELLED');
+  assert.equal(reads, 1);
+});
+
+test('default, legacy and disabled saved snapshots retain normal AI selection', async () => {
+  for (const snapshot of [
+    defaultSnapshot,
+    { ...defaultSnapshot, source: 'LEGACY' },
+    { ...enabledSnapshot, configuration: { ...enabledSnapshot.configuration, enabled: false } },
+  ]) {
+    const reader = new AiShadowCandidateReader(
+      {
+        async query() {
+          return {
+            rows: [
+              {
+                channel_id: identity.channel_id,
+                session_id: identity.session_id,
+                observation_id: identity.observation_id,
+                run_id: identity.run_id,
+                text: 'abc',
+                snapshot,
+              },
+            ],
+          };
+        },
+      },
+      model,
+    );
+    assert.deepEqual(await reader.next(identity.run_id), { identity, text: 'abc' });
+  }
+});
 const success = {
   ...identity,
   status: 'SUCCEEDED',
@@ -208,7 +410,7 @@ test('candidate reader binds run and model identity and rejects invalid run IDs 
     {
       async query(_sql, values) {
         queries++;
-        assert.deepEqual(values, [identity.run_id, ...Object.values(model)]);
+        assert.deepEqual(values, [identity.run_id, ...Object.values(model), null, null]);
         return {
           rows: [
             {
@@ -217,6 +419,7 @@ test('candidate reader binds run and model identity and rejects invalid run IDs 
               observation_id: identity.observation_id,
               run_id: identity.run_id,
               text: 'Hello fixture',
+              snapshot: defaultSnapshot,
             },
           ],
         };
