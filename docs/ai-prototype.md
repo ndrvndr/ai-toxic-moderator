@@ -164,7 +164,9 @@ npm run build --workspace @moderator/worker
 ```
 
 Runner tests simulate IPC, crash, timeout, restart, and cleanup using fake child
-processes. Real process inference and monitoring integration are not yet verified.
+processes. Developer-reported native inference through the worker is recorded in
+[shadow verification](ai-shadow-verification.md); the fake-process tests alone
+do not establish native runtime behavior.
 
 ### Stored-message shadow coordinator
 
@@ -270,8 +272,9 @@ npm run db:worker
 Start the configured process with `npm run dev:worker`. AI results are included in
 chat API responses and publish WebSocket invalidation events as described below.
 They are displayed in the shared dashboard chat renderer and are not used for moderation decisions.
-Lifecycle tests use fake inference; real child startup
-and model output still require the later integration verification.
+Lifecycle tests use fake inference. Separate developer-reported native model
+output and saved-session presentation are recorded in
+[shadow verification](ai-shadow-verification.md).
 
 ### Chat API and live delivery
 
@@ -365,8 +368,11 @@ npm run build --workspace @moderator/dashboard
 `chat-ai-shadow.test.mts` covers missing output, all supported ratings and errors,
 truncation, model provenance, and updates that preserve existing moderation results.
 It also renders both the Live panel and the saved-session viewer with mocked query
-hooks. These are presentation checks; actual inference, WebSocket delivery, and
-browser appearance still need the next end-to-end verification step.
+hooks. These are presentation checks. Separate native inference and History
+browser output have developer-reported evidence in
+[shadow verification](ai-shadow-verification.md). AI-specific WebSocket frames,
+automatic browser refresh, and newly ingested live-message inference still need
+explicit verification evidence.
 
 ### Expanded local run: developer reported, 2026-10-03
 
@@ -377,7 +383,7 @@ Two Indonesian threats received abusive ratings and one English threat received
 rating 4. Ambiguous and out-of-scope examples are not included in binary accuracy.
 All inputs were untruncated. Subsequent inference times ranged from 3.1 to 8.2 ms.
 Labels remain proposed and the sample is curated, so these are exploratory counts.
-Shadow mode remains the integration target; no enforcement threshold is selected.
+Shadow mode is the implemented integration; no enforcement threshold is selected.
 
 Run the new foundation checks manually:
 

@@ -6,15 +6,19 @@ Phase 8 begins after the developer-reported fresh-database
 [end-to-end verification](end-to-end-verification.md). This document defines the
 initial scope and evaluation plan for a portfolio prototype. The first candidate is
 `laskar-ks/toxic-guardrail-minilm-id-en`; see the [standalone prototype](ai-prototype.md).
-The developer reported successful inference on the original 12 examples, including
-false positives on negation and criticism. The fixture set now contains 40 proposed
-examples awaiting execution and manual review. Classification contracts and
-AI-driven moderation actions are not changed by this step.
+The developer supplied inference output for all 40 exploratory examples, including
+false positives on negation, criticism, and counterspeech. Their interpretations
+remain proposed labels rather than reviewed ground truth. The opt-in worker now
+persists immutable shadow results and exposes them through the authorized chat API
+and shared Live/History renderer. Native inference and History presentation have
+developer-reported evidence; see [shadow verification](ai-shadow-verification.md).
+AI output does not change rule classifications or moderation actions.
 
 The first objective is to evaluate whether a model improves Indonesian chat
 classification, especially on messages that keyword rules cannot interpret
 reliably. Existing rule-based classification and execution behavior remain the
-baseline. Model integration starts in shadow mode.
+baseline. The portfolio implementation remains in shadow mode; no AI enforcement
+threshold has been selected.
 
 ## Initial scope
 
@@ -176,7 +180,7 @@ precision, coverage, and resource usage. Review the consequences separately for
 DELETE, TIMEOUT, and BAN. A high general toxicity score alone is insufficient
 evidence for a permanent ban.
 
-## Planned inference and persistence boundaries
+## Inference and persistence boundaries
 
 The model consumes message text through a worker adapter. Chat text is untrusted
 data, not instructions, executable code, or a tool request. The model never calls
@@ -184,19 +188,22 @@ YouTube, selects credentials, or directly executes moderation actions.
 
 Inference must run outside long-lived SQL transactions, with bounded concurrency,
 timeouts, bounded input, and graceful shutdown. Loading a model should happen once
-per worker instance rather than once per message. Runtime scheduling and durable
-work/recovery details will be designed before integration; this plan does not
-require switching the existing ingestion work list to BullMQ.
+per inference child rather than once per message. The implemented worker handles
+one candidate per tick from an explicitly selected run, including stopped runs.
+It reuses compatible stored results after restart and isolates native inference
+in a child process. This does not require switching ingestion to BullMQ.
 
 Persist immutable AI results separately from existing rule classifications, bound
 to the observation, channel/session, and inference configuration. Record artifact
-revision, preprocessing/tokenizer version, label mapping, input digest, scores,
-completion status, and timing metadata. Replay must reuse compatible persisted
+revision, variant, adapter version, rating, score, truncation, completion status,
+and timing metadata. The current shadow schema does not store an input digest or
+an application category mapping. Replay must reuse compatible persisted
 results rather than assigning a new model to old observations implicitly.
 
 Reasons must identify their source. A class score without evidence cannot be
 presented as a verified explanation of intent. Initial display can state the model
-label and applied threshold/mapping without fabricating quotes or reasoning.
+label and score without fabricating quotes or reasoning. The current display
+does not apply an enforcement threshold or category mapping.
 
 Missing models, incompatible labels, failures, timeout, and truncated/unsupported
 input must have explicit statuses. They must not be converted into successful safe
@@ -214,17 +221,21 @@ that subsequent configuration changes do not alter an existing run's decisions.
 Retain current authorization, lifecycle, repeated-timeout, and UNKNOWN guards.
 An uncertain model result does not bypass these guards or trigger a permanent ban.
 
-## Implementation sequence
+## Portfolio implementation status
 
-1. Scope and evaluation plan: this document.
-2. Annotation contracts, guidance, development fixtures, partition validation,
-   and a versioned dataset manifest.
-3. Candidate/model runtime investigation and a documented selection decision.
-4. AI result contracts and the worker adapter boundary.
-5. Inference lifecycle, immutable persistence, durable recovery, and version binding.
-6. Shadow-mode integration with Live/History display and evaluation reporting.
-7. Acceptance review, validated thresholds, and versioned AI action policy/Settings.
-8. Regression and live E2E verification before enabling AI-driven actions.
+1. Scope, model investigation, and 40 authored exploratory probes: documented.
+2. Local tokenizer, vocabulary remapping, and pinned INT8 runtime: implemented.
+3. Shadow contracts, immutable persistence, and worker permissions: implemented.
+4. Candidate selection, isolated inference, deadlines, and restart recovery: implemented.
+5. Opt-in worker configuration for one monitoring run: implemented.
+6. Authorized chat API, transactional `chat.updated` publication, and shared
+   Live/History display: implemented.
+7. Native inference and saved-session browser verification: developer-reported
+   output recorded in [shadow verification](ai-shadow-verification.md).
+8. Model-use decision: retain shadow mode. AI-driven actions are deferred.
 
-The next step implements the annotation contract and a small authored development
-fixture set. It does not populate the held-out corpus or claim model quality.
+Large dataset collection, fine-tuning, independent held-out accuracy, and an AI
+action policy are outside the current portfolio scope. A future enforcement feature
+would require reviewed labels, validated thresholds, versioned run policy, and
+regression/live verification before enabling actions. The current integration
+does not establish those acceptance criteria.
