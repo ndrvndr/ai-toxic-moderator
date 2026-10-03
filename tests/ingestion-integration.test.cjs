@@ -563,6 +563,330 @@ test('concurrent action plan saves reuse one row under the worker role', async (
   assert.equal((await worker.coordinator.tick()).kind, 'STOPPED');
 });
 
+async function startBlacklistRun(action) {
+  const initial = await startRun();
+  assert.equal((await stopThroughApi(initial)).status, 'STOPPED');
+  const entry = {
+    id: randomUUID(),
+    enabled: true,
+    match_type: 'WORD',
+    pattern: 'e2eblacklist',
+    action,
+    ...(action === 'DELETE_TIMEOUT' ? { duration_seconds: 30 } : {}),
+  };
+  const saved = await request(`/v1/channels/${initial.channel_id}/blacklist`, {
+    method: 'POST',
+    body: {
+      expected_revision: 0,
+      configuration: { schema_version: 1, enabled: true, rules: [entry] },
+    },
+  });
+  assert.equal(saved.status, 200, await saved.clone().text());
+  const record = (await saved.json()).blacklist;
+  const started = await request('/v1/monitoring/start', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': randomUUID() },
+    body: { youtube_broadcast_id: initial.youtube_broadcast_id },
+  });
+  assert.equal(started.status, 200, await started.clone().text());
+  return { run: startMonitoringResponse.parse(await started.json()).run, entry, record };
+}
+
+function blacklistBatch(run, checkpoint, texts) {
+  return {
+    expected_revision: checkpoint.revision,
+    request_page_token: checkpoint.next_page_token,
+    next_page_token: `blacklist-page-${randomUUID()}`,
+    polling_interval_ms: 60000,
+    items: texts.map(({ id, text }) => ({
+      id,
+      snippet: {
+        type: 'textMessageEvent',
+        liveChatId: broadcasts.get(run.youtube_broadcast_id).live_chat_id,
+        publishedAt: new Date().toISOString(),
+        textMessageDetails: { messageText: text },
+      },
+      authorDetails: { channelId: `UC${'a'.repeat(22)}`, displayName: 'Blacklist fixture viewer' },
+    })),
+  };
+}
+
+test('blacklist ingestion, execution, shadow exclusion and chat delivery work together across runtime roles', async () => {
+  const { chatPage } = require('@moderator/contracts');
+  const { readLiveEvents } = require('@moderator/persistence');
+  const { DeleteCandidateStore } = require('../apps/worker/dist/ingestion/delete-candidate-store');
+  const { DeleteExecutionStore } = require('../apps/worker/dist/ingestion/delete-execution-store');
+  const {
+    DeleteEligibilityStore,
+  } = require('../apps/worker/dist/ingestion/delete-eligibility-store');
+  const { DeleteExecutor } = require('../apps/worker/dist/ingestion/delete-executor');
+  const { BanCandidateStore } = require('../apps/worker/dist/ingestion/ban-candidate-store');
+  const { BanExecutionStore } = require('../apps/worker/dist/ingestion/ban-execution-store');
+  const { BanEligibilityStore } = require('../apps/worker/dist/ingestion/ban-eligibility-store');
+  const { BanExecutor } = require('../apps/worker/dist/ingestion/ban-executor');
+  const {
+    AiShadowCandidateReader,
+  } = require('../apps/worker/dist/ingestion/ai-shadow-candidate-reader');
+  const { AiShadowCoordinator } = require('../apps/worker/dist/ingestion/ai-shadow-coordinator');
+  const { AiShadowResultWriter } = require('../apps/worker/dist/ingestion/ai-shadow-result-writer');
+
+  for (const action of ['DELETE', 'DELETE_TIMEOUT', 'DELETE_BAN']) {
+    const { run, entry, record } = await startBlacklistRun(action);
+    // Allow time for the complete local pipeline without changing production lease defaults.
+    const leases = new LeaseStore(workerPool, 120);
+    const worker = { leases, writer: new BatchWriter(leases, createClassificationStore()) };
+    const lease = await worker.leases.claim(run.id, randomUUID());
+    assert.ok(lease);
+    try {
+      const checkpoint = await worker.writer.checkpoint(lease);
+      const batch = blacklistBatch(run, checkpoint, [
+        { id: 'blacklist-match', text: 'e2eblacklist' },
+        { id: 'safe-message', text: 'Hello viewer' },
+        { id: 'word-boundary', text: 'e2eblacklistextra' },
+      ]);
+      assert.equal((await worker.writer.commit(lease, batch)).inserted, 3);
+      assert.equal((await statusOf(run)).status, 'RUNNING');
+      const plans = await readPlans(run);
+      assert.equal(plans.filter((plan) => plan.action === 'DELETE').length, 1);
+      assert.equal(plans.filter((plan) => plan.action === 'NONE').length, 2);
+      const messagePlan = plans.find((plan) => plan.action === 'DELETE');
+      const authorPlan = plans.find((plan) => ['TIMEOUT', 'BAN'].includes(plan.action));
+      assert.equal(Boolean(authorPlan), action !== 'DELETE');
+      assert.equal((await new DeleteCandidateStore(workerPool).next(null)).planId, messagePlan.id);
+      const authorCandidate = await new BanCandidateStore(workerPool).next(null);
+      assert.equal(authorCandidate?.planId ?? null, authorPlan?.id ?? null);
+
+      // A channel edit after ingestion cannot replace the captured execution policy.
+      const changed = await request(`/v1/channels/${run.channel_id}/blacklist`, {
+        method: 'POST',
+        body: {
+          expected_revision: 1,
+          configuration: { schema_version: 1, enabled: false, rules: [] },
+        },
+      });
+      assert.equal(changed.status, 200, await changed.clone().text());
+      const sends = { message: 0, author: 0 };
+      const tokens = {
+        async accessToken(actorId) {
+          assert.equal(actorId, accountId);
+          return 'local-blacklist-test-access';
+        },
+      };
+      const deleteStatus = action === 'DELETE_TIMEOUT' ? 'REJECTED' : 'SUCCEEDED';
+      const deletion = () =>
+        new DeleteExecutor(
+          new DeleteExecutionStore(workerPool),
+          new DeleteEligibilityStore(workerPool, () => true),
+          tokens,
+          {
+            async deleteMessage(input) {
+              sends.message++;
+              assert.equal(input.externalMessageId, 'blacklist-match');
+              const marker = await admin.query(
+                `SELECT a.status FROM youtube_delete_attempts a
+            JOIN youtube_delete_executions e ON e.id = a.execution_id WHERE e.plan_id = $1`,
+                [messagePlan.id],
+              );
+              assert.equal(marker.rows[0].status, 'DISPATCHED');
+              return deleteStatus === 'REJECTED'
+                ? { status: 'REJECTED', http_status: 404, code: 'MESSAGE_NOT_FOUND' }
+                : { status: 'SUCCEEDED', http_status: 204 };
+            },
+          },
+        );
+      const author = () =>
+        new BanExecutor(
+          new BanExecutionStore(workerPool),
+          new BanEligibilityStore(workerPool, () => true),
+          tokens,
+          {
+            async banUser(input) {
+              sends.author++;
+              assert.equal(input.authorChannelId, `UC${'a'.repeat(22)}`);
+              assert.equal(input.liveChatId, broadcasts.get(run.youtube_broadcast_id).live_chat_id);
+              assert.equal(input.action, action === 'DELETE_TIMEOUT' ? 'TIMEOUT' : 'BAN');
+              assert.equal(input.durationSeconds, action === 'DELETE_TIMEOUT' ? 30 : undefined);
+              const marker = await admin.query(
+                `SELECT a.status FROM youtube_ban_attempts a
+            JOIN youtube_ban_executions e ON e.id = a.execution_id WHERE e.plan_id = $1`,
+                [authorPlan.id],
+              );
+              assert.equal(marker.rows[0].status, 'DISPATCHED');
+              return { status: 'SUCCEEDED', http_status: 200, ban_id: 'local-confirmed-ban' };
+            },
+          },
+          {
+            async resolve() {
+              return { status: 'RESOLVED', channelId: `UC${'b'.repeat(22)}` };
+            },
+          },
+        );
+      const input = (plan) => ({
+        planId: plan.id,
+        channelId: run.channel_id,
+        sessionId: run.session_id,
+        ownerId: randomUUID(),
+      });
+      assert.equal((await deletion().execute(input(messagePlan))).status, 'RECORDED');
+      if (authorPlan) assert.equal((await author().execute(input(authorPlan))).status, 'RECORDED');
+
+      const model = {
+        model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
+        model_revision: 'a'.repeat(40),
+        model_variant: 'INT8',
+        adapter_version: 'blacklist-integration-1',
+      };
+      const inferred = [];
+      const shadow = () =>
+        new AiShadowCoordinator(
+          new AiShadowCandidateReader(workerPool, model),
+          {
+            async predict(identity, text) {
+              assert.notEqual(text, 'e2eblacklist');
+              inferred.push(text);
+              return {
+                ...identity,
+                status: 'SUCCEEDED',
+                rating: 0,
+                severity_score: 0.1,
+                truncated: false,
+                inference_ms: 5,
+                error_code: null,
+              };
+            },
+          },
+          new AiShadowResultWriter(workerPool),
+        );
+      const signal = new AbortController().signal;
+      assert.equal((await shadow().tick(run.id, signal)).kind, 'INSERTED');
+      assert.equal((await shadow().tick(run.id, signal)).kind, 'INSERTED');
+      assert.equal((await shadow().tick(run.id, signal)).kind, 'IDLE');
+      assert.deepEqual(inferred.sort(), ['Hello viewer', 'e2eblacklistextra'].sort());
+
+      async function readChat() {
+        const response = await request(
+          `/v1/channels/${run.channel_id}/sessions/${run.session_id}/chat`,
+        );
+        assert.equal(response.status, 200, await response.clone().text());
+        return chatPage.parse(await response.json());
+      }
+      const page = await readChat();
+      const matched = page.items.find((item) => item.external_message_id === 'blacklist-match');
+      assert.equal(matched.evaluation.reason_code, 'BLACKLIST_MATCH');
+      assert.equal(matched.evaluation.severity, null);
+      assert.equal(matched.blacklist.blacklist_id, record.id);
+      assert.equal(matched.blacklist.blacklist_revision, 1);
+      assert.deepEqual(matched.blacklist.selected_entry, entry);
+      assert.equal(matched.deletion.status, deleteStatus);
+      assert.equal(matched.author_action?.status ?? null, authorPlan ? 'SUCCEEDED' : null);
+      assert.equal(matched.author_action?.action ?? null, authorPlan?.action ?? null);
+      assert.equal(matched.ai_shadow, null);
+      for (const item of page.items.filter((item) => item !== matched)) {
+        assert.equal(item.blacklist, null);
+        assert.equal(item.deletion, null);
+        assert.equal(item.author_action, null);
+        assert.equal(item.ai_shadow.status, 'SUCCEEDED');
+      }
+      const feedInput = { channelId: run.channel_id, sessionId: run.session_id, after: '0' };
+      const feed = await readLiveEvents(pool, feedInput);
+      assert.ok(feed.items.some((event) => event.event_type === 'chat.updated'));
+      assert.ok(BigInt(feed.watermark) > 0n);
+
+      // Replayed ingestion and newly constructed executors/shadow coordinators do not resend or republish.
+      const latest = await worker.writer.checkpoint(lease);
+      assert.equal(
+        (
+          await worker.writer.commit(lease, {
+            ...batch,
+            expected_revision: latest.revision,
+            request_page_token: latest.next_page_token,
+          })
+        ).inserted,
+        0,
+      );
+      await deletion().execute(input(messagePlan));
+      if (authorPlan) await author().execute(input(authorPlan));
+      assert.equal((await shadow().tick(run.id, signal)).kind, 'IDLE');
+      assert.deepEqual(sends, { message: 1, author: authorPlan ? 1 : 0 });
+      assert.deepEqual(await readLiveEvents(pool, feedInput), feed);
+      assert.deepEqual(await readChat(), page);
+      const stop = await stopThroughApi(run);
+      assert.equal(stop.status, 'STOPPING');
+      await worker.leases.finish(lease, 'STOPPED');
+      assert.equal((await statusOf(run)).status, 'STOPPED');
+      assert.deepEqual(await readChat(), page);
+    } finally {
+      if ((await statusOf(run)).status !== 'STOPPED') await worker.leases.finish(lease, 'STOPPED');
+    }
+  }
+});
+
+test('a failed blacklist audit rolls back the complete ingested batch and its update event', async () => {
+  const { BlacklistActionStore } = require('../apps/worker/dist/ingestion/blacklist-action-store');
+  const { run } = await startBlacklistRun('DELETE_TIMEOUT');
+  const leases = new LeaseStore(workerPool, 120);
+  const lease = await leases.claim(run.id, randomUUID());
+  assert.ok(lease);
+  const failure = new Error('Simulated failure after blacklist persistence.');
+  const decisions = new BlacklistActionStore();
+  const writer = new BatchWriter(
+    leases,
+    createClassificationStore(undefined, undefined, undefined, {
+      async save(client, bundle) {
+        await decisions.save(client, bundle);
+        throw failure;
+      },
+    }),
+  );
+  try {
+    const checkpoint = await writer.checkpoint(lease);
+    const before = await admin.query(
+      'SELECT sequence, event_type FROM live_events WHERE run_id = $1 ORDER BY sequence',
+      [run.id],
+    );
+    const batch = blacklistBatch(run, checkpoint, [
+      { id: 'rollback-blacklist', text: 'e2eblacklist' },
+    ]);
+    await assert.rejects(writer.commit(lease, batch), (error) => error === failure);
+    for (const table of [
+      'youtube_chat_observations',
+      'youtube_chat_classifications',
+      'youtube_blacklist_decisions',
+      'youtube_moderation_action_plans',
+    ]) {
+      assert.equal(
+        (await admin.query(`SELECT id FROM ${table} WHERE session_id = $1`, [run.session_id]))
+          .rowCount,
+        0,
+        table,
+      );
+    }
+    const after = await writer.checkpoint(lease);
+    assert.equal(after.revision, checkpoint.revision);
+    assert.equal(after.next_page_token, checkpoint.next_page_token);
+    assert.equal((await statusOf(run)).status, 'STARTING');
+    assert.deepEqual(
+      (
+        await admin.query(
+          'SELECT sequence, event_type FROM live_events WHERE run_id = $1 ORDER BY sequence',
+          [run.id],
+        )
+      ).rows,
+      before.rows,
+    );
+    const healthy = new BatchWriter(leases, createClassificationStore());
+    assert.equal((await healthy.commit(lease, batch)).inserted, 1);
+    assert.equal(
+      (await admin.query('SELECT id FROM youtube_blacklist_decisions WHERE run_id = $1', [run.id]))
+        .rowCount,
+      1,
+    );
+    assert.equal((await readPlans(run)).length, 2);
+  } finally {
+    await leases.finish(lease, 'STOPPED');
+  }
+});
+
 test('worker plans saved actions from the run snapshot despite later settings changes', async () => {
   for (const action of ['DELETE', 'TIMEOUT', 'BAN']) {
     const initial = await startRun();

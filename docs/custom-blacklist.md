@@ -13,6 +13,14 @@ blacklist without creating a model result for them.
 Live and History chat display captured blacklist provenance separately from
 provider execution results.
 
+Full-flow local integration tests and a
+[controlled livestream verification guide](custom-blacklist-verification.md) are
+available. On October 4, 2026, the developer reported successful primary
+livestream verification, snapshot retention/new-run capture, and worker restart
+without duplicate dispatch. The verification record distinguishes these reported
+results from checks without supplied evidence. Native AI exclusion remains optional
+and has not been manually verified in this sequence.
+
 ## Entry contract
 
 Each entry has a UUID `id`, explicit `enabled` boolean, `match_type`, literal
@@ -148,9 +156,14 @@ not YouTube targets. The API's existing 16 KB JSON body limit also applies: the
 100-entry contract limit does not guarantee that every maximum-length combination
 fits a single request. Oversized requests return HTTP 413 without writing a revision.
 
-## Remaining implementation
+## Verification status and follow-up
 
-1. Verify the complete flow through integration tests and a controlled livestream.
+The primary blacklist implementation and controlled-flow verification are accepted
+based on the developer's report. See
+[Custom Blacklist End-to-End Verification](custom-blacklist-verification.md) for
+the evidence limits and optional additional checks. This does not establish
+production readiness or AI-driven enforcement. Exceptions and AI thresholds remain
+separate follow-up features.
 
 ## Settings editor
 
