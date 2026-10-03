@@ -82,7 +82,7 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
           ? queryClient.invalidateQueries(
               {
                 predicate: ({ queryKey }) =>
-                  (queryKey.length === 4 &&
+                  (queryKey.length >= 4 &&
                     queryKey[0] === 'live-chat' &&
                     queryKey[1] === accountId &&
                     queryKey[2] === channelId &&
@@ -218,8 +218,8 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
           stopped = true;
           setStatus('unauthenticated');
           void queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
-          void queryClient.cancelQueries({ queryKey: chatKey, exact: true });
-          queryClient.removeQueries({ queryKey: chatKey, exact: true });
+          void queryClient.cancelQueries({ queryKey: chatKey, exact: false });
+          queryClient.removeQueries({ queryKey: chatKey, exact: false });
           void queryClient.resetQueries({
             queryKey: statisticsKey,
             exact: true,
@@ -237,12 +237,12 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
 
           void queryClient.cancelQueries({
             queryKey: chatKey,
-            exact: true,
+            exact: false,
           });
 
           queryClient.removeQueries({
             queryKey: chatKey,
-            exact: true,
+            exact: false,
           });
 
           void queryClient.resetQueries({

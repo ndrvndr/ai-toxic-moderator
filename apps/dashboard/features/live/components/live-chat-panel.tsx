@@ -1,12 +1,15 @@
 'use client';
 
 import type { ChatObservation, MonitoringRun } from '@moderator/contracts';
+import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { getErrorMessage } from '@/lib/api-client';
 
 import { useLiveChat } from '../hooks/use-live-chat';
 import type { LiveConnectionStatus } from '../hooks/use-live-events';
+import type { ChatFilters } from '../lib/chat-filters';
+import { ChatFilterControls } from './chat-filters';
 import { ChatMessage } from './chat-message';
 
 type LiveChatPanelProps = {
@@ -25,8 +28,19 @@ const connectionLabels: Record<LiveConnectionStatus, string> = {
   unavailable: 'Live updates unavailable. Refresh the page to reconnect.',
 };
 
-export function LiveChatPanel({ accountId, run, connectionStatus }: LiveChatPanelProps) {
-  const chat = useLiveChat(accountId, run, connectionStatus);
+export function LiveChatPanel(props: LiveChatPanelProps) {
+  return (
+    <LiveChatPanelContent
+      key={`${props.accountId}:${props.run.channel_id}:${props.run.session_id}`}
+      {...props}
+    />
+  );
+}
+
+function LiveChatPanelContent({ accountId, run, connectionStatus }: LiveChatPanelProps) {
+  const [filters, setFilters] = useState<ChatFilters>({});
+  const chat = useLiveChat(accountId, run, connectionStatus, filters);
+  const hasFilters = Boolean(filters.outcome || filters.category);
   const active = ['STARTING', 'RUNNING', 'STOPPING'].includes(run.status);
 
   if (connectionStatus === 'unauthenticated' || connectionStatus === 'forbidden') {
@@ -82,6 +96,8 @@ export function LiveChatPanel({ accountId, run, connectionStatus }: LiveChatPane
         </Button>
       </div>
 
+      <ChatFilterControls filters={filters} onChange={setFilters} />
+
       {chat.isPending && (
         <p role="status" className="text-sm text-muted-foreground">
           Loading chat…
@@ -113,9 +129,11 @@ export function LiveChatPanel({ accountId, run, connectionStatus }: LiveChatPane
 
       {chat.isSuccess && messages.length === 0 && (
         <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-          {active
-            ? 'No chat messages have been collected yet.'
-            : 'No chat messages were collected for this livestream.'}
+          {hasFilters
+            ? 'No chat items match these filters. Try another combination or clear the filters.'
+            : active
+              ? 'No chat messages have been collected yet.'
+              : 'No chat messages were collected for this livestream.'}
         </p>
       )}
 

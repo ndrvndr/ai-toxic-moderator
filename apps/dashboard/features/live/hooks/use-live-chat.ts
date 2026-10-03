@@ -8,12 +8,14 @@ import { SESSION_QUERY_KEY } from '@/features/auth/hooks/use-session';
 import { ApiError } from '@/lib/api-client';
 
 import { getChatPage } from '../api/chat-api';
+import type { ChatFilters } from '../lib/chat-filters';
 import type { LiveConnectionStatus } from './use-live-events';
 
 export function useLiveChat(
   accountId: string,
   run: MonitoringRun,
   connectionStatus: LiveConnectionStatus,
+  filters: ChatFilters = {},
 ) {
   const queryClient = useQueryClient();
   const active = ['STARTING', 'RUNNING', 'STOPPING'].includes(run.status);
@@ -21,7 +23,14 @@ export function useLiveChat(
   const accessBlocked = connectionStatus === 'unauthenticated' || connectionStatus === 'forbidden';
 
   const query = useInfiniteQuery({
-    queryKey: ['live-chat', accountId, run.channel_id, run.session_id],
+    queryKey: [
+      'live-chat',
+      accountId,
+      run.channel_id,
+      run.session_id,
+      filters.outcome ?? '',
+      filters.category ?? '',
+    ],
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam, signal }) => {
       try {
@@ -30,6 +39,7 @@ export function useLiveChat(
           sessionId: run.session_id,
           cursor: pageParam,
           signal,
+          filters,
         });
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
@@ -57,7 +67,7 @@ export function useLiveChat(
 
     void queryClient.invalidateQueries({
       queryKey: ['live-chat', accountId, run.channel_id, run.session_id],
-      exact: true,
+      exact: false,
     });
   }, [queryClient, accountId, run.channel_id, run.session_id, run.id, run.status, accessBlocked]);
 

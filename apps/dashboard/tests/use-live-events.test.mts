@@ -164,6 +164,56 @@ async function advance(milliseconds: number) {
 }
 
 describe('useLiveEvents', () => {
+  it('refreshes all active chat filter variants only within the current session', async () => {
+    const review = observe([...chatKey, 'REVIEW', 'SPAM']);
+    const allowed = observe([...chatKey, 'ALLOW', '']);
+    const otherAccount = observe([...unrelatedKey, 'REVIEW', 'SPAM']);
+    const otherSession = observe([
+      'live-chat',
+      accountId,
+      channelId,
+      'another-session',
+      'REVIEW',
+      'SPAM',
+    ]);
+    const inactiveKey = [...chatKey, 'ERROR', ''];
+    client.setQueryData(inactiveKey, 5);
+    mount();
+    const socket = latestSocket();
+    ready(socket, '0');
+    await advance(250);
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(allowed).toHaveBeenCalledTimes(1);
+    event(socket, '1');
+    await advance(250);
+    expect(review).toHaveBeenCalledTimes(2);
+    expect(allowed).toHaveBeenCalledTimes(2);
+    expect(otherAccount).not.toHaveBeenCalled();
+    expect(otherSession).not.toHaveBeenCalled();
+    expect(client.getQueryData(inactiveKey)).toBe(5);
+    expect(client.getQueryState(inactiveKey)?.isInvalidated).toBe(true);
+  });
+
+  it.each([4001, 4003, 4004])(
+    'removes all filtered chat caches after access close code %s',
+    async (code) => {
+      const reviewKey = [...chatKey, 'REVIEW', 'SPAM'];
+      const allowedKey = [...chatKey, 'ALLOW', ''];
+      const otherKey = [...unrelatedKey, 'REVIEW', 'SPAM'];
+      for (const key of [reviewKey, allowedKey, otherKey])
+        client.setQueryData(key, { private: true });
+      mount();
+      const socket = latestSocket();
+      ready(socket, '0');
+      act(() => socket.disconnect(code));
+      await advance(60_000);
+      expect(client.getQueryData(reviewKey)).toBeUndefined();
+      expect(client.getQueryData(allowedKey)).toBeUndefined();
+      expect(client.getQueryData(otherKey)).toEqual({ private: true });
+      expect(MockWebSocket.instances).toHaveLength(1);
+    },
+  );
+
   it('refreshes the initial snapshot and only the affected cache afterward', async () => {
     const chat = observe(chatKey);
     const monitoring = observe(monitoringKey);
