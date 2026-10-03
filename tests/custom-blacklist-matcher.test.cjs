@@ -2,12 +2,18 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { source } = require('./helpers/source.cjs');
 
-const { CustomBlacklistMatcher } = source('packages/moderation-core/src/custom-blacklist-matcher.ts');
+const { CustomBlacklistMatcher } = source(
+  'packages/moderation-core/src/custom-blacklist-matcher.ts',
+);
 
 function entry(index, overrides = {}) {
   return {
     id: `10000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
-    enabled: true, match_type: 'WORD', pattern: 'abc', action: 'DELETE', ...overrides,
+    enabled: true,
+    match_type: 'WORD',
+    pattern: 'abc',
+    action: 'DELETE',
+    ...overrides,
   };
 }
 function matcher(rules, enabled = true) {
@@ -36,22 +42,36 @@ test('phrases are literal normalized substrings including regex metacharacters',
 test('domains match complete HTTP URL hosts and bare domains including subdomains', () => {
   const detect = matcher([entry(1, { match_type: 'DOMAIN', pattern: 'example.com' })]);
   for (const text of [
-    'https://example.com/path', 'HTTP://EXAMPLE.COM:8080/path?q=1',
-    '(https://www.example.com/path).', 'example.com', 'promo.example.com/deal',
-    'example.com:443/deal', 'https://example.com./',
-  ]) assert.equal(detect.match(text).matched, true, text);
+    'https://example.com/path',
+    'HTTP://EXAMPLE.COM:8080/path?q=1',
+    '(https://www.example.com/path).',
+    'example.com',
+    'promo.example.com/deal',
+    'example.com:443/deal',
+    'https://example.com./',
+  ])
+    assert.equal(detect.match(text).matched, true, text);
 });
 
 test('domain matching never uses unrelated paths, queries, email addresses or lookalike hosts', () => {
   const detect = matcher([entry(1, { match_type: 'DOMAIN', pattern: 'example.com' })]);
   for (const text of [
-    'https://example.com.evil.test/', 'https://notexample.com/',
-    'https://evil.test/example.com', 'https://evil.test/?redirect=https://example.com',
-    'https://example.com@evil.test/', 'viewer@example.com',
-    'prefixexample.com', 'example.comsuffix', 'ftp://example.com/',
-    '//example.com', 'https:///example.com', 'https://example.com\\@evil.test',
-    'https://127.0.0.1/example.com', 'example.com:99999/',
-  ]) assert.equal(detect.match(text).matched, false, text);
+    'https://example.com.evil.test/',
+    'https://notexample.com/',
+    'https://evil.test/example.com',
+    'https://evil.test/?redirect=https://example.com',
+    'https://example.com@evil.test/',
+    'viewer@example.com',
+    'prefixexample.com',
+    'example.comsuffix',
+    'ftp://example.com/',
+    '//example.com',
+    'https:///example.com',
+    'https://example.com\\@evil.test',
+    'https://127.0.0.1/example.com',
+    'example.com:99999/',
+  ])
+    assert.equal(detect.match(text).matched, false, text);
 });
 
 test('domain parsing canonicalizes IDN hosts and extracts multiple separate tokens', () => {
@@ -64,22 +84,33 @@ test('disabled configurations and entries produce no decisions', () => {
   assert.equal(matcher([entry(1)], false).match('abc').matched, false);
   assert.equal(matcher([entry(1, { enabled: false })]).match('abc').matched, false);
   assert.deepEqual(matcher([]).match('abc'), {
-    matched: false, matched_rule_ids: [], selected_rule_id: null,
-    delete_message: false, author_action: null,
+    matched: false,
+    matched_rule_ids: [],
+    selected_rule_id: null,
+    delete_message: false,
+    author_action: null,
   });
 });
 
 test('deletion alone produces no author action or client-supplied target', () => {
   assert.deepEqual(matcher([entry(1)]).match('abc abc'), {
-    matched: true, matched_rule_ids: [entry(1).id], selected_rule_id: entry(1).id,
-    delete_message: true, author_action: null,
+    matched: true,
+    matched_rule_ids: [entry(1).id],
+    selected_rule_id: entry(1).id,
+    delete_message: true,
+    author_action: null,
   });
 });
 
 test('ban outranks timeout while message deletion remains independent', () => {
   const rules = [
     entry(3),
-    entry(2, { match_type: 'PHRASE', pattern: 'abc', action: 'DELETE_TIMEOUT', duration_seconds: 60 }),
+    entry(2, {
+      match_type: 'PHRASE',
+      pattern: 'abc',
+      action: 'DELETE_TIMEOUT',
+      duration_seconds: 60,
+    }),
     entry(1, { match_type: 'PHRASE', pattern: 'abc def', action: 'DELETE_BAN' }),
   ];
   const result = matcher(rules).match('abc def');
@@ -93,8 +124,18 @@ test('ban outranks timeout while message deletion remains independent', () => {
 test('longest timeout wins and ties resolve by canonical ID independently of rule order', () => {
   const rules = [
     entry(3, { action: 'DELETE_TIMEOUT', duration_seconds: 60 }),
-    entry(2, { match_type: 'PHRASE', pattern: 'abc def', action: 'DELETE_TIMEOUT', duration_seconds: 300 }),
-    entry(1, { match_type: 'PHRASE', pattern: 'def', action: 'DELETE_TIMEOUT', duration_seconds: 300 }),
+    entry(2, {
+      match_type: 'PHRASE',
+      pattern: 'abc def',
+      action: 'DELETE_TIMEOUT',
+      duration_seconds: 300,
+    }),
+    entry(1, {
+      match_type: 'PHRASE',
+      pattern: 'def',
+      action: 'DELETE_TIMEOUT',
+      duration_seconds: 300,
+    }),
   ];
   const result = matcher(rules).match('abc def');
   assert.equal(result.selected_rule_id, entry(1).id);
@@ -121,7 +162,9 @@ test('invalid configurations fail validation rather than silently enabling parti
   assert.throws(() => matcher([entry(1, { match_type: 'REGEX' })]));
   assert.throws(() => matcher([entry(1), entry(2)]));
   assert.throws(() => matcher([entry(1, { action: 'DELETE_TIMEOUT', duration_seconds: 0 })]));
-  assert.throws(() => matcher([entry(1, { match_type: 'DOMAIN', pattern: 'https://example.com' })]));
+  assert.throws(() =>
+    matcher([entry(1, { match_type: 'DOMAIN', pattern: 'https://example.com' })]),
+  );
   assert.throws(() => matcher([entry(1, { author_channel_id: 'unverified-author' })]));
   assert.throws(() => matcher([entry(1)]).match(null));
 });

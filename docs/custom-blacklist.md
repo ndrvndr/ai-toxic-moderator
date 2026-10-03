@@ -3,7 +3,8 @@
 ## Implementation status
 
 Strict public contracts, a revision store, automatic run snapshots, authorized
-HTTP endpoints, the Settings editor, and a pure literal matcher are implemented. Blacklist entries are not yet
+HTTP endpoints, the Settings editor, a pure literal matcher, and a worker snapshot
+reader are implemented. Blacklist entries are not yet
 evaluated by the worker. Saving an enabled blacklist does not yet
 enable moderation actions. Existing moderation settings retain their current format.
 
@@ -144,7 +145,7 @@ fits a single request. Oversized requests return HTTP 413 without writing a revi
 
 ## Remaining implementation
 
-1. Load the captured run blacklist and evaluate it before AI processing in the worker.
+1. Invoke the run snapshot matcher before AI processing in the classification pipeline.
 2. Combined message/author action plans with separate execution outcomes and
    idempotency. Ban takes priority over timeout; deletion remains independent.
 3. Decision provenance in chat and History, plus integration and live verification.
@@ -207,6 +208,26 @@ selected author action. Matcher version: `blacklist-literal-1`.
 These are policy decisions only. The existing single-action plan format still
 needs an integration change before deletion and an author action can execute together.
 
+## Worker snapshot reader
+
+`RunBlacklistMatcher` reads `monitoring_blacklist_snapshots` through the supplied
+transaction client, joining the monitoring run and binding its run, channel, and
+session IDs. It validates both scope and snapshot metadata before constructing a
+matcher. A missing, duplicate, mismatched, or invalid snapshot raises an error;
+it never falls back to a channel's current configuration. Valid `DEFAULT` and
+`LEGACY` snapshots produce no blacklist action.
+
+The resulting decision includes the captured blacklist ID/revision, run/channel/
+session IDs, snapshot source, and matcher version. Replay must pass the original
+classification run ID, as the existing settings planner does. A new run can capture
+a newer revision without changing an earlier run's result. No mutable channel
+policy is cached or queried by this reader.
+
+This helper is not yet invoked by `ClassificationStore` or the AI coordinator.
+It does not persist decisions, skip inference, or send moderation requests.
+The next integration step must preserve captured decision provenance and support
+independent deletion and author action plans in the same transaction.
+
 ## Manual validation
 
 Run from the repository root:
@@ -222,6 +243,7 @@ npm run db:runtime
 npm run db:worker
 npm run test:custom-blacklist-contracts
 npm run test:custom-blacklist-matcher
+npm run test:run-blacklist-matcher
 npm run test:custom-blacklist-store
 npm run build --workspace @moderator/api
 npm run test:custom-blacklist-http
