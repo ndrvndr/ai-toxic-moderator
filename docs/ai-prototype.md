@@ -84,6 +84,26 @@ The API role has SELECT access; the worker role has SELECT and INSERT only.
 This step creates the contract and database foundation. No worker inference,
 API exposure, WebSocket update, or dashboard display is connected yet.
 
+`AiShadowStore` now validates results before writing and reads them by the full
+channel/session/observation/run/model identity. It uses the caller's database client
+and transaction at the default READ COMMITTED isolation level. On concurrent
+duplicate insertion, it returns the committed existing row without changing it.
+A replay of a terminal error remains an error. Different model revisions can
+coexist. Serialization failures at stronger isolation levels must be retried by
+the caller, not interpreted as missing or safe output.
+
+Inference must complete outside database transactions. This store does not invoke
+the model, plan moderation actions, or publish live events. Publication will be
+added with the worker integration so results and events commit together.
+
+```powershell
+npm run test:ai-shadow-store
+npm run test:ai-shadow-schema
+```
+
+The schema suite includes competing transactions using worker permissions, replay
+of the persisted output, and rollback of an inserted result.
+
 ### Expanded local run: developer reported, 2026-10-03
 
 The developer supplied outputs for all 40 probes. Compared with proposed labels,

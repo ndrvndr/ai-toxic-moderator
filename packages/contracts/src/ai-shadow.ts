@@ -28,6 +28,9 @@ const identity = {
     .regex(/^[A-Za-z0-9_.-]+$/),
 };
 
+export const aiShadowIdentity = z.strictObject(identity);
+export type AiShadowIdentity = z.infer<typeof aiShadowIdentity>;
+
 // This result carries model output only, never an application category or action decision.
 export const aiShadowResult = z.discriminatedUnion('status', [
   z.strictObject({

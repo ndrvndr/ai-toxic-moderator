@@ -2,12 +2,94 @@ const { before, after, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID, createHash } = require('node:crypto');
 const { Client } = require('pg');
+const { Pool } = require('pg');
+const { source } = require('./helpers/source.cjs');
+const { AiShadowStore } = source('apps/worker/src/ingestion/ai-shadow-store.ts');
 
 const schema = `ai_shadow_${randomUUID().replaceAll('-', '')}`;
 
 let client;
 let migrate;
 let schemaCreated = false;
+
+test('competing worker transactions reuse one persisted shadow result and rollback is atomic', async () => {
+  const { provisionWorkerRole } = await import('../scripts/worker-role.mjs');
+  const role = `ai_store_${randomUUID().replaceAll('-', '')}`;
+  const pool = new Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+    max: 2,
+    options: `-c search_path=${schema}`,
+    statement_timeout: 5000,
+  });
+  let provisioned = false;
+  try {
+    await provisionWorkerRole(client, { role, password: 'local-shadow-store-test-only', schema });
+    provisioned = true;
+    const f = await fixture();
+    const observationId = await insertObservation(f);
+    const input = {
+      channel_id: f.channelId,
+      session_id: f.sessionId,
+      observation_id: observationId,
+      run_id: f.runId,
+      model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
+      model_revision: 'a'.repeat(40),
+      model_variant: 'INT8',
+      adapter_version: 'store-test-1',
+      status: 'SUCCEEDED',
+      rating: 2,
+      severity_score: 0.56,
+      truncated: false,
+      inference_ms: 5,
+      error_code: null,
+    };
+    const store = new AiShadowStore();
+    async function saveTransaction(value, rollback = false) {
+      const connection = await pool.connect();
+      try {
+        await connection.query('BEGIN');
+        await connection.query(`SET LOCAL ROLE "${role}"`);
+        const result = await store.save(connection, value);
+        await connection.query(rollback ? 'ROLLBACK' : 'COMMIT');
+        return result;
+      } catch (error) {
+        await connection.query('ROLLBACK');
+        throw error;
+      } finally {
+        connection.release();
+      }
+    }
+    // Each transaction commits independently so the losing INSERT can observe its winner.
+    const settled = await Promise.allSettled([
+      saveTransaction(input),
+      saveTransaction({ ...input, rating: 0, severity_score: 0.1 }),
+    ]);
+    for (const result of settled) if (result.status === 'rejected') throw result.reason;
+    const results = settled.map((entry) => entry.value);
+    assert.equal(results.filter((entry) => entry.inserted).length, 1);
+    assert.equal(results[0].id, results[1].id);
+    assert.deepEqual(results[0].result, results[1].result);
+    const count = await client.query(
+      'SELECT count(*)::int AS count FROM youtube_ai_shadow_results WHERE observation_id=$1',
+      [observationId],
+    );
+    assert.equal(count.rows[0].count, 1);
+    const rolledBack = { ...input, model_revision: 'b'.repeat(40) };
+    await saveTransaction(rolledBack, true);
+    const { status, rating, severity_score, truncated, inference_ms, error_code, ...identity } =
+      rolledBack;
+    assert.equal(await store.find(client, identity), null);
+    const replay = await saveTransaction({ ...input, rating: 4, severity_score: 0.95 });
+    assert.equal(replay.inserted, false);
+    assert.deepEqual(replay.result, results[0].result);
+  } finally {
+    await pool.end();
+    if (provisioned) {
+      await client.query(`DROP OWNED BY "${role}"`);
+      await client.query(`DROP ROLE "${role}"`);
+    }
+  }
+});
 
 before(async () => {
   const url = process.env.TEST_DATABASE_URL;
