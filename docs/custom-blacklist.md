@@ -4,7 +4,7 @@
 
 Strict public contracts, a revision store, automatic run snapshots, authorized
 HTTP endpoints, the Settings editor, a pure literal matcher, and a worker snapshot
-reader, and a combined action planner are implemented. Blacklist entries are not yet
+reader, a combined action planner, and transactional decision persistence are implemented. Blacklist entries are not yet
 evaluated by the worker. Saving an enabled blacklist does not yet
 enable moderation actions. Existing moderation settings retain their current format.
 
@@ -146,8 +146,8 @@ fits a single request. Oversized requests return HTTP 413 without writing a revi
 ## Remaining implementation
 
 1. Invoke the run snapshot matcher before AI processing in the classification pipeline.
-2. Persist combined message/author action decisions atomically with captured
-   provenance and idempotency, then connect the existing independent executors.
+2. Connect captured blacklist decisions and independent plans to the existing
+   executors, including their dispatch eligibility checks.
 3. Decision provenance in chat and History, plus integration and live verification.
 
 ## Settings editor
@@ -206,7 +206,7 @@ the result. Every match still requests message deletion independently of the
 selected author action. Matcher version: `blacklist-literal-1`.
 
 These are policy decisions only. The combined planner creates compatible individual
-plans, but persistence and pipeline integration are still required before deletion
+plans, but pipeline and dispatch integration are still required before deletion
 and an author action can execute together.
 
 ## Worker snapshot reader
@@ -226,8 +226,8 @@ policy is cached or queried by this reader.
 
 This helper is not yet invoked by `ClassificationStore` or the AI coordinator.
 It does not persist decisions, skip inference, or send moderation requests.
-The next integration step must persist captured decision provenance and independent
-deletion and author action plans in the same transaction.
+Transactional persistence is available separately; the classification pipeline
+must invoke it using the original run and the same ingestion transaction.
 
 ## Combined action planner
 
@@ -254,9 +254,42 @@ Opaque message IDs are preserved, and no request outcomes are inferred or includ
 Bundle validation rejects conflicting scopes, duplicate/swapped plan slots,
 unexpected execution fields, missing deletion, incompatible author actions, and
 inconsistent durations or match metadata. It does not prove that a supplied target
-belongs to the classification; future persistence must revalidate both targets and
-recompute the decision from its immutable snapshot before committing the bundle.
-The pure planner is not yet wired into the runtime and does not send requests.
+belongs to the classification. The persistence store revalidates both targets and
+recomputes the decision from its immutable snapshot before saving the bundle.
+The planner and store are not yet wired into the runtime and do not send requests.
+
+## Transactional decision persistence
+
+Migration `022_youtube_blacklist_decisions.sql` adds immutable decision records
+linked to separate message/author action plan IDs. Scoped foreign keys bind the
+classification, original run, and individual plans. The insertion trigger checks
+captured revision metadata, complete plan slots, persisted plan fields, and observed
+targets. It does not implement literal matching in SQL; semantic matching and full
+bundle validation remain the store's responsibility. Applied migrations are unchanged.
+
+`BlacklistActionStore.save(client, bundle)` requires an already active transaction.
+It starts a savepoint before reading or writing and serializes competing saves by
+classification and policy version. It reads the persisted classification and its
+text observation, resolves the original run snapshot, and recomputes the expected
+bundle using database text and targets. Any difference from the submitted bundle
+is rejected before writing action plans.
+
+Individual plans retain the existing store's target verification and immutable
+policy slots. The decision and both plan links are saved through the same supplied
+client. Failure rolls back all writes made by the save operation, even if the caller
+catches the error and commits other work in its transaction. Success releases the
+savepoint without committing; the caller controls the final commit or rollback.
+Missing transaction context is rejected by PostgreSQL before any writes occur.
+
+Replay reuses the same decision ID and plan IDs. Conflicting stored decisions cannot
+be silently replaced. No-match decisions retain captured provenance without plans;
+an unavailable author retains deletion with `TARGET_UNAVAILABLE`. Updating channel
+settings or starting another run never changes the original captured decision.
+
+The worker receives SELECT/INSERT on decisions; the API receives SELECT only.
+Neither runtime role can update, delete, or truncate decision history. Provision
+both roles after migration. No provider requests or new runtime enforcement are
+introduced by this persistence step.
 
 ## Manual validation
 
@@ -275,6 +308,7 @@ npm run test:custom-blacklist-contracts
 npm run test:custom-blacklist-matcher
 npm run test:run-blacklist-matcher
 npm run test:blacklist-action-planner
+npm run test:blacklist-action-store
 npm run test:custom-blacklist-store
 npm run build --workspace @moderator/api
 npm run test:custom-blacklist-http

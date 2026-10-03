@@ -65,7 +65,11 @@ export class RunBlacklistMatcher {
       source: selected.source,
       matcher_version: CUSTOM_BLACKLIST_MATCHER_VERSION,
     };
-    return { matcher: new CustomBlacklistMatcher(selected.configuration), provenance };
+    return {
+      matcher: new CustomBlacklistMatcher(selected.configuration),
+      provenance,
+      snapshot: selected,
+    };
   }
 
   async match(

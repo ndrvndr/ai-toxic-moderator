@@ -86,6 +86,9 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     await client.query(
       `GRANT SELECT,INSERT ON ${schemaSql}.youtube_moderation_action_plans TO ${roleSql}`,
     );
+    await client.query(
+      `GRANT SELECT,INSERT ON ${schemaSql}.youtube_blacklist_decisions TO ${roleSql}`,
+    );
     for (const table of [
       'youtube_delete_executions',
       'youtube_delete_attempts',
