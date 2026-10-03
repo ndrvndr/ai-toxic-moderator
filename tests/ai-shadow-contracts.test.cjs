@@ -1,7 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { source } = require('./helpers/source.cjs');
-const { aiShadowResult } = source('packages/contracts/src/ai-shadow.ts');
+const { aiShadowResult, aiShadowSummary } = source('packages/contracts/src/ai-shadow.ts');
+const { chatObservation } = source('packages/contracts/src/chat.ts');
 
 const identity = {
   channel_id: '10000000-0000-4000-8000-000000000001',
@@ -31,6 +32,49 @@ const failure = {
   inference_ms: null,
   error_code: 'INFERENCE_TIMEOUT',
 };
+
+test('public shadow summary preserves model provenance but rejects private fields and decisions', () => {
+  for (const result of [success, failure]) {
+    const { channel_id, session_id, observation_id, run_id, ...summary } = result;
+    assert.deepEqual(aiShadowSummary.parse(summary), summary);
+    for (const extra of [
+      { run_id },
+      { channel_id },
+      { observation_id },
+      { action: 'BAN' },
+      { outcome: 'ALLOW' },
+      { raw_error: 'private details' },
+    ]) {
+      assert.equal(aiShadowSummary.safeParse({ ...summary, ...extra }).success, false);
+    }
+  }
+});
+
+test('chat supports absent, null, or valid shadow output without changing evaluation status', () => {
+  const { channel_id, session_id, observation_id, run_id, ...summary } = success;
+  const observation = {
+    id: observation_id,
+    external_message_id: 'fixture-message',
+    event_type: 'textMessageEvent',
+    published_at: '2026-10-03T00:00:00Z',
+    received_at: '2026-10-03T00:00:01Z',
+    display_text: 'Hello fixture',
+    author_channel_id: null,
+    author_display_name: null,
+    evaluation_status: 'NOT_EVALUATED',
+    evaluation: null,
+  };
+  for (const extra of [{}, { ai_shadow: null }, { ai_shadow: summary }]) {
+    assert.equal(
+      chatObservation.parse({ ...observation, ...extra }).evaluation_status,
+      'NOT_EVALUATED',
+    );
+  }
+  assert.equal(
+    chatObservation.safeParse({ ...observation, ai_shadow: { ...summary, rating: 1 } }).success,
+    false,
+  );
+});
 
 test('shadow output accepts supported ratings without application decisions', () => {
   for (const rating of [0, 2, 3, 4])

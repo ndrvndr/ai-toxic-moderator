@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { aiShadowSummary } from './ai-shadow';
 import { category, outcome } from './moderation-enums';
 
 export const chatOutcomeFilter = z.enum([...outcome.options, 'NOT_EVALUATED']);
@@ -119,6 +120,7 @@ export const chatObservation = z.strictObject({
   evaluation: chatEvaluation.nullable(),
   deletion: chatDeletion.nullable().optional(),
   author_action: chatAuthorAction.nullable().optional(),
+  ai_shadow: aiShadowSummary.nullable().optional(),
 });
 
 export const chatPage = z.strictObject({

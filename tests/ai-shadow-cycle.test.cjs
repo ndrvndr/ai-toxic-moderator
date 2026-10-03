@@ -94,6 +94,18 @@ test('cycle scopes selection and persists terminal output using the configured r
             persisted = true;
             return { rows: [{ id: row.observation_id, ...output }] };
           }
+          if (sql.includes('INSERT INTO live_event_counters')) {
+            calls.push('counter-create');
+            return { rows: [] };
+          }
+          if (sql.includes('UPDATE live_event_counters')) {
+            calls.push('counter-update');
+            return { rows: [{ sequence: '1' }] };
+          }
+          if (sql.includes('INSERT INTO live_events')) {
+            calls.push('event-insert');
+            return { rows: [] };
+          }
           calls.push(sql);
           return { rows: [] };
         },
@@ -133,7 +145,18 @@ test('cycle scopes selection and persists terminal output using the configured r
   });
   const signal = new AbortController().signal;
   assert.equal((await cycle.tick(signal)).kind, 'INSERTED');
-  assert.deepEqual(calls, ['read', 'infer', 'connect', 'BEGIN', 'insert', 'COMMIT', 'release']);
+  assert.deepEqual(calls, [
+    'read',
+    'infer',
+    'connect',
+    'BEGIN',
+    'insert',
+    'counter-create',
+    'counter-update',
+    'event-insert',
+    'COMMIT',
+    'release',
+  ]);
   assert.equal((await cycle.tick(signal)).kind, 'IDLE');
   await cycle.dispose();
   await cycle.dispose();

@@ -256,9 +256,74 @@ test('writer commits or rolls back and always releases its connection', async ()
           return { id: identity.observation_id, result, inserted: true };
         },
       },
+      async (connection, event) => {
+        assert.equal(connection, client);
+        assert.deepEqual(event, {
+          channelId: identity.channel_id,
+          sessionId: identity.session_id,
+          runId: identity.run_id,
+          type: 'chat.updated',
+        });
+        calls.push('publish');
+        return { sequence: '1' };
+      },
     );
     if (fails) await assert.rejects(writer.save(success), /Write failed/);
     else assert.equal((await writer.save(success)).inserted, true);
-    assert.deepEqual(calls, ['connect', 'BEGIN', 'save', fails ? 'ROLLBACK' : 'COMMIT', 'release']);
+    assert.deepEqual(
+      calls,
+      fails
+        ? ['connect', 'BEGIN', 'save', 'ROLLBACK', 'release']
+        : ['connect', 'BEGIN', 'save', 'publish', 'COMMIT', 'release'],
+    );
   }
+});
+
+test('writer does not publish an event for an existing result', async () => {
+  const client = { async query() {}, release() {} };
+  const writer = new AiShadowResultWriter(
+    {
+      async connect() {
+        return client;
+      },
+    },
+    {
+      async save() {
+        return { id: identity.observation_id, result: success, inserted: false };
+      },
+    },
+    async () => {
+      assert.fail('Unexpected duplicate publication');
+    },
+  );
+  assert.equal((await writer.save(success)).inserted, false);
+});
+
+test('publication failure rolls back the result instead of committing an invisible update', async () => {
+  const calls = [];
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+    },
+    release() {
+      calls.push('release');
+    },
+  };
+  const writer = new AiShadowResultWriter(
+    {
+      async connect() {
+        return client;
+      },
+    },
+    {
+      async save() {
+        return { id: identity.observation_id, result: success, inserted: true };
+      },
+    },
+    async () => {
+      throw new Error('Publication failed');
+    },
+  );
+  await assert.rejects(writer.save(success), /Publication failed/);
+  assert.deepEqual(calls, ['BEGIN', 'ROLLBACK', 'release']);
 });

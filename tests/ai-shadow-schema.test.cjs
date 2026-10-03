@@ -384,6 +384,115 @@ test('shadow coordinator drains only text in the selected run and skips persiste
   }
 });
 
+test('shadow writer publishes one replayable event with worker permissions and rolls back both resources', async () => {
+  const { provisionWorkerRole } = await import('../scripts/worker-role.mjs');
+  const { AiShadowResultWriter } = source('apps/worker/src/ingestion/ai-shadow-result-writer.ts');
+  const { appendLiveEvent, readLiveEvents } = source('packages/persistence/src/index.ts');
+  const role = `ai_event_${randomUUID().replaceAll('-', '')}`;
+  let pool;
+  let provisioned = false;
+  try {
+    await provisionWorkerRole(client, { role, password: 'local-shadow-event-test-only', schema });
+    provisioned = true;
+    pool = new Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema} -c role=${role}`,
+      max: 2,
+      connectionTimeoutMillis: 2000,
+      statement_timeout: 5000,
+    });
+    const f = await fixture();
+    const observationId = await insertObservation(f);
+    const input = {
+      channel_id: f.channelId,
+      session_id: f.sessionId,
+      observation_id: observationId,
+      run_id: f.runId,
+      model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
+      model_revision: 'e'.repeat(40),
+      model_variant: 'INT8',
+      adapter_version: 'event-test-1',
+      status: 'SUCCEEDED',
+      rating: 2,
+      severity_score: 0.56,
+      truncated: false,
+      inference_ms: 5,
+      error_code: null,
+    };
+    const writer = new AiShadowResultWriter(pool);
+    const settled = await Promise.allSettled([writer.save(input), writer.save(input)]);
+    for (const result of settled) if (result.status === 'rejected') throw result.reason;
+    const results = settled.map((entry) => entry.value);
+    assert.equal(results.filter((entry) => entry.inserted).length, 1);
+    assert.equal(results[0].id, results[1].id);
+    assert.equal((await writer.save(input)).inserted, false);
+    const page = await readLiveEvents(client, {
+      channelId: f.channelId,
+      sessionId: f.sessionId,
+      after: '0',
+    });
+    assert.equal(page.watermark, '1');
+    assert.deepEqual(page.items, [{ sequence: '1', run_id: f.runId, event_type: 'chat.updated' }]);
+
+    const rollbackFixture = await fixture();
+    const rollbackObservation = await insertObservation(rollbackFixture);
+    const rollbackInput = {
+      ...input,
+      channel_id: rollbackFixture.channelId,
+      session_id: rollbackFixture.sessionId,
+      run_id: rollbackFixture.runId,
+      observation_id: rollbackObservation,
+    };
+    const failingWriter = new AiShadowResultWriter(
+      pool,
+      new AiShadowStore(),
+      async (connection, event) => {
+        await appendLiveEvent(connection, event);
+        const invisible = await client.query(
+          'SELECT id FROM youtube_ai_shadow_results WHERE observation_id=$1',
+          [rollbackObservation],
+        );
+        assert.equal(invisible.rowCount, 0);
+        const feed = await readLiveEvents(client, {
+          channelId: rollbackFixture.channelId,
+          sessionId: rollbackFixture.sessionId,
+          after: '0',
+        });
+        assert.equal(feed.watermark, '0');
+        assert.deepEqual(feed.items, []);
+        throw new Error('Simulated publication failure');
+      },
+    );
+    await assert.rejects(failingWriter.save(rollbackInput), /Simulated publication failure/);
+    const rows = await client.query(
+      'SELECT id FROM youtube_ai_shadow_results WHERE observation_id=$1',
+      [rollbackObservation],
+    );
+    assert.equal(rows.rowCount, 0);
+    const feed = await readLiveEvents(client, {
+      channelId: rollbackFixture.channelId,
+      sessionId: rollbackFixture.sessionId,
+      after: '0',
+    });
+    assert.equal(feed.watermark, '0');
+    assert.deepEqual(feed.items, []);
+    assert.equal((await writer.save(rollbackInput)).inserted, true);
+    const retried = await readLiveEvents(client, {
+      channelId: rollbackFixture.channelId,
+      sessionId: rollbackFixture.sessionId,
+      after: '0',
+    });
+    assert.equal(retried.watermark, '1');
+    assert.equal(retried.items.length, 1);
+  } finally {
+    if (pool) await pool.end();
+    if (provisioned) {
+      await client.query(`DROP OWNED BY "${role}"`);
+      await client.query(`DROP ROLE "${role}"`);
+    }
+  }
+});
+
 test('shadow migration is repeatable', async () => {
   await migrate(client);
   const result = await client.query('SELECT name FROM schema_migrations WHERE name=$1', [

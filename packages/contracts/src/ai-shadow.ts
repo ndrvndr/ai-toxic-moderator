@@ -54,4 +54,16 @@ export const aiShadowResult = z.discriminatedUnion('status', [
 ]);
 
 export type AiShadowResult = z.infer<typeof aiShadowResult>;
+// Public chat projection excludes internal provenance IDs and carries no action decision.
+const privateIdentity = {
+  channel_id: true,
+  session_id: true,
+  observation_id: true,
+  run_id: true,
+} as const;
+export const aiShadowSummary = z.discriminatedUnion('status', [
+  aiShadowResult.options[0].omit(privateIdentity),
+  aiShadowResult.options[1].omit(privateIdentity),
+]);
+export type AiShadowSummary = z.infer<typeof aiShadowSummary>;
 export type AiShadowErrorCode = z.infer<typeof aiShadowErrorCode>;

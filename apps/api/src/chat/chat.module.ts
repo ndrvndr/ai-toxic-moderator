@@ -99,6 +99,7 @@ class ChatController {
         author_action_duration: string | null;
         author_action_block_reason: string | null;
         author_action_has_evidence: boolean | null;
+        ai_shadow: unknown;
       }>(
         `
           SELECT
@@ -134,8 +135,30 @@ class ChatController {
             author_action.author_action_status,
             author_action.author_action_duration,
             author_action.author_action_block_reason,
-            author_action.author_action_has_evidence
+            author_action.author_action_has_evidence,
+            shadow.summary AS ai_shadow
           FROM youtube_chat_observations
+          LEFT JOIN LATERAL (
+            SELECT jsonb_build_object(
+              'model_id', s.model_id,
+              'model_revision', s.model_revision,
+              'model_variant', s.model_variant,
+              'adapter_version', s.adapter_version,
+              'status', s.status,
+              'rating', s.rating,
+              'severity_score', s.severity_score,
+              'truncated', s.truncated,
+              'inference_ms', s.inference_ms,
+              'error_code', s.error_code
+            ) AS summary
+            FROM youtube_ai_shadow_results s
+            WHERE s.channel_id = youtube_chat_observations.channel_id
+              AND s.session_id = youtube_chat_observations.session_id
+              AND s.observation_id = youtube_chat_observations.id
+              AND s.run_id = youtube_chat_observations.first_observed_run_id
+            ORDER BY s.created_at DESC, s.id DESC
+            LIMIT 1
+          ) shadow ON true
           LEFT JOIN LATERAL (
             SELECT
               outcome,
@@ -265,6 +288,7 @@ FROM youtube_ban_executions e
           author_channel_id: row.author_channel_id,
           author_display_name: row.author_display_name,
           evaluation_status: row.evaluation_outcome ?? 'NOT_EVALUATED',
+          ai_shadow: row.ai_shadow ?? null,
           deletion:
             row.deletion_status === null ? null : { action: 'DELETE', status: row.deletion_status },
           author_action:

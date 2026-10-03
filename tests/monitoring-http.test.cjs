@@ -429,6 +429,135 @@ async function insertChatObservation(
   return id;
 }
 
+async function insertChatShadow(
+  run,
+  observationId,
+  { revision = 'a'.repeat(40), status = 'SUCCEEDED', createdAt = '2026-10-03T00:00:00Z' } = {},
+) {
+  await admin.query(
+    `INSERT INTO youtube_ai_shadow_results (
+      id, channel_id, session_id, observation_id, run_id, model_id, model_revision,
+      model_variant, adapter_version, status, rating, severity_score, truncated,
+      inference_ms, error_code, created_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,'INT8','http-shadow-1',$8,$9,$10,$11,$12,$13,$14)`,
+    [
+      randomUUID(),
+      run.channel_id,
+      run.session_id,
+      observationId,
+      run.id,
+      'laskar-ks/toxic-guardrail-minilm-id-en',
+      revision,
+      status,
+      status === 'SUCCEEDED' ? 2 : null,
+      status === 'SUCCEEDED' ? 0.56 : null,
+      status === 'SUCCEEDED' ? false : null,
+      status === 'SUCCEEDED' ? 5 : null,
+      status === 'ERROR' ? 'INFERENCE_TIMEOUT' : null,
+      createdAt,
+    ],
+  );
+}
+
+test('chat exposes the latest shadow result without changing rule outcomes or leaking provenance', async () => {
+  const run = await startRun();
+  const evaluatedId = await insertChatObservation(run, {
+    receivedAt: '2026-01-01T00:00:00.123456Z',
+  });
+  const siblingId = await insertChatObservation(run, { receivedAt: '2026-01-01T00:00:00.123455Z' });
+  await insertChatShadow(run, evaluatedId);
+  const response = await request(chatPath(run));
+  assert.equal(response.status, 200, await response.clone().text());
+  const page = chatPage.parse(await response.json());
+  const item = page.items.find((entry) => entry.id === evaluatedId);
+  assert.deepEqual(item.ai_shadow, {
+    model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
+    model_revision: 'a'.repeat(40),
+    model_variant: 'INT8',
+    adapter_version: 'http-shadow-1',
+    status: 'SUCCEEDED',
+    rating: 2,
+    severity_score: 0.56,
+    truncated: false,
+    inference_ms: 5,
+    error_code: null,
+  });
+  assert.equal(item.evaluation_status, 'NOT_EVALUATED');
+  assert.equal(item.evaluation, null);
+  assert.equal(item.deletion, null);
+  assert.equal(item.author_action, null);
+  assert.equal(page.items.find((entry) => entry.id === siblingId).ai_shadow, null);
+  for (const key of [
+    'channel_id',
+    'session_id',
+    'run_id',
+    'observation_id',
+    'payload',
+    'raw_error',
+  ]) {
+    assert.equal(key in item.ai_shadow, false);
+  }
+  const filtered = await request(`${chatPath(run)}?outcome=REVIEW`);
+  assert.equal(filtered.status, 200);
+  assert.deepEqual(chatPage.parse(await filtered.json()).items, []);
+  await insertChatShadow(run, evaluatedId, {
+    revision: 'b'.repeat(40),
+    status: 'ERROR',
+    createdAt: '2026-10-03T00:00:01Z',
+  });
+  const next = await request(`${chatPath(run)}?limit=1`);
+  assert.equal(next.status, 200);
+  const latest = chatPage.parse(await next.json());
+  assert.equal(latest.items.length, 1);
+  assert.equal(latest.items[0].id, evaluatedId);
+  assert.equal(latest.items[0].ai_shadow.model_revision, 'b'.repeat(40));
+  assert.equal(latest.items[0].ai_shadow.status, 'ERROR');
+  assert.equal(latest.items[0].ai_shadow.rating, null);
+  assert.equal(latest.items[0].ai_shadow.severity_score, null);
+  assert.equal(latest.items[0].ai_shadow.error_code, 'INFERENCE_TIMEOUT');
+  assert.ok(latest.next_cursor);
+  const second = await request(
+    `${chatPath(run)}?limit=1&cursor=${encodeURIComponent(latest.next_cursor)}`,
+  );
+  assert.equal(second.status, 200);
+  assert.equal(chatPage.parse(await second.json()).items[0].id, siblingId);
+});
+
+test('shadow output respects chat authentication, membership, and session boundaries', async () => {
+  const run = await startRun();
+  const other = await startRun();
+  const observationId = await insertChatObservation(run);
+  await insertChatObservation(other);
+  await insertChatShadow(run, observationId);
+  const otherResponse = await request(chatPath(other));
+  assert.equal(otherResponse.status, 200);
+  assert.equal(chatPage.parse(await otherResponse.json()).items[0].ai_shadow, null);
+  assert.equal((await request(chatPath(run), { headers: { Cookie: '' } })).status, 401);
+  await admin.query(
+    `UPDATE channel_memberships SET role='MODERATOR'
+    WHERE channel_id=$1 AND account_id=$2`,
+    [run.channel_id, accountId],
+  );
+  const moderator = await request(chatPath(run));
+  assert.equal(moderator.status, 200);
+  assert.equal(chatPage.parse(await moderator.json()).items[0].ai_shadow.status, 'SUCCEEDED');
+  assert.equal(
+    (await request(`/v1/channels/${other.channel_id}/sessions/${run.session_id}/chat`)).status,
+    404,
+  );
+  await admin.query(
+    `UPDATE channel_memberships SET role='OPERATOR'
+    WHERE channel_id=$1 AND account_id=$2`,
+    [run.channel_id, accountId],
+  );
+  assert.equal((await request(chatPath(run))).status, 403);
+  await admin.query('DELETE FROM channel_memberships WHERE channel_id=$1 AND account_id=$2', [
+    run.channel_id,
+    accountId,
+  ]);
+  assert.equal((await request(chatPath(run))).status, 403);
+});
+
 test('chat endpoint returns an empty page for an existing session', async () => {
   const run = await startRun();
   const response = await request(chatPath(run));

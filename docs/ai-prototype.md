@@ -93,8 +93,8 @@ coexist. Serialization failures at stronger isolation levels must be retried by
 the caller, not interpreted as missing or safe output.
 
 Inference must complete outside database transactions. This store does not invoke
-the model, plan moderation actions, or publish live events. Publication will be
-added with the worker integration so results and events commit together.
+the model, plan moderation actions, or publish live events directly. The result
+writer described below adds publication so results and events commit together.
 
 ```powershell
 npm run test:ai-shadow-store
@@ -189,7 +189,8 @@ pending; a later tick may infer it again. No database client or transaction is h
 while the model runs.
 
 This coordinator does not create classifications, plan or execute moderation,
-publish live events, or scan all historical runs automatically. The opt-in worker
+or scan all historical runs automatically. Its result writer publishes chat updates.
+The opt-in worker
 integration below schedules it for one explicitly selected run.
 The coordinator and reader tests use simulated inference; they do not verify the
 native model.
@@ -266,11 +267,67 @@ npm run db:migrate
 npm run db:worker
 ```
 
-Start the configured process with `npm run dev:worker`. This step adds opt-in
-scheduling and persistence only. AI results are not yet included in chat API
-responses, published through WebSocket events, displayed in the dashboard, or used
-for moderation decisions. Lifecycle tests use fake inference; real child startup
+Start the configured process with `npm run dev:worker`. AI results are included in
+chat API responses and publish WebSocket invalidation events as described below.
+They are not yet displayed in the dashboard or used for moderation decisions.
+Lifecycle tests use fake inference; real child startup
 and model output still require the later integration verification.
+
+### Chat API and live delivery
+
+The existing authorized chat endpoint returns `ai_shadow: null` when the
+observation has no stored model result. Otherwise it returns the most recently
+stored result ordered by `created_at DESC, id DESC`. Results from different model
+revisions remain in history; this projection returns one result, not necessarily
+the revision currently selected in worker configuration. Model ID, revision,
+variant, and adapter version identify the displayed output.
+
+`aiShadowSummary` exposes the model provenance, status, rating, severity score,
+truncation, inference duration, and safe error code. It excludes internal run,
+channel, session, and observation IDs, provider payload, exception messages, and
+application decisions. An error has null rating and score. The optional contract
+field allows older fixtures and responses to remain valid; the updated API always
+includes the field. Existing authentication, membership, and session checks apply.
+
+The shadow result is separate from rule evaluation, deletion, and author actions.
+It does not change evaluation status, outcome/category filters, or chat pagination.
+The API matches shadow rows to the observation's channel, session, ID, and original
+run, so results cannot be attached to another session or sibling message.
+
+`AiShadowResultWriter` now appends `chat.updated` only when a result is newly
+inserted. Result, event, and session sequence commit in one transaction. Concurrent
+duplicate writes and replay of an existing result do not publish another event or
+advance the cursor. Publication failure rolls back all three resources. Successful
+and terminal error results both trigger an update.
+
+The existing WebSocket feed delivers this committed event using its normal replay
+and authorization checks. The frame carries the sequence, run ID, and event type;
+clients refetch the authorized chat snapshot for AI output. Raw text and model
+output are not sent in the event frame. Existing dashboard cache invalidation for
+`chat.updated` therefore needs no new protocol event type. Visible AI presentation
+is the next step.
+
+Run checks manually after formatting and building the shared contracts:
+
+```powershell
+npm run format
+npm run build:core
+npm run check
+npm run test:ai-shadow-contracts
+npm run test:ai-shadow-coordinator
+npm run test:ai-shadow-cycle
+npm run test:ai-shadow-schema
+npm run build --workspace @moderator/api
+npm run test:monitoring-http
+npm run test:live-websocket
+npm run test:live-event-protocol
+npm run build --workspace @moderator/worker
+```
+
+HTTP tests use real access guards and PostgreSQL with an API runtime role. Writer
+tests cover competing transactions using worker permissions, replay, uncommitted
+visibility, and rollback of both result and event. These checks do not verify
+native inference or a browser receiving new model output.
 
 ### Expanded local run: developer reported, 2026-10-03
 
