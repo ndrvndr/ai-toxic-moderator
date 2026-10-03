@@ -5,7 +5,7 @@
     "jsx": "react-jsx",
     "paths": {
       "@/*": ["./apps/dashboard/*"],
-      "@moderator/*": ["./packages/*/src"]
+      "@moderator/*": ["./packages/*/src/index.ts"]
     }
   },
   "include": ["apps/**/*.ts", "apps/**/*.tsx", "apps/**/*.mts", "packages/**/*.ts"],

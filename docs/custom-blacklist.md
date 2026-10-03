@@ -10,6 +10,8 @@ rules. Linked and verified plans can execute while monitoring is active and the
 corresponding worker action switches are enabled. Existing moderation settings
 keep their format. AI shadow selection skips messages matched by the captured
 blacklist without creating a model result for them.
+Live and History chat display captured blacklist provenance separately from
+provider execution results.
 
 ## Entry contract
 
@@ -148,8 +150,7 @@ fits a single request. Oversized requests return HTTP 413 without writing a revi
 
 ## Remaining implementation
 
-1. Display decision provenance in Live and History.
-2. Verify the complete flow through integration tests and a controlled livestream.
+1. Verify the complete flow through integration tests and a controlled livestream.
 
 ## Settings editor
 
@@ -368,6 +369,37 @@ pages, changed channel revisions, new runs, restart, model revisions, and preser
 historical output. Inference is simulated; these checks do not establish native
 model performance or a new browser/livestream verification result.
 
+## Live and History provenance
+
+The authorized chat endpoint includes an optional nullable `blacklist` summary.
+It links the latest displayed classification to its scoped immutable decision and
+original run snapshot, rather than querying current channel settings. A newer
+classification cannot inherit an older classification's blacklist provenance.
+Unmatched and unaudited observations return null. Invalid captured metadata is
+rejected before constructing a summary.
+
+The summary contains the captured blacklist ID/revision, run ID, matcher version,
+all matched entry IDs, the selected entry's literal pattern/matching mode/action,
+and author planning status. It does not expose the full channel configuration,
+unmatched patterns, action plan payloads, credentials, or provider internals.
+Existing channel/session authorization and pagination still apply.
+
+The shared `ChatBlacklist` component appears below the evaluation in both Live
+and History. It labels the decision as Custom blacklist / Streamer policy and
+describes the configured deletion plus optional timeout/ban. These are policy
+choices, not claims that requests succeeded or restrictions remain active.
+Existing deletion and author outcome panels remain independent. An unavailable
+author target explains why no author plan exists while deletion is retained.
+Captured IDs/revision and matching entry IDs are available under Blacklist details.
+Literal patterns are rendered as React text, never HTML.
+
+Dashboard tests cover all actions, unavailable targets, absent provenance, literal
+markup, contract validation, and shared Live/History rendering updates. HTTP tests
+cover captured revision retention after settings edits, new runs, pagination,
+classification selection, restricted response fields, and owner/moderator access.
+These tests use local fixtures and do not send YouTube moderation requests. Browser
+and controlled livestream verification remain the next step.
+
 ## Manual validation
 
 Run from the repository root:
@@ -399,6 +431,7 @@ npm run test:custom-blacklist-store
 npm run build --workspace @moderator/api
 npm run test:ingestion-integration
 npm run test:custom-blacklist-http
+npm run test:monitoring-http
 npm run test:moderation-settings-http
 npm run test:moderation-settings-contracts
 npm run test:moderation-settings-store

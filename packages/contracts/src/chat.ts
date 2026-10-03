@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { aiShadowSummary } from './ai-shadow';
+import { customBlacklistRule } from './custom-blacklist';
 import { category, outcome } from './moderation-enums';
 
 export const chatOutcomeFilter = z.enum([...outcome.options, 'NOT_EVALUATED']);
@@ -108,21 +109,75 @@ export const chatAuthorAction = z
     }
   });
 
-export const chatObservation = z.strictObject({
-  id: z.uuid(),
-  external_message_id: z.string().min(1).max(1024),
-  event_type: z.string().min(1).max(128),
-  published_at: z.iso.datetime(),
-  received_at: z.iso.datetime(),
-  display_text: z.string().nullable(),
-  author_channel_id: z.string().nullable(),
-  author_display_name: z.string().nullable(),
-  evaluation_status: z.enum(['NOT_EVALUATED', 'ALLOW', 'REVIEW', 'ACTION_REQUIRED', 'ERROR']),
-  evaluation: chatEvaluation.nullable(),
-  deletion: chatDeletion.nullable().optional(),
-  author_action: chatAuthorAction.nullable().optional(),
-  ai_shadow: aiShadowSummary.nullable().optional(),
-});
+/** Captured streamer policy, separate from provider execution outcomes. */
+export const chatBlacklistDecision = z
+  .strictObject({
+    run_id: z.uuid(),
+    blacklist_id: z.uuid(),
+    blacklist_revision: z.number().int().positive().safe(),
+    source: z.literal('SAVED'),
+    matcher_version: z.string().min(1).max(64),
+    matched_rule_ids: z.array(z.uuid()).min(1).max(100),
+    selected_entry: customBlacklistRule,
+    author_action_status: z.enum(['NOT_SELECTED', 'PLANNED', 'TARGET_UNAVAILABLE']),
+  })
+  .superRefine((value, context) => {
+    const ids = value.matched_rule_ids;
+    if (
+      !value.selected_entry.enabled ||
+      !ids.includes(value.selected_entry.id) ||
+      new Set(ids).size !== ids.length ||
+      ids.some((id, index) => index > 0 && id < ids[index - 1]!)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'The selected entry must belong to unique sorted matches.',
+      });
+    }
+    if (
+      (value.selected_entry.action === 'DELETE') !==
+      (value.author_action_status === 'NOT_SELECTED')
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Author planning must match the selected policy.',
+      });
+    }
+  });
+
+export const chatObservation = z
+  .strictObject({
+    id: z.uuid(),
+    external_message_id: z.string().min(1).max(1024),
+    event_type: z.string().min(1).max(128),
+    published_at: z.iso.datetime(),
+    received_at: z.iso.datetime(),
+    display_text: z.string().nullable(),
+    author_channel_id: z.string().nullable(),
+    author_display_name: z.string().nullable(),
+    evaluation_status: z.enum(['NOT_EVALUATED', 'ALLOW', 'REVIEW', 'ACTION_REQUIRED', 'ERROR']),
+    evaluation: chatEvaluation.nullable(),
+    deletion: chatDeletion.nullable().optional(),
+    author_action: chatAuthorAction.nullable().optional(),
+    ai_shadow: aiShadowSummary.nullable().optional(),
+    blacklist: chatBlacklistDecision.nullable().optional(),
+  })
+  .superRefine((value, context) => {
+    if (
+      value.blacklist &&
+      (value.evaluation_status !== 'ACTION_REQUIRED' ||
+        value.evaluation?.outcome !== 'ACTION_REQUIRED' ||
+        value.evaluation.reason_code !== 'BLACKLIST_MATCH' ||
+        value.evaluation.primary_category !== null ||
+        value.evaluation.severity !== null)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['blacklist'],
+        message: 'Blacklist provenance requires the displayed streamer policy evaluation.',
+      });
+    }
+  });
 
 export const chatPage = z.strictObject({
   items: z.array(chatObservation),
@@ -134,3 +189,4 @@ export type ChatPage = z.infer<typeof chatPage>;
 export type ChatEvaluation = z.infer<typeof chatEvaluation>;
 export type ChatDeletion = z.infer<typeof chatDeletion>;
 export type ChatAuthorAction = z.infer<typeof chatAuthorAction>;
+export type ChatBlacklistDecision = z.infer<typeof chatBlacklistDecision>;

@@ -384,6 +384,7 @@ async function insertChatObservation(
     id = randomUUID(),
     receivedAt = '2026-01-01T00:00:00.123456Z',
     text = 'Test viewer message',
+    authorChannelId = 'viewer-channel',
   } = {},
 ) {
   await admin.query(
@@ -418,7 +419,7 @@ async function insertChatObservation(
           textMessageDetails: { messageText: text },
         },
         authorDetails: {
-          channelId: 'viewer-channel',
+          channelId: authorChannelId,
           displayName: 'Test viewer',
         },
       }),
@@ -2149,6 +2150,185 @@ test('saved session status filtering combines with title search', async () => {
 
   const invalid = await request('/v1/youtube/sessions?status=INVALID');
   assert.equal(invalid.status, 422);
+});
+
+test('chat returns captured blacklist provenance separately from provider outcomes and current settings', async () => {
+  const { source } = require('./helpers/source.cjs');
+  const { createClassificationStore } = source(
+    'apps/worker/src/ingestion/create-classification-store.ts',
+  );
+  async function classify(run, observationId) {
+    const observation = (
+      await admin.query(
+        `SELECT external_message_id, payload,
+       to_char(published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS published_at
+       FROM youtube_chat_observations WHERE id = $1`,
+        [observationId],
+      )
+    ).rows[0];
+    await admin.query('BEGIN');
+    try {
+      await createClassificationStore().classify(admin, {
+        channelId: run.channel_id,
+        sessionId: run.session_id,
+        runId: run.id,
+        observationId,
+        externalMessageId: observation.external_message_id,
+        publishedAt: observation.published_at,
+        payload: observation.payload,
+      });
+      await admin.query('COMMIT');
+    } catch (error) {
+      await admin.query('ROLLBACK');
+      throw error;
+    }
+  }
+  async function restart(run) {
+    const stopped = await request(`${runPath(run)}/stop`, { method: 'POST', body: {} });
+    assert.equal(stopped.status, 200, await stopped.clone().text());
+    const started = await request('/v1/monitoring/start', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': randomUUID() },
+      body: { youtube_broadcast_id: run.youtube_broadcast_id },
+    });
+    assert.equal(started.status, 200, await started.clone().text());
+    return startMonitoringResponse.parse(await started.json()).run;
+  }
+
+  for (const [action, authorChannelId] of [
+    ['DELETE', 'UC' + 'a'.repeat(22)],
+    ['DELETE_TIMEOUT', 'UC' + 'a'.repeat(22)],
+    ['DELETE_BAN', 'UC' + 'a'.repeat(22)],
+    ['DELETE_TIMEOUT', 'viewer-channel'],
+  ]) {
+    const initial = await startRun();
+    const entry = {
+      id: randomUUID(),
+      enabled: true,
+      match_type: 'WORD',
+      pattern: 'abc',
+      action,
+      ...(action === 'DELETE_TIMEOUT' ? { duration_seconds: 30 } : {}),
+    };
+    const saved = await request(`/v1/channels/${initial.channel_id}/blacklist`, {
+      method: 'POST',
+      body: {
+        expected_revision: 0,
+        configuration: { schema_version: 1, enabled: true, rules: [entry] },
+      },
+    });
+    assert.equal(saved.status, 200, await saved.clone().text());
+    const blacklistId = (await saved.json()).blacklist.id;
+    const run = await restart(initial);
+    const observationId = await insertChatObservation(run, { text: 'abc', authorChannelId });
+    await classify(run, observationId);
+    const siblingId = await insertChatObservation(run, {
+      text: 'Hello viewer',
+      receivedAt: '2026-01-01T00:00:00.123455Z',
+    });
+    await classify(run, siblingId);
+    const edited = await request(`/v1/channels/${run.channel_id}/blacklist`, {
+      method: 'POST',
+      body: {
+        expected_revision: 1,
+        configuration: { schema_version: 1, enabled: false, rules: [] },
+      },
+    });
+    assert.equal(edited.status, 200, await edited.clone().text());
+    const response = await request(`${chatPath(run)}?limit=1`);
+    assert.equal(response.status, 200, await response.clone().text());
+    const first = chatPage.parse(await response.json());
+    const item = first.items[0];
+    assert.equal(item.id, observationId);
+    assert.deepEqual(item.blacklist, {
+      run_id: run.id,
+      blacklist_id: blacklistId,
+      blacklist_revision: 1,
+      source: 'SAVED',
+      matcher_version: 'blacklist-literal-1',
+      matched_rule_ids: [entry.id],
+      selected_entry: entry,
+      author_action_status:
+        action === 'DELETE'
+          ? 'NOT_SELECTED'
+          : authorChannelId === 'viewer-channel'
+            ? 'TARGET_UNAVAILABLE'
+            : 'PLANNED',
+    });
+    assert.equal(item.evaluation.reason_code, 'BLACKLIST_MATCH');
+    assert.equal(item.evaluation.severity, null);
+    assert.deepEqual(item.deletion, { action: 'DELETE', status: 'PENDING' });
+    assert.equal(item.author_action, null);
+    assert.equal(item.ai_shadow, null);
+    assert.ok(first.next_cursor);
+    const second = await request(`${chatPath(run)}?limit=1&cursor=${first.next_cursor}`);
+    assert.equal(second.status, 200);
+    assert.equal(chatPage.parse(await second.json()).items[0].blacklist, null);
+    for (const key of [
+      'plans',
+      'configuration',
+      'created_by',
+      'payload',
+      'credentials',
+      'provider_status',
+    ])
+      assert.equal(key in item.blacklist, false);
+
+    await admin.query(
+      "UPDATE channel_memberships SET role = 'MODERATOR' WHERE channel_id = $1 AND account_id = $2",
+      [run.channel_id, accountId],
+    );
+    const moderator = await request(chatPath(run));
+    assert.equal(moderator.status, 200);
+    assert.deepEqual(chatPage.parse(await moderator.json()).items[0].blacklist, item.blacklist);
+    const foreign = await startRun();
+    assert.equal(
+      (await request(`/v1/channels/${foreign.channel_id}/sessions/${run.session_id}/chat`)).status,
+      404,
+    );
+    await admin.query(
+      "UPDATE channel_memberships SET role = 'OPERATOR' WHERE channel_id = $1 AND account_id = $2",
+      [run.channel_id, accountId],
+    );
+    assert.equal((await request(chatPath(run))).status, 403);
+    assert.equal((await request(chatPath(run), { headers: { Cookie: '' } })).status, 401);
+    await admin.query(
+      "UPDATE channel_memberships SET role = 'OWNER' WHERE channel_id = $1 AND account_id = $2",
+      [run.channel_id, accountId],
+    );
+
+    const later = await restart(run);
+    const laterId = await insertChatObservation(later, {
+      text: 'abc',
+      receivedAt: '2026-01-01T00:00:00.123457Z',
+    });
+    await classify(later, laterId);
+    const history = await request(chatPath(later));
+    assert.equal(history.status, 200, await history.clone().text());
+    const historyItems = chatPage.parse(await history.json()).items;
+    assert.equal(historyItems.find((value) => value.id === laterId).blacklist, null);
+    assert.deepEqual(
+      historyItems.find((value) => value.id === observationId).blacklist,
+      item.blacklist,
+    );
+
+    // A newer built-in evaluation cannot inherit provenance from an older classification.
+    await admin.query(
+      `INSERT INTO youtube_chat_classifications(
+      id, channel_id, session_id, observation_id, run_id, classifier_version, policy_version,
+      outcome, primary_category, severity, reason_code, reason, signals, created_at
+    ) VALUES ($1,$2,$3,$4,$5,'later-review','policy-1','ALLOW',NULL,0,'NO_RULE_MATCH',
+      'No configured rule matched this message.','[]'::jsonb,clock_timestamp() + interval '1 second')`,
+      [randomUUID(), run.channel_id, run.session_id, observationId, run.id],
+    );
+    const updated = await request(chatPath(run));
+    assert.equal(updated.status, 200);
+    const updatedItem = chatPage
+      .parse(await updated.json())
+      .items.find((value) => value.id === observationId);
+    assert.equal(updatedItem.evaluation_status, 'ALLOW');
+    assert.equal(updatedItem.blacklist, null);
+  }
 });
 
 test('saved session cursors cannot cross status filters', async () => {

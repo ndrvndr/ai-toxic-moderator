@@ -4,6 +4,7 @@ import { Controller, Get, Module, Param, Query, Req } from '@nestjs/common';
 
 import { DatabaseService } from '../database.module';
 import { failure, type ApiRequest } from '../http';
+import { summarizeChatBlacklist } from './chat-blacklist';
 
 @Controller('v1/channels/:channel_id/sessions/:session_id/chat')
 class ChatController {
@@ -87,6 +88,10 @@ class ChatController {
         author_channel_id: string | null;
         author_display_name: string | null;
         evaluation_outcome: 'ALLOW' | 'REVIEW' | 'ACTION_REQUIRED' | 'ERROR' | null;
+        evaluation_id: string | null;
+        evaluation_run_id: string | null;
+        blacklist_bundle: unknown;
+        blacklist_snapshot: unknown;
         evaluation_primary_category: string | null;
         evaluation_severity: number | null;
         evaluation_reason_code: string | null;
@@ -124,6 +129,10 @@ class ChatController {
             ) AS author_channel_id,
             payload #>> '{authorDetails,displayName}' AS author_display_name,
             evaluation.outcome AS evaluation_outcome,
+            evaluation.classification_id AS evaluation_id,
+            evaluation.classification_run_id AS evaluation_run_id,
+            blacklist.bundle AS blacklist_bundle,
+            blacklist.snapshot AS blacklist_snapshot,
             evaluation.primary_category AS evaluation_primary_category,
             evaluation.severity AS evaluation_severity,
             evaluation.reason_code AS evaluation_reason_code,
@@ -161,6 +170,8 @@ class ChatController {
           ) shadow ON true
           LEFT JOIN LATERAL (
             SELECT
+              classification.id AS classification_id,
+              classification.run_id AS classification_run_id,
               outcome,
               primary_category,
               severity,
@@ -175,6 +186,21 @@ class ChatController {
             ORDER BY classification.created_at DESC, classification.id DESC
             LIMIT 1
           ) evaluation ON true
+          LEFT JOIN LATERAL (
+            SELECT bl.bundle, jsonb_build_object(
+              'run_id', captured.run_id, 'channel_id', captured.channel_id,
+              'blacklist_id', captured.blacklist_id, 'blacklist_revision', captured.blacklist_revision,
+              'source', captured.source, 'configuration', captured.configuration
+            ) AS snapshot
+            FROM youtube_blacklist_decisions bl
+            JOIN monitoring_blacklist_snapshots captured ON captured.run_id = bl.run_id
+              AND captured.channel_id = bl.channel_id
+            WHERE bl.classification_id = evaluation.classification_id AND bl.run_id = evaluation.classification_run_id
+              AND bl.channel_id = youtube_chat_observations.channel_id
+              AND bl.session_id = youtube_chat_observations.session_id
+            ORDER BY bl.created_at DESC, bl.id DESC
+            LIMIT 1
+          ) blacklist ON true
           LEFT JOIN LATERAL (
             SELECT COALESCE((
               SELECT a.status
@@ -289,6 +315,13 @@ FROM youtube_ban_executions e
           author_display_name: row.author_display_name,
           evaluation_status: row.evaluation_outcome ?? 'NOT_EVALUATED',
           ai_shadow: row.ai_shadow ?? null,
+          blacklist: summarizeChatBlacklist(row.blacklist_bundle, row.blacklist_snapshot, {
+            channelId,
+            sessionId,
+            classificationId: row.evaluation_id,
+            runId: row.evaluation_run_id,
+            reasonCode: row.evaluation_reason_code,
+          }),
           deletion:
             row.deletion_status === null ? null : { action: 'DELETE', status: row.deletion_status },
           author_action:
