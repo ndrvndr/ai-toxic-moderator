@@ -154,3 +154,33 @@ does not rewrite the application's historical successful BAN attempt.
 The current worker still blocks further author actions in that session
 when a successful BAN exists in its history. Synchronizing external
 unban actions is not implemented.
+
+## Settings-driven Moderation Verification
+
+On October 3, 2026 (Asia/Jakarta), the developer indicated that the preceding
+DELETE, snapshot/restart, TIMEOUT, repeated-TIMEOUT, and BAN procedures passed
+by asking to continue. Under the agreed workflow, this means the preceding
+checks were successful and committed. The assistant did not independently
+execute these checks. Detailed provider responses and run IDs were not supplied
+for this verification sequence.
+
+Reported checks covered normal Settings, with controlled marker scopes cleared:
+
+- A configured Direct insult rule selected DELETE for a matching message and
+  retained a safe message.
+- Disabling Settings preserved the active run's previously captured policy.
+- After stop and restart, the new run classified matching messages but did not
+  execute actions under the disabled snapshot.
+- A configured 30-second TIMEOUT was confirmed, chat was blocked from the owner's
+  view during the restriction, and safe chat resumed afterward.
+- Another violation triggered a second timeout in the same session.
+- A configured BAN was confirmed, the viewer appeared in Hidden users, and new
+  messages were not visible to the owner.
+- After monitoring stopped and the owner manually removed the viewer from Hidden
+  users, safe chat became visible again.
+- Action results appeared in the dashboard without a manual refresh.
+
+See [Moderation Settings](moderation-settings.md) for immutable run snapshot
+semantics, dispatch switches, and automated test coverage. These reported checks
+do not resolve the pending reconnect, cleanup, production HTTPS/WSS, or classifier
+accuracy checks listed separately in this document.

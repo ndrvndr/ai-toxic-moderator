@@ -196,14 +196,36 @@ cannot replace edits during form entry.
 The page explains that saved preferences apply to new monitoring runs and that
 corresponding worker action switches must also be enabled for dispatch.
 
-## Remaining implementation sequence
+## Reported live verification
 
-1. Verify normal Settings-driven actions with a controlled live test account.
-2. Confirm enabled/disabled behavior, run restart semantics, channel access, and
-   historical result consistency in browser verification.
+On October 3, 2026 (Asia/Jakarta), the developer indicated that each preceding
+verification step passed by asking to continue, following the agreed convention
+that continuing means the previous checks are safe and committed. These results
+are developer-reported; the assistant did not run commands or independently
+observe the browser or database. No run IDs or provider response captures were
+supplied for these Settings-driven checks.
 
-Existing execution guards, repeated-timeout scheduling, and UNKNOWN handling must
-continue to apply when configurable policies are connected.
+| Check                                | Reported outcome                                                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| Settings-driven DELETE               | The matching insult message was deleted; the safe message was retained.                                             |
+| Active run snapshot                  | Disabling Settings did not change the already active run's deletion behavior.                                       |
+| Disabled configuration after restart | A new run still classified the matching message as flagged but did not delete it.                                   |
+| Settings-driven TIMEOUT              | A 30-second timeout was confirmed and messages were blocked from the owner's view during the restriction.           |
+| Repeated TIMEOUT                     | Chat resumed after the first timeout; a new violation triggered another timeout in the same session.                |
+| Settings-driven BAN                  | BAN was confirmed, the test viewer appeared in Hidden users, and subsequent messages were not visible to the owner. |
+| Manual recovery                      | After monitoring stopped and the viewer was removed from Hidden users, safe chat was visible again.                 |
+
+The procedure used normal Settings with controlled marker scopes cleared, new
+monitoring runs after configuration changes, and an account separate from the
+owner/moderator. Dashboard action results were checked without manual refresh.
+See [Live Dashboard Verification](live-dashboard-verification.md) for the combined
+verification record.
+
+Settings implementation and the reported live action checks are complete for this
+development milestone. This does not establish classifier accuracy, production
+readiness, or a complete browser acceptance result for History and access handling.
+Record run IDs, settings revisions, and request outcomes during subsequent
+reproducible verification. Integration/connection settings remain separate work.
 
 ## Validation
 

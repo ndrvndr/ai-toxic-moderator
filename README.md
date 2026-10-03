@@ -8,8 +8,10 @@ endpoints, and YouTube chat ingestion are implemented.
 The worker retrieves chat resources and persists observations with checkpoints,
 deduplication, retry handling, and lease-based recovery.
 
-Dashboard WebSocket delivery, classification, automatic moderation actions, and
-user-facing history are not implemented yet.
+The dashboard supports authenticated WebSocket updates, rule-based classification,
+per-message moderation results, livestream history, and channel moderation Settings.
+The worker can plan and execute DELETE, TIMEOUT, and BAN actions with existing
+authorization and execution guards. AI model integration is not implemented yet.
 
 ## Current capabilities
 
@@ -24,12 +26,17 @@ user-facing history are not implemented yet.
 - Worker leases with generation-based ownership checks.
 - Persisted retry schedules and chat completion.
 - Separate database roles for the API and worker.
+- Authenticated WebSocket delivery with event replay and frontend reconnect handling.
+- Rule-based classification and visible classification reasons.
+- Automatic deletion, repeated timeouts, permanent bans, and uncertain-outcome evidence.
+- Saved livestream history, chat filters, message statistics, and action statistics.
+- Versioned moderation Settings and immutable configuration snapshots per run.
 
 A newly created run has status `STARTING`. The worker sets it to `RUNNING`
 after successfully persisting a polling batch, which may contain no messages.
 
-The dashboard Start button has not yet been connected to the ingestion flow.
-Monitoring can currently be started through the authenticated API.
+The Live dashboard connects Start, Stop, and monitoring status to the authenticated
+API. Opening saved History does not start monitoring or contact YouTube for chat.
 
 ## Stack
 
@@ -59,7 +66,7 @@ Resolved dependency versions are recorded in `package-lock.json`.
   - `3000`: dashboard.
   - `3001`: API.
   - `55432`: PostgreSQL.
-  - `56379`: Redis.
+  - `16379`: Redis.
 
 Local development has been exercised with Node.js 22.20.0 and npm 10.9.3.
 
@@ -202,6 +209,9 @@ Current routes include:
 - `/`: landing page.
 - `/login`: authentication.
 - `/live`: live broadcast page within the dashboard shell.
+- `/history`: saved livestream sessions.
+- `/history/[sessionId]`: saved chat, classification reasons, and statistics.
+- `/settings/moderation`: channel action preferences and settings revisions.
 
 ### Ingestion worker
 
@@ -297,7 +307,11 @@ without automatic retry.
 Counts of distinct external IDs represent chat resources, not exclusively
 viewer text messages. Checkpoint revisions are not message counts.
 
-Ingestion does not classify messages as safe or execute moderation actions.
+The ingestion batch transaction also persists rule-based classifications and action
+plans. Normal action planning uses the monitoring run's immutable Settings snapshot;
+DEFAULT and LEGACY snapshots disable automatic actions. Saving Settings affects new
+runs, not an existing run. Provider dispatch requires the corresponding worker
+action switches and current authorization. See [Moderation Settings](docs/moderation-settings.md).
 
 ## Testing
 
@@ -371,13 +385,13 @@ apps/dashboard
   components             Shared components and shadcn/ui primitives
   lib                    Shared frontend utilities and API client
 
-apps/api                 NestJS authentication, broadcasts, monitoring, and health
-apps/worker              Ingestion runtime, coordinator, leases, polling, and retries
+apps/api                 NestJS authentication, monitoring, chat, history, Settings, and WebSocket
+apps/worker              Ingestion, classification, moderation execution, and recovery
 
 packages/contracts       Shared Zod schemas and TypeScript contracts
 packages/config          Development configuration validation
 packages/persistence     SQL migrations and PostgreSQL transaction helpers
-packages/moderation-core Foundation detection interface
+packages/moderation-core Rule detection, classification policy, and action planning
 packages/provider-adapters Google provider, token store, chat adapter, simulation interface
 
 scripts                  Builds, migrations, role provisioning, and formatting
@@ -423,15 +437,19 @@ See [YouTube ingestion](docs/youtube-ingestion.md) for the verification scope.
 
 ## Next steps
 
-1. Add authenticated chat observation endpoints with cursor pagination.
-2. Connect Start, Stop, and monitoring status to the Live dashboard.
-3. Implement authenticated WebSocket delivery and reconnect recovery.
-4. Add message classification and moderation policies.
-5. Execute and verify automatic delete, timeout, and ban actions.
-6. Build livestream history, statistics, and settings.
+Next, develop and evaluate the AI classification stage (phase 8), including model
+selection, an evaluation dataset, inference integration, and policy safeguards.
+Integration/connection settings, remaining browser acceptance checks, and
+production security/deployment verification remain separate work.
 
-Moderation accuracy and performance have not been measured because the
-classifier has not been implemented.
+On October 3, 2026, the developer indicated successful Settings-driven DELETE,
+snapshot/restart, TIMEOUT, repeated-TIMEOUT, and BAN verification by continuing
+after each procedure. See [Moderation Settings](docs/moderation-settings.md) for
+the reported outcomes and evidence limits. The assistant did not run those checks.
+
+Rule-based classification is implemented. Its general accuracy and performance
+have not been measured, and these development checks do not establish production
+readiness.
 
 ## Documentation
 
@@ -439,6 +457,11 @@ classifier has not been implemented.
 - [Google OAuth setup](docs/google-oauth.md)
 - [Monitoring lifecycle](docs/monitoring-lifecycle.md)
 - [YouTube ingestion](docs/youtube-ingestion.md)
+- [Live dashboard verification](docs/live-dashboard-verification.md)
+- [Livestream history verification](docs/history-verification.md)
+- [Moderation Settings](docs/moderation-settings.md)
+- [Moderation reconciliation](docs/moderation-reconciliation.md)
+- [Security checklist](docs/security-checklist.md)
 - [Product direction](docs/spec/04-live-product-direction.md)
 - [Backlog](docs/spec/03-backlog.md)
 - [Verification records](docs/verification.md)

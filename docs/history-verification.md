@@ -81,7 +81,8 @@ direct-link reloads, and access revocation should be recorded when performed.
 Automated access and cache-cleanup coverage is separate from those browser
 checks.
 
-Moderation policy settings and connection settings are still pending. Current
-default classification uses code-defined rules; controlled enforcement is
-configured separately for development verification. Production classifier
-accuracy and enforcement policies have not been established by these checks.
+Moderation Settings and normal Settings-driven enforcement are covered separately
+in [Moderation Settings](moderation-settings.md). Connection settings remain pending.
+Classification still uses code-defined rules; Settings choose actions and do not
+replace the classifier. Production classifier accuracy and enforcement suitability
+have not been established by these History checks.
