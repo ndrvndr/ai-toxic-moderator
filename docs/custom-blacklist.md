@@ -4,11 +4,11 @@
 
 Public contracts, revision storage, automatic run snapshots, authorized HTTP
 endpoints, the Settings editor, literal matching, combined planning, transactional
-persistence, and classification pipeline integration are implemented. The normal
-worker evaluates the captured blacklist before built-in rules. Blacklist plans are
-temporarily excluded from discovery and dispatch eligibility until executor
-provenance validation is implemented. Saving an enabled blacklist does not yet
-send blacklist moderation requests. Existing moderation settings keep their format.
+persistence, classification integration, and executor provenance validation are
+implemented. The normal worker evaluates the captured blacklist before built-in
+rules. Linked and verified plans can execute while monitoring is active and the
+corresponding worker action switches are enabled. Existing moderation settings
+keep their format. AI shadow inference is still scheduled independently.
 
 ## Entry contract
 
@@ -147,10 +147,9 @@ fits a single request. Oversized requests return HTTP 413 without writing a revi
 
 ## Remaining implementation
 
-1. Connect captured blacklist decisions and independent plans to the existing
-   executors, including their dispatch eligibility checks.
-2. Skip AI shadow inference for messages matched by the captured blacklist.
-3. Display decision provenance in Live and History, then verify the combined flow.
+1. Skip AI shadow inference for messages matched by the captured blacklist.
+2. Display decision provenance in Live and History.
+3. Verify the complete flow through integration tests and a controlled livestream.
 
 ## Settings editor
 
@@ -169,8 +168,8 @@ Background requests do not overwrite unsaved edits. Access failures hide the
 entries and clear the scoped blacklist cache. Writes are never automatically retried.
 
 The editor uses account/channel-scoped TanStack Query caches and validates the
-response channel and saved revision. It clearly indicates that blacklist enforcement
-is still pending. Saved changes are captured only by newly created monitoring runs.
+response channel and saved revision. It explains that actions require their worker
+switches. Saved changes are captured only by newly created monitoring runs.
 
 Exceptions and AI thresholds are separate follow-up work. Blacklist matches are
 explicit streamer policy; AI scores do not change their configured action.
@@ -208,8 +207,8 @@ the result. Every match still requests message deletion independently of the
 selected author action. Matcher version: `blacklist-literal-1`.
 
 These are policy decisions only. The combined planner creates compatible individual
-plans, but dispatch integration is still required before deletion
-and an author action can execute together.
+plans. The executors verify their individual links and targets before sending
+deletion and author requests independently.
 
 ## Worker snapshot reader
 
@@ -258,7 +257,7 @@ inconsistent durations or match metadata. It does not prove that a supplied targ
 belongs to the classification. The persistence store revalidates both targets and
 recomputes the decision from its immutable snapshot before saving the bundle.
 The normal classification pipeline invokes the planner and store. Neither sends
-provider requests; dispatch integration is a separate step.
+provider requests; the existing executors perform dispatch after validation.
 
 ## Transactional decision persistence
 
@@ -314,10 +313,35 @@ a failed batch rolls them back together. Replay reuses the persisted classificat
 and its original run even when the caller supplies a newer run. The persistence
 store rechecks database text, observed targets, and captured configuration.
 
-As a temporary rollout gate, both candidate stores and eligibility stores exclude
-policy versions beginning with `blacklist-`. Existing built-in plans retain their
-authorization checks. The next step replaces this exclusion with validation of
-the immutable decision and its individual plan links before provider dispatch.
+## Executor provenance validation
+
+Candidate discovery and dispatch eligibility use a shared scoped predicate for
+blacklist plans. A plan must link to the correct message or author slot in an
+immutable decision, its original classification/run, and a saved enabled snapshot.
+The classification must have `BLACKLIST_MATCH` with no inferred category, severity,
+or rule signals. The policy namespace and matcher version must match the captured
+run. An unlinked plan or a built-in plan attached to a blacklist classification
+cannot bypass this check.
+
+`BlacklistDispatchProvenance` additionally loads the captured snapshot and the
+database observation, parses the strict bundle contract, and recomputes the complete
+decision with the supported matcher. It compares the recomputed bundle and selected
+individual plan to persisted fields, including message/author targets, reason,
+action, duration, and policy version. Structurally valid but semantically forged
+evidence is rejected. The helper reads no current channel configuration and loads
+no credentials. Incompatible evidence fails closed.
+
+Existing authorization checks still require active monitoring, an open YouTube
+session/chat, current credential/requester membership, OAuth scopes, and enabled
+action switches. Eligibility is rechecked by the executors before claiming and
+after the committed dispatch marker. Existing retry budgets and repeated-timeout
+blocking rules remain in effect. This change adds no automatic retry for uncertain
+author outcomes.
+
+Deletion and the optional author request have independent execution records and
+results. A rejected deletion does not prevent a separately eligible timeout or ban.
+An unavailable author does not prevent deletion. Each request uses the existing
+execution claim and result persistence; blacklist planning never calls YouTube.
 
 ## Manual validation
 
@@ -337,6 +361,7 @@ npm run test:custom-blacklist-matcher
 npm run test:run-blacklist-matcher
 npm run test:blacklist-action-planner
 npm run test:blacklist-action-store
+npm run test:delete-execution-store
 npm run test:classification-store
 npm run test:controlled-delete-policy
 npm run test:controlled-ban-policy

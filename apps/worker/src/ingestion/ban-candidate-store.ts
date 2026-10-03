@@ -1,5 +1,6 @@
 import type { createPool } from '@moderator/persistence';
 import { BAN_DISPATCH_ALLOWED_SQL } from './ban-dispatch-policy';
+import { blacklistDispatchAllowedSql } from './blacklist-dispatch-provenance';
 
 export type BanCandidate = {
   planId: string;
@@ -36,7 +37,7 @@ export class BanCandidateStore {
           AND e.session_id = p.session_id
           AND e.observation_id = o.id
         WHERE p.action IN ('TIMEOUT', 'BAN')
-          AND p.policy_version NOT LIKE 'blacklist-%'
+          AND ${blacklistDispatchAllowedSql('author')}
           AND r.status = 'RUNNING'
           AND r.stop_requested_at IS NULL
           AND ($1::uuid IS NULL OR p.id > $1::uuid)

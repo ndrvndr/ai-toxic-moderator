@@ -1,5 +1,9 @@
 import { uuid } from '@moderator/contracts';
 import type { createPool } from '@moderator/persistence';
+import {
+  BlacklistDispatchProvenance,
+  blacklistDispatchAllowedSql,
+} from './blacklist-dispatch-provenance';
 import type { DeleteExecution } from './delete-execution-store';
 import type { DeleteEligibility } from './delete-executor';
 
@@ -21,8 +25,8 @@ export class DeleteEligibilityStore implements DeleteEligibility {
     ]) {
       uuid.parse(value);
     }
-    const result = await this.pool.query<{ account_id: string }>(
-      `SELECT r.credential_account_id AS account_id
+    const result = await this.pool.query<{ account_id: string; blacklist_plan: boolean }>(
+      `SELECT r.credential_account_id AS account_id, p.policy_version LIKE 'blacklist-%' AS blacklist_plan
        FROM youtube_delete_executions e
        JOIN youtube_moderation_action_plans p ON p.id = e.plan_id
          AND p.channel_id = e.channel_id AND p.session_id = e.session_id
@@ -43,7 +47,7 @@ export class DeleteEligibilityStore implements DeleteEligibility {
          AND e.external_message_id = $5 AND o.external_message_id = e.external_message_id
          AND p.action = 'DELETE' AND o.event_type = 'textMessageEvent'
          AND (p.policy_version NOT LIKE 'delete-test-%' OR p.policy_version = $6)
-         AND p.policy_version NOT LIKE 'blacklist-%'
+         AND ${blacklistDispatchAllowedSql('message')}
          AND r.status = 'RUNNING' AND r.stop_requested_at IS NULL AND r.finished_at IS NULL
          AND s.source = 'YOUTUBE' AND s.closed_at IS NULL AND cp.chat_ended_at IS NULL
          AND credential_member.role IN ('OWNER', 'MODERATOR')
@@ -61,9 +65,19 @@ export class DeleteEligibilityStore implements DeleteEligibility {
         this.allowedTestPolicyVersion,
       ],
     );
-    // Configuration may have changed while the database request was in flight.
-    if (!this.isEnabled()) return null;
     const row = result.rows[0];
+    if (
+      row?.blacklist_plan &&
+      !(await new BlacklistDispatchProvenance(this.pool).allows(
+        execution.plan_id,
+        execution.channel_id,
+        execution.session_id,
+        'message',
+      ))
+    )
+      return null;
+    // Configuration may have changed while authorization and provenance were checked.
+    if (!this.isEnabled()) return null;
     return row ? { accountId: row.account_id } : null;
   }
 }

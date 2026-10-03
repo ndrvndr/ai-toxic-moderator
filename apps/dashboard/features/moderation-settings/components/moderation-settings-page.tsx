@@ -91,8 +91,9 @@ function ChannelSettings({
           Custom blacklist
         </h2>
         <p className="text-sm text-muted-foreground">
-          Configure words, phrases, and domains with separate actions for each entry. Blacklist
-          enforcement is not available yet; saving entries currently does not moderate messages.
+          Configure words, phrases, and domains with separate actions for each entry. Enabled
+          entries apply to new monitoring runs. Deletion and author actions also require their
+          corresponding worker action switches to be enabled.
         </p>
         <CustomBlacklistEditor
           accountId={accountId}

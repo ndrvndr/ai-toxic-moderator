@@ -2,6 +2,10 @@ import { uuid } from '@moderator/contracts';
 import type { createPool } from '@moderator/persistence';
 import type { BanExecution } from './ban-execution-store';
 import type { BanEligibility } from './ban-executor';
+import {
+  BlacklistDispatchProvenance,
+  blacklistDispatchAllowedSql,
+} from './blacklist-dispatch-provenance';
 
 /** Read current authorization without loading token ciphertext or contacting Google. */
 export class BanEligibilityStore implements BanEligibility {
@@ -21,8 +25,8 @@ export class BanEligibilityStore implements BanEligibility {
     ]) {
       uuid.parse(value);
     }
-    const result = await this.pool.query<{ account_id: string }>(
-      `SELECT r.credential_account_id AS account_id
+    const result = await this.pool.query<{ account_id: string; blacklist_plan: boolean }>(
+      `SELECT r.credential_account_id AS account_id, p.policy_version LIKE 'blacklist-%' AS blacklist_plan
        FROM youtube_ban_executions e
        JOIN youtube_moderation_action_plans p ON p.id = e.plan_id
          AND p.channel_id = e.channel_id AND p.session_id = e.session_id
@@ -54,7 +58,7 @@ export class BanEligibilityStore implements BanEligibility {
          AND p.duration_seconds IS NOT DISTINCT FROM e.duration_seconds
          AND COALESCE(o.payload #>> '{authorDetails,channelId}', o.payload #>> '{snippet,authorChannelId}') = e.author_channel_id
          AND p.action IN ('TIMEOUT', 'BAN') AND o.event_type = 'textMessageEvent'
-         AND p.policy_version NOT LIKE 'blacklist-%'
+         AND ${blacklistDispatchAllowedSql('author')}
          AND r.status = 'RUNNING' AND r.stop_requested_at IS NULL AND r.finished_at IS NULL
          AND s.source = 'YOUTUBE' AND s.closed_at IS NULL AND cp.chat_ended_at IS NULL
          AND credential_member.role IN ('OWNER', 'MODERATOR')
@@ -75,9 +79,19 @@ export class BanEligibilityStore implements BanEligibility {
         this.allowedTestPolicyVersion,
       ],
     );
-    // Configuration may have changed while the database request was in flight.
-    if (!this.isEnabled()) return null;
     const row = result.rows[0];
+    if (
+      row?.blacklist_plan &&
+      !(await new BlacklistDispatchProvenance(this.pool).allows(
+        execution.plan_id,
+        execution.channel_id,
+        execution.session_id,
+        'author',
+      ))
+    )
+      return null;
+    // Configuration may have changed while authorization and provenance were checked.
+    if (!this.isEnabled()) return null;
     return row ? { accountId: row.account_id } : null;
   }
 }
