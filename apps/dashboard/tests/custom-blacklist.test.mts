@@ -5,6 +5,7 @@ import { createElement, type PropsWithChildren } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { getCustomBlacklist } from '../features/moderation-settings/api/custom-blacklist-api.js';
 import { CustomBlacklistEditor } from '../features/moderation-settings/components/custom-blacklist-editor.js';
+import { CustomBlacklistForm } from '../features/moderation-settings/components/custom-blacklist-form.js';
 import { customBlacklistKey } from '../features/moderation-settings/hooks/use-custom-blacklist.js';
 import { ApiError, apiRequest } from '../lib/api-client.js';
 
@@ -263,25 +264,39 @@ it('submits only once when the form is submitted twice before the save completes
   expect(posts()).toHaveLength(1);
 });
 
-it('blocks requests exceeding the body limit before saving', async () => {
-  records.set(
-    channelId,
-    record(channelId, 1, {
-      schema_version: 1,
+it('blocks requests exceeding the body limit before saving', () => {
+  // Multi-byte text exceeds the byte limit with fewer rendered entries.
+  const oversized: CustomBlacklistConfiguration = {
+    schema_version: 1,
+    enabled: true,
+    rules: Array.from({ length: 20 }, (_, index) => ({
+      id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
       enabled: true,
-      rules: Array.from({ length: 70 }, (_, index) => ({
-        id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
-        enabled: true,
-        match_type: 'PHRASE',
-        pattern: `${index} ${'x'.repeat(240)}`,
-        action: 'DELETE',
-      })),
+      match_type: 'PHRASE',
+      pattern: `${index} ${'漢'.repeat(240)}`,
+      action: 'DELETE',
+    })),
+  };
+  expect(
+    new Blob([JSON.stringify({ expected_revision: 1, configuration: oversized })]).size,
+  ).toBeGreaterThan(16 * 1024);
+  render(
+    createElement(CustomBlacklistForm, {
+      accountId,
+      channelId,
+      canEdit: true,
+      initial: record(channelId, 1, oversized),
+      onReload: vi.fn().mockResolvedValue(null),
     }),
+    { wrapper },
   );
-  render(editor(), { wrapper });
-  await screen.findByLabelText('Pattern for entry 1');
+  const pattern = screen.getByLabelText('Pattern for entry 1');
   fireEvent.click(screen.getByLabelText('Enable blacklist configuration'));
-  save();
-  expect(screen.getByRole('alert').textContent).toContain('16 KB');
+  // Submit the loaded form directly instead of computing accessible names for
+  // every button in a large fixture. Other tests cover the Save button itself.
+  fireEvent.submit(pattern.closest('form')!);
+  expect(
+    screen.getByText('The blacklist exceeds the 16 KB request limit. Shorten or remove entries.'),
+  ).toBeTruthy();
   expect(posts()).toHaveLength(0);
 });

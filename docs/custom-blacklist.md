@@ -2,8 +2,8 @@
 
 ## Implementation status
 
-Strict public contracts, a revision store, automatic run snapshots, and authorized
-HTTP endpoints and the Settings editor are implemented. Blacklist entries are not yet
+Strict public contracts, a revision store, automatic run snapshots, authorized
+HTTP endpoints, the Settings editor, and a pure literal matcher are implemented. Blacklist entries are not yet
 evaluated by the worker. Saving an enabled blacklist does not yet
 enable moderation actions. Existing moderation settings retain their current format.
 
@@ -20,11 +20,11 @@ contract, not a replacement for the existing moderation settings schema.
 | `PHRASE`   | Match a literal substring after normalization; regex metacharacters have no executable meaning.                                                            |
 | `DOMAIN`   | Match an extracted URL hostname equal to the configured host or a subdomain with a dot boundary. Never match arbitrary text containing a domain substring. |
 
-The future matcher must use the same NFKC, lowercase, trim, and whitespace
+The matcher uses the same NFKC, lowercase, trim, and whitespace
 normalization as the contract. Invisible control/format characters in configured
 patterns are rejected. Domain patterns use ASCII hostnames, including punycode,
 without schemes, paths, ports, wildcards, or IP addresses. Domain extraction and
-message matching are not implemented by this validation step.
+message matching are implemented separately from this contract validation.
 
 | Action           | Required behavior                                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -36,7 +36,7 @@ Duration bounds are application limits. Each executor must still enforce provide
 constraints and target eligibility. IDs are canonicalized to lowercase; patterns
 are canonicalized before duplicate checks. Duplicate IDs and duplicate patterns
 within the same matching mode are rejected, including disabled entries. Different
-matching modes may overlap; their resolution belongs to the future planner.
+matching modes may overlap; the matcher resolves their action priority deterministically.
 Client-supplied author/message targets and unknown fields are rejected.
 
 Example validated entry:
@@ -144,7 +144,7 @@ fits a single request. Oversized requests return HTTP 413 without writing a revi
 
 ## Remaining implementation
 
-1. Literal matcher and deterministic conflict handling before AI processing.
+1. Load the captured run blacklist and evaluate it before AI processing in the worker.
 2. Combined message/author action plans with separate execution outcomes and
    idempotency. Ban takes priority over timeout; deletion remains independent.
 3. Decision provenance in chat and History, plus integration and live verification.
@@ -172,6 +172,41 @@ is still pending. Saved changes are captured only by newly created monitoring ru
 Exceptions and AI thresholds are separate follow-up work. Blacklist matches are
 explicit streamer policy; AI scores do not change their configured action.
 
+## Literal matcher and action selection
+
+`CustomBlacklistMatcher` in `packages/moderation-core` validates and copies a
+configuration at construction. Disabled configurations and entries do not match.
+Its `match` method is pure: it returns all matched entry IDs, one selected entry
+ID, a message deletion decision, and an optional author action. It does not resolve
+YouTube targets, perform database writes, call providers, or change existing worker
+behavior. Worker integration must supply the captured run configuration, retain
+decision provenance, and verify targets independently.
+
+Word matching compares complete Unicode letter/mark/number/underscore tokens.
+For example, `abc` matches `(ABC)` but does not match `abc99`, `abc_def`, or `xabc`.
+Phrase matching uses literal substring comparisons after normalization. Regex
+metacharacters are data and are never compiled into an expression.
+
+Domain matching parses whitespace-separated HTTP/HTTPS URLs and bare domain
+tokens, including paths and valid ports. Common enclosing punctuation is removed.
+It compares only the parsed hostname, allowing an exact host or a subdomain with
+a dot boundary. IDN URL hosts are converted to punycode by the URL parser. Email
+addresses, credential-bearing URLs, backslash-containing tokens, other schemes,
+protocol-relative URLs, invalid ports, and malformed tokens are ignored. This is
+a conservative parser, not a general link detector: obfuscated links and adjacent
+links without whitespace are not guaranteed to match. Paths and query strings
+never supply domain evidence.
+
+When multiple entries match, `DELETE_BAN` takes priority over `DELETE_TIMEOUT`,
+which takes priority over `DELETE`. Among timeout entries, the longest configured
+duration wins. Equal actions/durations resolve by ascending canonical entry ID;
+all matching IDs are returned in ascending order. Reordering entries cannot change
+the result. Every match still requests message deletion independently of the
+selected author action. Matcher version: `blacklist-literal-1`.
+
+These are policy decisions only. The existing single-action plan format still
+needs an integration change before deletion and an author action can execute together.
+
 ## Manual validation
 
 Run from the repository root:
@@ -186,6 +221,7 @@ npm run db:migrate
 npm run db:runtime
 npm run db:worker
 npm run test:custom-blacklist-contracts
+npm run test:custom-blacklist-matcher
 npm run test:custom-blacklist-store
 npm run build --workspace @moderator/api
 npm run test:custom-blacklist-http
