@@ -120,7 +120,7 @@ the future coordinator to defer, not a terminal error to persist for a message.
 Disposal waits for active inference and releases the native session once.
 
 This adapter is not yet wired into worker startup or monitoring. No timeout is
-implemented: a future isolated inference runner must enforce deadlines and recover
+implemented inside the adapter itself: the isolated runner below enforces deadlines and recovers
 from native crashes or hangs. A Promise timeout alone cannot cancel native work.
 Dependency pinning cannot guarantee native binary compatibility after an incomplete
 installation; the earlier local prototype needed `npm ci` to repair its environment.
@@ -134,6 +134,37 @@ npm run test:laskar-shadow-adapter
 
 Adapter tests use a fake backend and require neither artifact downloads nor native
 inference. Real adapter startup and inference have not yet been verified.
+
+### Isolated inference runner
+
+`AiShadowRunner` runs `ai-shadow-child.js` in a separate Node process. Native
+imports occur only in that child. The first prediction starts it lazily; subsequent
+predictions reuse its loaded model. Startup defaults to 30 seconds and inference
+to 5 seconds. The child receives only local runtime environment paths, the cache
+directory, model revision, observation identity, and message text. Application
+database URLs and OAuth secrets are not passed in its environment.
+
+Timeouts kill the process and return `INFERENCE_TIMEOUT`; crashes return
+`INFERENCE_FAILED`; startup failure returns `MODEL_UNAVAILABLE`. Invalid output
+or mismatched identity returns `INVALID_OUTPUT`. Results from expired requests
+cannot update a subsequent prediction. A failed message is not automatically
+redispatched. Only a new request starts a replacement, after the old process exits.
+Three consecutive process/protocol failures disable further restarts for that
+runner instance. Successful responses reset that failure counter.
+
+One prediction is accepted at a time. Busy requests are deferred by the future
+coordinator. Disposal stops the child and settles pending work. If termination
+cannot be confirmed within two seconds, the runner closes and will not spawn a
+replacement. This is native crash isolation, not a sandbox for untrusted model code.
+
+```powershell
+npm run test:ai-shadow-runner
+npm run build:core
+npm run build --workspace @moderator/worker
+```
+
+Runner tests simulate IPC, crash, timeout, restart, and cleanup using fake child
+processes. Real process inference and monitoring integration are not yet verified.
 
 ### Expanded local run: developer reported, 2026-10-03
 
