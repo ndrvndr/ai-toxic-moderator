@@ -9,6 +9,9 @@ const { loadConfig } = require('@moderator/config');
 const { source } = require('./helpers/source.cjs');
 const { AiActionDecisionStore } = source('apps/worker/src/ingestion/ai-action-decision-store.ts');
 const { AiActionPlanStore } = source('apps/worker/src/ingestion/ai-action-plan-store.ts');
+const { AiOperationalStatusStore } = source(
+  'apps/worker/src/ingestion/ai-operational-status-store.ts',
+);
 const {
   startMonitoringResponse,
   stopMonitoringResponse,
@@ -18,6 +21,7 @@ const {
   savedSessionsPage,
   historyStatistics,
   historyActionStatistics,
+  aiOperationalStatusResponse,
 } = require('@moderator/contracts');
 
 const schema = `monitoring_http_${randomUUID().replaceAll('-', '')}`;
@@ -160,6 +164,144 @@ async function startRun(title = 'Test livestream') {
 function runPath(run) {
   return `/v1/channels/${run.channel_id}/monitoring/${run.id}`;
 }
+
+function aiStatusPath(run) {
+  return `/v1/channels/${run.channel_id}/ai/status`;
+}
+
+test('AI status distinguishes no report from every fresh operational state without private fields', async () => {
+  const run = await startRun();
+  const path = aiStatusPath(run);
+  const unknown = await request(path);
+  assert.equal(unknown.status, 200);
+  assert.equal(unknown.headers.get('cache-control'), 'no-store');
+  const empty = aiOperationalStatusResponse.parse(await unknown.json());
+  assert.equal(empty.availability, 'UNKNOWN');
+  assert.equal(empty.report, null);
+  const store = new AiOperationalStatusStore(admin);
+  const lease = await store.claim(run.channel_id);
+  assert.ok(lease);
+  const scoped = { session_id: run.session_id, run_id: run.id };
+  for (const state of [
+    { status: 'WAITING', reason: 'NO_ELIGIBLE_RUN' },
+    { status: 'DISABLED', reason: 'WORKER_AI_DISABLED' },
+    { status: 'DISABLED', reason: 'RUN_AI_DISABLED', ...scoped },
+    { status: 'ACTIVE', reason: 'RUN_SELECTED', ...scoped },
+    { status: 'MODEL_MISMATCH', reason: 'CAPTURED_MODEL_MISMATCH', ...scoped },
+    { status: 'CAPACITY_EXCEEDED', reason: 'MULTIPLE_ELIGIBLE_RUNS' },
+    { status: 'ERROR', reason: 'PROCESSING_FAILED', error_code: 'MODEL_UNAVAILABLE', ...scoped },
+  ]) {
+    const saved = await store.publish(lease, {
+      channel_id: run.channel_id,
+      session_id: null,
+      run_id: null,
+      error_code: null,
+      ...state,
+    });
+    assert.ok(saved);
+    const response = await request(path);
+    assert.equal(response.status, 200);
+    const raw = await response.json();
+    const data = aiOperationalStatusResponse.parse(raw);
+    assert.equal(data.availability, 'ONLINE');
+    assert.deepEqual(data.report, saved);
+    assert.equal(data.stale_after_ms, 30_000);
+    assert.deepEqual(Object.keys(raw.report).sort(), Object.keys(saved).sort());
+    for (const privateField of ['owner_id', 'generation', 'expires_at', 'token', 'configuration'])
+      assert.equal(JSON.stringify(raw).includes(privateField), false);
+  }
+  const other = await startRun();
+  const otherResponse = aiOperationalStatusResponse.parse(
+    await (await request(aiStatusPath(other))).json(),
+  );
+  assert.equal(otherResponse.availability, 'UNKNOWN');
+  assert.equal(otherResponse.report, null);
+  await assert.rejects(
+    pool.query('DELETE FROM ai_operational_status WHERE channel_id=$1', [run.channel_id]),
+    (error) => error.code === '42501',
+  );
+});
+
+test('AI status preserves a stale ACTIVE report without claiming that the worker is online', async () => {
+  const run = await startRun();
+  const store = new AiOperationalStatusStore(admin);
+  const lease = await store.claim(run.channel_id);
+  await store.publish(lease, {
+    channel_id: run.channel_id,
+    session_id: run.session_id,
+    run_id: run.id,
+    status: 'ACTIVE',
+    reason: 'RUN_SELECTED',
+    error_code: null,
+  });
+  // Only the isolated test schema is aged; no waiting or application data changes.
+  await admin.query(
+    'ALTER TABLE ai_operational_status DISABLE TRIGGER ai_operational_status_stamp',
+  );
+  try {
+    await admin.query(
+      `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS now)
+      UPDATE ai_operational_status SET
+      updated_at=moment.now-interval '40 seconds',
+      heartbeat_at=moment.now-interval '40 seconds',
+      expires_at=moment.now-interval '10 seconds' FROM moment WHERE channel_id=$1`,
+      [run.channel_id],
+    );
+  } finally {
+    await admin.query(
+      'ALTER TABLE ai_operational_status ENABLE TRIGGER ai_operational_status_stamp',
+    );
+  }
+  const response = await request(aiStatusPath(run));
+  assert.equal(response.status, 200);
+  const data = aiOperationalStatusResponse.parse(await response.json());
+  assert.equal(data.availability, 'STALE');
+  assert.equal(data.report.status, 'ACTIVE');
+  assert.equal(data.report.run_id, run.id);
+});
+
+test('AI status rechecks current membership and rejects unauthenticated and invalid requests', async () => {
+  const run = await startRun();
+  const path = aiStatusPath(run);
+  assert.equal((await request(path, { headers: { Cookie: '' } })).status, 401);
+  assert.equal((await request('/v1/channels/not-a-uuid/ai/status')).status, 422);
+  assert.equal((await request(`/v1/channels/${randomUUID()}/ai/status`)).status, 403);
+  for (const role of ['OWNER', 'MODERATOR', 'OPERATOR']) {
+    await admin.query(
+      'UPDATE channel_memberships SET role=$3 WHERE channel_id=$1 AND account_id=$2',
+      [run.channel_id, accountId, role],
+    );
+    const response = await request(path);
+    assert.equal(response.status, role === 'OPERATOR' ? 403 : 200);
+    if (role === 'OPERATOR') assert.equal((await response.json()).report, undefined);
+  }
+  await admin.query('DELETE FROM channel_memberships WHERE channel_id=$1 AND account_id=$2', [
+    run.channel_id,
+    accountId,
+  ]);
+  assert.equal((await request(path)).status, 403);
+});
+
+test('AI status rejects expired and subsequently revoked dashboard sessions', async () => {
+  const { randomBytes, createHash } = require('node:crypto');
+  const run = await startRun();
+  const token = randomBytes(32).toString('base64url');
+  const hash = createHash('sha256').update(token).digest('hex');
+  await admin.query(
+    `INSERT INTO dashboard_sessions(id, account_id, token_hash, created_at, expires_at, auth_provider)
+    VALUES($1,$2,$3,clock_timestamp()-interval '1 hour',clock_timestamp()-interval '1 second','development')`,
+    [randomUUID(), accountId, hash],
+  );
+  const headers = { Cookie: `atm_dev_session=${token}` };
+  assert.equal((await request(aiStatusPath(run), { headers })).status, 401);
+  await admin.query(
+    "UPDATE dashboard_sessions SET expires_at=clock_timestamp()+interval '1 hour' WHERE token_hash=$1",
+    [hash],
+  );
+  assert.equal((await request(aiStatusPath(run), { headers })).status, 200);
+  await admin.query('DELETE FROM dashboard_sessions WHERE token_hash=$1', [hash]);
+  assert.equal((await request(aiStatusPath(run), { headers })).status, 401);
+});
 
 test('start requires authentication, a trusted origin and an idempotency key', async () => {
   const body = { youtube_broadcast_id: 'test-broadcast' };

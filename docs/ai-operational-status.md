@@ -2,7 +2,7 @@
 
 ## Step 1: shared contract
 
-`aiOperationalStatus` describes automatic AI processing for one authorized channel. It is separate from ingestion state, per-message inference results, saved AI action decisions, and provider execution outcomes. The worker publishes reports through the store in an independent runtime loop. No endpoint or dashboard indicator is added yet.
+`aiOperationalStatus` describes automatic AI processing for one authorized channel. It is separate from ingestion state, per-message inference results, saved AI action decisions, and provider execution outcomes. The worker publishes reports through the store in an independent runtime loop. An authenticated endpoint reads these reports; the dashboard indicator is still pending.
 
 | State               | Reason                    | Meaning                                                                                                  | Run scope                                             |
 | ------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -71,13 +71,22 @@ When `AI_AUTOMATIC_ENABLED=false`, the running ingestion worker reports `WORKER_
 
 The diagnostic reader currently scans connected channels on each runtime tick. This implementation targets the portfolio scope of one streamer/one eligible livestream and does not introduce production multitenant scheduling or workload guarantees.
 
+## Step 4: authenticated status API
+
+`GET /v1/channels/:channel_id/ai/status` requires a valid dashboard session and a current `OWNER` or `MODERATOR` membership. The global guards validate the channel UUID and session. The report query rechecks membership alongside its channel-scoped read. Operators and accounts without membership receive `403 CHANNEL_FORBIDDEN`; missing, expired, or revoked sessions receive `401`. Invalid channel identifiers receive `422`.
+
+The response uses `aiOperationalStatusResponse`: `channel_id`, `availability`, `checked_at`, `stale_after_ms`, and `report`. With no report, availability is `UNKNOWN` and report is null. A heartbeat less than 30 seconds old is `ONLINE`; at 30 seconds or older it is `STALE`. Stale responses retain the last state for diagnosis, so a stale `ACTIVE` report must not be shown as currently active. Freshness uses the database clock, bounded below by the stored heartbeat if the database clock moves backward; it does not use the browser clock. Timestamps are serialized at millisecond precision.
+
+The endpoint selects only public report fields and uses the API role's existing read-only permission. It does not expose reporting owner IDs, generations, lease expiry, model configuration, or raw errors. The API sends `Cache-Control: no-store`. This read performs no inference, provider request, heartbeat update, or moderation action and consumes no YouTube quota.
+
 ## Remaining implementation
 
-1. Add an authenticated channel-scoped status endpoint that assesses freshness and rechecks access.
-2. Add a compact dashboard indicator with separate monitoring-end reasons, including quota exhaustion.
-3. Verify API access, stale heartbeat behavior, and dashboard rendering in the final end-to-end flow.
+1. Add a compact dashboard indicator with separate monitoring-end reasons, including quota exhaustion.
+2. Verify dashboard rendering and status transitions in the final end-to-end flow.
 
 ## Validation
+
+`npm run test:monitoring-http` verifies the status endpoint through real HTTP and the restricted API role in an isolated PostgreSQL schema. It covers all public states, unknown reports, stale active reports, channel isolation, current owner/moderator access, operator and missing-membership denial, UUID validation, session expiry/revocation, private-field omission, no-store responses, and denied API writes. Stale timestamps are simulated only in the isolated test schema.
 
 `npm run test:ai-operational-status-contracts` covers status/reason consistency, run scope, timestamp ordering, public error restrictions, heartbeat expiry boundaries, unknown reports, and cross-channel envelope rejection. These are schema checks, not proof of authorization, persisted heartbeat behavior, or a running worker.
 
