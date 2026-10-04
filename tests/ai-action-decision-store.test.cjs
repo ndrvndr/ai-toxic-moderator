@@ -5,6 +5,10 @@ const { Client, Pool } = require('pg');
 const { source } = require('./helpers/source.cjs');
 const { AiActionDecisionStore } = source('apps/worker/src/ingestion/ai-action-decision-store.ts');
 const { AiShadowStore } = source('apps/worker/src/ingestion/ai-shadow-store.ts');
+const { AiActionDecisionCandidateReader } = source(
+  'apps/worker/src/ingestion/ai-action-decision-candidate-reader.ts',
+);
+const { AiActionDecisionCycle } = source('apps/worker/src/ingestion/ai-action-decision-cycle.ts');
 const { transaction } = source('packages/persistence/src/index.ts');
 const { storedAiActionDecision } = source('packages/contracts/src/index.ts');
 
@@ -233,6 +237,107 @@ async function counts(f, connection = admin) {
     )
   ).rows[0];
 }
+
+test('worker audit waits for terminal inference and restart does not repeat completed decisions', async () => {
+  const f = await fixture({ result: false });
+  const cycle = () =>
+    new AiActionDecisionCycle(f.runId, new AiActionDecisionCandidateReader(worker, model), worker);
+  assert.deepEqual(await cycle().tick(new AbortController().signal), { kind: 'IDLE' });
+  assert.deepEqual(await counts(f), { decisions: 0, queued_plans: 0, events: 0 });
+  const terminal = await transaction(worker, (client) =>
+    new AiShadowStore().save(client, f.result),
+  );
+  assert.deepEqual(await cycle().tick(new AbortController().signal), {
+    kind: 'INSERTED',
+    observation_id: f.observationId,
+    reason_code: 'THRESHOLD_MET',
+  });
+  const original = await transaction(worker, (client) =>
+    new AiActionDecisionStore().find(client, f.scope),
+  );
+  assert.equal(original.model_result_id, terminal.id);
+  assert.deepEqual(actions(original), ['DELETE', 'TIMEOUT']);
+  assert.deepEqual(await cycle().tick(new AbortController().signal), { kind: 'IDLE' });
+  assert.equal(
+    (await transaction(worker, (client) => new AiActionDecisionStore().find(client, f.scope))).id,
+    original.id,
+  );
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+});
+
+test('committed shadow output remains recoverable when classification becomes available later', async () => {
+  const f = await fixture();
+  // This isolated fixture models a result committed before a baseline classification.
+  await admin.query('DELETE FROM youtube_chat_classifications WHERE id=$1', [f.classificationId]);
+  const reader = new AiActionDecisionCandidateReader(worker, model);
+  assert.equal(await reader.next(f.runId), null);
+  await admin.query(
+    `INSERT INTO youtube_chat_classifications(id, channel_id, session_id, observation_id, run_id,
+    classifier_version, policy_version, outcome, primary_category, severity, reason_code, reason, signals)
+    VALUES ($1,$2,$3,$4,$5,'fixture-late','policy-1','ALLOW',NULL,0,'NO_RULE_MATCH','Late classification.','[]'::jsonb)`,
+    [f.classificationId, f.channelId, f.sessionId, f.observationId, f.runId],
+  );
+  const cycle = new AiActionDecisionCycle(f.runId, reader, worker);
+  assert.equal((await cycle.tick(new AbortController().signal)).kind, 'INSERTED');
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+});
+
+test('worker audits captured blacklist and disabled/missing policies without creating AI results', async () => {
+  for (const [options, reason] of [
+    [{ blacklisted: true }, 'BLACKLIST_MATCH'],
+    [{ enabled: false }, 'AI_DISABLED'],
+    [{ saved: false }, 'NO_SAVED_POLICY'],
+  ]) {
+    const f = await fixture({ ...options, result: false });
+    const cycle = new AiActionDecisionCycle(
+      f.runId,
+      new AiActionDecisionCandidateReader(worker, model),
+      worker,
+    );
+    assert.equal((await cycle.tick(new AbortController().signal)).reason_code, reason);
+    assert.equal((await cycle.tick(new AbortController().signal)).kind, 'IDLE');
+    assert.equal(
+      (
+        await admin.query('SELECT id FROM youtube_ai_shadow_results WHERE observation_id=$1', [
+          f.observationId,
+        ])
+      ).rowCount,
+      0,
+    );
+    assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+  }
+});
+
+test('worker audit recovers terminal inference errors and selects one original classification', async () => {
+  const f = await fixture({
+    resultOverrides: {
+      status: 'ERROR',
+      rating: null,
+      severity_score: null,
+      truncated: null,
+      inference_ms: null,
+      error_code: 'INFERENCE_TIMEOUT',
+    },
+  });
+  await admin.query(
+    `INSERT INTO youtube_chat_classifications(id, channel_id, session_id, observation_id, run_id,
+    classifier_version, policy_version, outcome, primary_category, severity, reason_code, reason, signals)
+    VALUES ($1,$2,$3,$4,$5,'fixture-second','policy-1','ALLOW',NULL,0,'NO_RULE_MATCH','Additional classification.','[]'::jsonb)`,
+    [randomUUID(), f.channelId, f.sessionId, f.observationId, f.runId],
+  );
+  const cycle = new AiActionDecisionCycle(
+    f.runId,
+    new AiActionDecisionCandidateReader(worker, model),
+    worker,
+  );
+  assert.equal((await cycle.tick(new AbortController().signal)).reason_code, 'INFERENCE_ERROR');
+  assert.equal((await cycle.tick(new AbortController().signal)).kind, 'IDLE');
+  const stored = await transaction(worker, (client) =>
+    new AiActionDecisionStore().find(client, f.scope),
+  );
+  assert.equal(stored.decision.context.classification_id, f.classificationId);
+  assert.deepEqual(actions(stored), []);
+});
 
 test('migration is repeatable and independent AI plans persist as audit only under worker permissions', async () => {
   await migrate(admin);

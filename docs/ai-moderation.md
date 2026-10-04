@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Steps 1–6 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, authorized settings endpoints, dashboard controls, a pure AI threshold planner, and immutable decision persistence with replay. The store is not connected to the worker loop or executors yet. Existing AI output remains shadow output and does not change moderation decisions.
+Steps 1–7 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, authorized settings endpoints, dashboard controls, a pure AI threshold planner, immutable decision persistence with replay, and worker audit integration. The configured shadow run now records AI decision audits after terminal inference. Executor integration is not implemented; existing classification and moderation execution behavior remain unchanged.
 
 The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
 
@@ -24,7 +24,7 @@ The update contract requires `expected_revision`: zero for the first write, or t
 
 ## Planned decision flow
 
-The pure planner implements threshold selection below, and the decision store persists its audit. Runtime integration and dispatch remain planned:
+The pure planner implements threshold selection below, and the worker persists its audit for the configured shadow run. Dispatch remains planned:
 
 1. Check the captured custom blacklist first. A match uses the blacklist's action bundle and skips AI.
 2. For other messages, evaluate AI using the exact model identity and settings captured when the monitoring run starts.
@@ -77,7 +77,7 @@ Snapshots have explicit provenance:
 
 Null configuration means no AI enforcement policy. It does not imply a particular model or threshold. Database constraints validate configuration shape, score ordering, revision references, and channel relationships. Triggers prevent updates and deletes to historical settings and snapshots.
 
-The API role can select and insert revisions and snapshots, as required by run creation. The worker can select captured snapshots only; it cannot read current channel AI settings or write either table. Runtime AI policy consumption is deferred to the worker integration step.
+The API role can select and insert revisions and snapshots, as required by run creation. The worker can select captured snapshots only; it cannot read current channel AI settings or write either table. Its audit loop uses these snapshots when saving decisions for the configured shadow run.
 
 ## Settings endpoints
 
@@ -178,4 +178,34 @@ npm run test:ai-moderation-settings-store
 npm run test:blacklist-action-store
 ```
 
-Apply the new migration before reprovisioning runtime permissions. Tests create and clean up temporary schemas/roles and exercise concurrent saves, immutable replay, scope substitution, malformed audit rejection, transaction rollback, database guards, restricted permissions, and absence of queued actions. No livestream, model inference, or YouTube quota is required. Step 7 connects decision persistence to the worker pipeline.
+Apply the new migration before reprovisioning runtime permissions. Tests create and clean up temporary schemas/roles and exercise concurrent saves, immutable replay, scope substitution, malformed audit rejection, transaction rollback, database guards, restricted permissions, and absence of queued actions. No livestream, model inference, or YouTube quota is required.
+
+## Worker audit pipeline
+
+`AiActionDecisionCycle` runs alongside ingestion and shadow inference. It is enabled through the existing `AI_SHADOW_ENABLED` opt-in and processes only `AI_SHADOW_RUN_ID`, using the same pinned runtime model revision and adapter identity as the shadow cycle. No new environment variable or model process is required. Changing a channel's settings does not automatically enable inference for all its broadcasts. Selecting and loading models for general enforcement remains separate from this scoped audit integration.
+
+`AiActionDecisionCandidateReader` reads text observations from the selected run that have an original baseline classification and no saved AI decision. If several classifications exist for the observation, it selects the earliest by creation time and ID. It validates captured AI and blacklist snapshots, recomputes blacklist matching, and looks for a committed terminal shadow result with the exact configured runtime model identity. Both successful and error results are terminal.
+
+An enabled AI policy without a blacklist match waits until a terminal result exists. Pending inference is skipped rather than persisted as `OUTPUT_MISSING`; keyset scanning continues to later messages so pending rows do not starve completed results. Blacklist matches, missing policy, and globally disabled enforcement can produce their no-action audit without waiting for inference. Invalid or missing snapshots fail closed before persistence. Non-text and blank inputs are not audited.
+
+Selection occurs outside the persistence transaction. The cycle then uses `AiActionDecisionStore` to re-read authoritative targets, policy, blacklist, and model output inside a short transaction. An inference result committed before a crash remains selectable after restart, including when its classification becomes available later. Completed audits are excluded from selection; racing cycles reuse the first committed audit through the store's lock and immutable replay.
+
+The audit cycle uses the runtime's existing shutdown signal and failure isolation. Cancellation before persistence prevents the save; writes already in progress are drained before the pool closes. A failed audit cycle logs a safe error and can retry on a later tick without stopping ingestion. Shadow inference retains its own cancellation and disposal lifecycle.
+
+Startup checks for enabled shadow mode now verify the decision table and captured AI snapshot table. The enabled log reads **AI shadow and decision audit are enabled for the configured run. AI actions are not dispatched.** Apply migration 025 and provision worker permissions before starting this mode. Audit backlog processing can include a stopped run, but does not restart monitoring or contact YouTube.
+
+Run the checks manually:
+
+```powershell
+npm run format
+npm run check
+npm run build:core
+npm run build --workspace @moderator/worker
+npm run test:ai-action-decision-cycle
+npm run test:ai-action-decision-store
+npm run test:worker-runtime
+npm run test:ai-shadow-cycle
+npm run test:ai-shadow-coordinator
+```
+
+Cycle tests exercise pending inference, policy skips, snapshot scope checks, cursor precision, cancellation, transaction ordering, retries, and replay. Database integration tests additionally verify committed-result recovery, late classifications, terminal errors, and absence of queued actions or duplicate audit rows. They use isolated fixtures and do not run native inference or YouTube requests. Step 8 will integrate executor-visible AI plans, authorization/provenance checks, and arbitration with built-in actions.

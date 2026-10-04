@@ -4,6 +4,71 @@ const { source } = require('./helpers/source.cjs');
 
 const { WorkerRuntime } = source('apps/worker/src/ingestion/worker-runtime.ts');
 
+test('AI audit runs independently and shutdown drains its write before closing the pool', async () => {
+  let release;
+  let auditSignal;
+  let closed = false;
+  const runtime = new WorkerRuntime(
+    { async tick() {} },
+    {
+      async end() {
+        closed = true;
+      },
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      async tick(signal) {
+        auditSignal = signal;
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      },
+    },
+  );
+  runtime.start();
+  const stopping = runtime.onApplicationShutdown();
+  assert.equal(auditSignal.aborted, true);
+  await Promise.resolve();
+  assert.equal(closed, false);
+  release();
+  await stopping;
+  assert.equal(closed, true);
+});
+
+test('AI audit failures do not interrupt ingestion or expose raw errors', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'error', (message) => logs.push(message));
+  let ingestionFinished = false;
+  const runtime = new WorkerRuntime(
+    {
+      async tick(signal) {
+        await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+        ingestionFinished = true;
+      },
+    },
+    { async end() {} },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      async tick() {
+        throw new Error('private-ai-audit-error');
+      },
+    },
+  );
+  runtime.start();
+  await Promise.resolve();
+  assert.equal(ingestionFinished, false);
+  assert.ok(logs.some((message) => message.startsWith('AI decision audit cycle failed.')));
+  assert.ok(logs.every((message) => !message.includes('private-ai-audit-error')));
+  await runtime.onApplicationShutdown();
+  assert.equal(ingestionFinished, true);
+});
+
 test('shadow runs independently and shutdown disposes inference before closing the pool', async () => {
   const events = [];
   let release;

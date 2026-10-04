@@ -15,6 +15,10 @@ import {
 } from '@moderator/provider-adapters';
 
 import { ActorResolver } from './ingestion/actor-resolver';
+import {
+  createAiActionDecisionCycle,
+  type AiActionDecisionCycle,
+} from './ingestion/ai-action-decision-cycle';
 import { createAiShadowCycle, type AiShadowCycle } from './ingestion/ai-shadow-cycle';
 import { BanCandidateStore } from './ingestion/ban-candidate-store';
 import { BanCoordinator } from './ingestion/ban-coordinator';
@@ -61,6 +65,7 @@ async function bootstrap() {
   const pool = createPool(config.DATABASE_URL);
   let runtime: WorkerRuntime | undefined;
   let shadow: AiShadowCycle | undefined;
+  let aiDecisions: AiActionDecisionCycle | undefined;
 
   try {
     const role = await pool.query<{
@@ -205,13 +210,18 @@ async function bootstrap() {
       try {
         await pool.query(`SELECT id, observation_id, model_revision, status
           FROM youtube_ai_shadow_results LIMIT 0`);
+        await pool.query(`SELECT id, observation_id, classification_id, model_result_id, decision
+          FROM youtube_ai_action_decisions LIMIT 0`);
+        await pool.query(`SELECT run_id, channel_id, source, configuration
+          FROM monitoring_ai_settings_snapshots LIMIT 0`);
         const selectedRun = await pool.query('SELECT id FROM monitoring_runs WHERE id=$1', [
           config.AI_SHADOW_RUN_ID,
         ]);
         if (!selectedRun.rows[0]) throw new Error('AI shadow run does not exist.');
         shadow = createAiShadowCycle(config, pool);
+        aiDecisions = createAiActionDecisionCycle(config, pool);
         console.log(
-          'AI shadow is enabled for the configured run. Moderation decisions remain unchanged.',
+          'AI shadow and decision audit are enabled for the configured run. AI actions are not dispatched.',
         );
       } catch {
         console.error(
@@ -234,6 +244,7 @@ async function bootstrap() {
         ),
       },
       shadow,
+      aiDecisions,
     );
 
     @Module({
