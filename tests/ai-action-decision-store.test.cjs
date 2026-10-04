@@ -11,6 +11,19 @@ const { AiActionDecisionCandidateReader } = source(
 const { AiActionDecisionCycle } = source('apps/worker/src/ingestion/ai-action-decision-cycle.ts');
 const { transaction } = source('packages/persistence/src/index.ts');
 const { storedAiActionDecision } = source('packages/contracts/src/index.ts');
+const { AiActionPlanStore } = source('apps/worker/src/ingestion/ai-action-plan-store.ts');
+const { AiActionPlanCycle } = source('apps/worker/src/ingestion/ai-action-plan-cycle.ts');
+const { AiDispatchProvenance, readAiActionEvidence } = source(
+  'apps/worker/src/ingestion/ai-dispatch-provenance.ts',
+);
+const { DeleteExecutionStore } = source('apps/worker/src/ingestion/delete-execution-store.ts');
+const { BanExecutionStore } = source('apps/worker/src/ingestion/ban-execution-store.ts');
+const { DeleteEligibilityStore } = source('apps/worker/src/ingestion/delete-eligibility-store.ts');
+const { BanEligibilityStore } = source('apps/worker/src/ingestion/ban-eligibility-store.ts');
+const { DeleteExecutor } = source('apps/worker/src/ingestion/delete-executor.ts');
+const { BanExecutor } = source('apps/worker/src/ingestion/ban-executor.ts');
+const { DeleteCandidateStore } = source('apps/worker/src/ingestion/delete-candidate-store.ts');
+const { BanCandidateStore } = source('apps/worker/src/ingestion/ban-candidate-store.ts');
 
 const schema = `ai_decisions_${randomUUID().replaceAll('-', '')}`;
 const workerRole = `ai_decision_worker_${randomUUID().replaceAll('-', '')}`;
@@ -226,6 +239,339 @@ const save = (f, overrides = {}) =>
     }),
   );
 const actions = (record) => record.decision.plans.map((plan) => plan.action);
+async function activate(f) {
+  await admin.query(
+    "UPDATE monitoring_runs SET status='RUNNING', started_at=clock_timestamp() WHERE id=$1",
+    [f.runId],
+  );
+  await admin.query('INSERT INTO youtube_chat_checkpoints(session_id) VALUES($1)', [f.sessionId]);
+  await admin.query(
+    `INSERT INTO google_credentials(account_id,access_token_ciphertext,refresh_token_ciphertext,expires_at,scopes)
+    VALUES($1,'fixture-only','fixture-only',clock_timestamp(), 'https://www.googleapis.com/auth/youtube.force-ssl')`,
+    [f.accountId],
+  );
+}
+const materialize = (f, record) =>
+  transaction(worker, (client) => new AiActionPlanStore().save(client, record.id, f.runId));
+
+test('AI action slots materialize atomically with worker permissions and concurrent replay reuses IDs', async () => {
+  for (const [score, expected] of [
+    [0.5, ['DELETE']],
+    [0.7, ['DELETE', 'TIMEOUT']],
+    [0.95, ['DELETE', 'BAN']],
+  ]) {
+    const f = await fixture({ score });
+    await activate(f);
+    const record = await save(f);
+    const results = await Promise.allSettled(
+      Array.from({ length: 3 }, () => materialize(f, record)),
+    );
+    for (const result of results) if (result.status === 'rejected') throw result.reason;
+    const values = results.map((result) => result.value);
+    assert.deepEqual(
+      values[0].map((item) => item.plan.action),
+      expected,
+    );
+    assert.equal(values.flat().filter((item) => !item.reused).length, expected.length);
+    assert.deepEqual(
+      values[0].map((item) => item.id),
+      values[1].map((item) => item.id),
+    );
+    assert.deepEqual(await counts(f), { decisions: 1, queued_plans: expected.length, events: 0 });
+    assert.equal(
+      (await transaction(worker, (client) => readAiActionEvidence(client, record.id, f.runId))).id,
+      record.id,
+    );
+    const provenance = new AiDispatchProvenance(worker);
+    for (const item of values[0]) {
+      const slot = item.plan.action === 'DELETE' ? 'message' : 'author';
+      assert.equal(await provenance.allows(item.id, f.channelId, f.sessionId, slot, f.runId), true);
+      assert.equal(
+        await provenance.allows(item.id, f.channelId, randomUUID(), slot, f.runId),
+        false,
+      );
+      assert.equal(
+        await provenance.allows(item.id, f.channelId, f.sessionId, slot, randomUUID()),
+        false,
+      );
+    }
+  }
+});
+
+test('plan loop recovers a committed audit after restart and settings edits retain captured decisions', async () => {
+  const f = await fixture();
+  await activate(f);
+  await save(f);
+  await admin.query(
+    `INSERT INTO channel_ai_moderation_settings(id,channel_id,revision,configuration,created_by)
+    VALUES($1,$2,2,$3::jsonb,$4)`,
+    [
+      randomUUID(),
+      f.channelId,
+      JSON.stringify(configuration({ automatic_actions_enabled: false })),
+      f.accountId,
+    ],
+  );
+  const cycle = new AiActionPlanCycle(f.runId, worker);
+  assert.equal((await cycle.tick(new AbortController().signal)).inserted, 2);
+  assert.equal(
+    (await new AiActionPlanCycle(f.runId, worker).tick(new AbortController().signal)).kind,
+    'IDLE',
+  );
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 2, events: 0 });
+});
+
+test('no-action audits, unavailable authors and stopped runs never invent author actions', async () => {
+  for (const options of [
+    { enabled: false },
+    { saved: false },
+    { blacklisted: true },
+    { score: 0.1 },
+    { resultOverrides: { truncated: true } },
+  ]) {
+    const f = await fixture(options);
+    await activate(f);
+    const record = await save(f);
+    assert.deepEqual(await materialize(f, record), []);
+  }
+  const missing = await fixture({ author: null });
+  await activate(missing);
+  assert.deepEqual(
+    (await materialize(missing, await save(missing))).map((item) => item.plan.action),
+    ['DELETE'],
+  );
+  const stopped = await fixture();
+  const record = await save(stopped);
+  assert.deepEqual(await materialize(stopped, record), []);
+  await activate(stopped);
+  await admin.query(
+    "UPDATE monitoring_runs SET status='STOPPED', stop_requested_at=clock_timestamp(), finished_at=clock_timestamp() WHERE id=$1",
+    [stopped.runId],
+  );
+  assert.deepEqual(await materialize(stopped, record), []);
+});
+
+test('built-in actions take priority and a forged reserved policy cannot authorize dispatch', async () => {
+  const f = await fixture({ score: 0.95 });
+  await activate(f);
+  const record = await save(f);
+  const original = await materialize(f, record);
+  const fakeId = randomUUID();
+  await admin.query(
+    `INSERT INTO youtube_moderation_action_plans(id,channel_id,session_id,classification_id,policy_version,action,reason)
+    VALUES($1,$2,$3,$4,'ai-forged:message','DELETE','Forged plan')`,
+    [fakeId, f.channelId, f.sessionId, f.classificationId],
+  );
+  assert.equal(
+    await new AiDispatchProvenance(worker).allows(
+      fakeId,
+      f.channelId,
+      f.sessionId,
+      'message',
+      f.runId,
+    ),
+    false,
+  );
+  const builtInId = randomUUID();
+  await admin.query(
+    `INSERT INTO youtube_moderation_action_plans(id,channel_id,session_id,classification_id,policy_version,action,reason,duration_seconds)
+    VALUES($1,$2,$3,$4,'settings-fixture','TIMEOUT','Explicit built-in rule',60)`,
+    [builtInId, f.channelId, f.sessionId, f.classificationId],
+  );
+  assert.deepEqual(await materialize(f, record), []);
+  for (const item of original)
+    assert.equal(
+      await new AiDispatchProvenance(worker).allows(
+        item.id,
+        f.channelId,
+        f.sessionId,
+        item.plan.action === 'DELETE' ? 'message' : 'author',
+        f.runId,
+      ),
+      false,
+    );
+  for (const Store of [DeleteCandidateStore, BanCandidateStore]) {
+    const selected = [];
+    let cursor = null;
+    for (let i = 0; i < 100; i++) {
+      const candidate = await new Store(worker).next(cursor);
+      if (!candidate) break;
+      selected.push(candidate.planId);
+      cursor = candidate.planId;
+    }
+    assert.ok(!selected.includes(fakeId));
+    assert.ok(original.every((item) => !selected.includes(item.id)));
+  }
+});
+
+test('plan failure or caller rollback never leaves one half of an AI action bundle', async () => {
+  const f = await fixture();
+  await activate(f);
+  const record = await save(f);
+  await assert.rejects(
+    transaction(worker, async (client) => {
+      await new AiActionPlanStore().save(client, record.id, f.runId);
+      throw new Error('Caller rollback');
+    }),
+    /Caller rollback/,
+  );
+  await transaction(worker, async (client) => {
+    let inserts = 0;
+    const failing = {
+      query(sql, values) {
+        if (sql.includes('INSERT INTO youtube_moderation_action_plans') && ++inserts === 2)
+          throw new Error('Author slot failed');
+        return client.query(sql, values);
+      },
+    };
+    await assert.rejects(
+      new AiActionPlanStore().save(failing, record.id, f.runId),
+      /Author slot failed/,
+    );
+    assert.equal((await counts(f, client)).queued_plans, 0);
+  });
+  await assert.rejects(materialize({ ...f, runId: randomUUID() }, record), /evidence/);
+  assert.equal((await counts(f)).queued_plans, 0);
+});
+
+test('AI executor authorization enforces configured run, kill switches, memberships and run state', async () => {
+  const f = await fixture();
+  await activate(f);
+  const plans = await materialize(f, await save(f));
+  const deletion = await new DeleteExecutionStore(worker).ensure(
+    plans[0].id,
+    f.channelId,
+    f.sessionId,
+  );
+  const ban = await new BanExecutionStore(worker).ensure(plans[1].id, f.channelId, f.sessionId);
+  for (const [Store, execution] of [
+    [DeleteEligibilityStore, deletion],
+    [BanEligibilityStore, ban],
+  ]) {
+    let enabled = true;
+    let selectedRun = f.runId;
+    const eligibility = new Store(
+      worker,
+      () => enabled,
+      null,
+      () => selectedRun,
+    );
+    assert.deepEqual(await eligibility.resolve(execution), { accountId: f.accountId });
+    assert.equal(await new Store(worker, () => true).resolve(execution), null);
+    selectedRun = randomUUID();
+    assert.equal(await eligibility.resolve(execution), null);
+    selectedRun = f.runId;
+    enabled = false;
+    assert.equal(await eligibility.resolve(execution), null);
+    enabled = true;
+    await admin.query("UPDATE channel_memberships SET role='OPERATOR' WHERE channel_id=$1", [
+      f.channelId,
+    ]);
+    assert.equal(await eligibility.resolve(execution), null);
+    await admin.query("UPDATE channel_memberships SET role='OWNER' WHERE channel_id=$1", [
+      f.channelId,
+    ]);
+  }
+  await admin.query(
+    "UPDATE monitoring_runs SET status='STOPPING',stop_requested_at=clock_timestamp() WHERE id=$1",
+    [f.runId],
+  );
+  assert.equal(
+    await new DeleteEligibilityStore(
+      worker,
+      () => true,
+      null,
+      () => f.runId,
+    ).resolve(deletion),
+    null,
+  );
+  assert.equal(
+    await new BanEligibilityStore(
+      worker,
+      () => true,
+      null,
+      () => f.runId,
+    ).resolve(ban),
+    null,
+  );
+});
+
+test('AI delete and author executors dispatch through committed claims once and UNKNOWN stays blocked', async () => {
+  const f = await fixture();
+  await activate(f);
+  const plans = await materialize(f, await save(f));
+  let deletes = 0,
+    bans = 0;
+  const tokens = {
+    async accessToken(accountId) {
+      assert.equal(accountId, f.accountId);
+      return 'fixture-token';
+    },
+  };
+  const deletion = new DeleteExecutor(
+    new DeleteExecutionStore(worker),
+    new DeleteEligibilityStore(
+      worker,
+      () => true,
+      null,
+      () => f.runId,
+    ),
+    tokens,
+    {
+      async deleteMessage(input) {
+        deletes++;
+        assert.equal(input.externalMessageId, f.externalMessageId);
+        assert.equal(
+          (
+            await admin.query(
+              `SELECT a.id FROM youtube_delete_attempts a JOIN youtube_delete_executions e ON e.id=a.execution_id
+        WHERE e.external_message_id=$1 AND a.status='DISPATCHED'`,
+              [f.externalMessageId],
+            )
+          ).rowCount,
+          1,
+        );
+        return { status: 'SUCCEEDED', http_status: 204 };
+      },
+    },
+  );
+  const input = { channelId: f.channelId, sessionId: f.sessionId, ownerId: randomUUID() };
+  const deletesResult = await Promise.allSettled([
+    deletion.execute({ ...input, planId: plans[0].id }),
+    deletion.execute({ ...input, planId: plans[0].id, ownerId: randomUUID() }),
+  ]);
+  for (const result of deletesResult) if (result.status === 'rejected') throw result.reason;
+  assert.equal(deletes, 1);
+  const ban = new BanExecutor(
+    new BanExecutionStore(worker),
+    new BanEligibilityStore(
+      worker,
+      () => true,
+      null,
+      () => f.runId,
+    ),
+    tokens,
+    {
+      async banUser(input) {
+        bans++;
+        assert.equal(input.authorChannelId, f.author);
+        return { status: 'UNKNOWN', http_status: null, code: 'TRANSPORT_ERROR' };
+      },
+    },
+    {
+      async resolve() {
+        return { status: 'RESOLVED', channelId: `UC${'b'.repeat(22)}` };
+      },
+    },
+  );
+  assert.equal((await ban.execute({ ...input, planId: plans[1].id })).status, 'RECORDED');
+  assert.equal(
+    (await ban.execute({ ...input, planId: plans[1].id, ownerId: randomUUID() })).reason,
+    'DISPATCH_BLOCKED',
+  );
+  assert.equal(bans, 1);
+});
+
 async function counts(f, connection = admin) {
   return (
     await connection.query(

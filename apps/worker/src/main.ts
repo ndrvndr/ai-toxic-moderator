@@ -19,6 +19,7 @@ import {
   createAiActionDecisionCycle,
   type AiActionDecisionCycle,
 } from './ingestion/ai-action-decision-cycle';
+import { createAiActionPlanCycle, type AiActionPlanCycle } from './ingestion/ai-action-plan-cycle';
 import { createAiShadowCycle, type AiShadowCycle } from './ingestion/ai-shadow-cycle';
 import { BanCandidateStore } from './ingestion/ban-candidate-store';
 import { BanCoordinator } from './ingestion/ban-coordinator';
@@ -66,6 +67,8 @@ async function bootstrap() {
   let runtime: WorkerRuntime | undefined;
   let shadow: AiShadowCycle | undefined;
   let aiDecisions: AiActionDecisionCycle | undefined;
+  let aiPlans: AiActionPlanCycle | undefined;
+  const allowedAiRunId = () => (aiPlans ? config.AI_SHADOW_RUN_ID : null);
 
   try {
     const role = await pool.query<{
@@ -170,6 +173,7 @@ async function bootstrap() {
           pool,
           enabled,
           testScope ? controlledDeleteVersion(testScope) : null,
+          allowedAiRunId,
         ),
         tokens,
         new YoutubeModerationAdapter(),
@@ -195,6 +199,7 @@ async function bootstrap() {
           pool,
           enabled,
           banTestScope ? controlledBanVersion(banTestScope) : null,
+          allowedAiRunId,
         ),
         tokens,
         new YoutubeBanAdapter(fetch, (diagnostic) => {
@@ -220,8 +225,9 @@ async function bootstrap() {
         if (!selectedRun.rows[0]) throw new Error('AI shadow run does not exist.');
         shadow = createAiShadowCycle(config, pool);
         aiDecisions = createAiActionDecisionCycle(config, pool);
+        aiPlans = createAiActionPlanCycle(config, pool);
         console.log(
-          'AI shadow and decision audit are enabled for the configured run. AI actions are not dispatched.',
+          'AI inference and action planning are enabled for the configured run. Dispatch requires captured enabled settings and executor switches.',
         );
       } catch {
         console.error(
@@ -245,6 +251,7 @@ async function bootstrap() {
       },
       shadow,
       aiDecisions,
+      aiPlans,
     );
 
     @Module({

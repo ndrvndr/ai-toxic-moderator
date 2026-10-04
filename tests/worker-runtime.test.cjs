@@ -4,6 +4,72 @@ const { source } = require('./helpers/source.cjs');
 
 const { WorkerRuntime } = source('apps/worker/src/ingestion/worker-runtime.ts');
 
+test('shutdown drains AI plan materialization before closing the pool', async () => {
+  let release;
+  let planSignal;
+  let closed = false;
+  const runtime = new WorkerRuntime(
+    { async tick() {} },
+    {
+      async end() {
+        closed = true;
+      },
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      async tick(signal) {
+        planSignal = signal;
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      },
+    },
+  );
+  runtime.start();
+  assert.ok(planSignal);
+  const stopped = runtime.onApplicationShutdown();
+  assert.equal(planSignal.aborted, true);
+  await Promise.resolve();
+  assert.equal(closed, false);
+  release();
+  await stopped;
+  assert.equal(closed, true);
+});
+
+test('AI planning failures remain isolated and hide raw error details', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'error', (message) => logs.push(message));
+  let ingested = false;
+  const runtime = new WorkerRuntime(
+    {
+      async tick() {
+        ingested = true;
+      },
+    },
+    { async end() {} },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      async tick() {
+        throw new Error('private-plan-fixture');
+      },
+    },
+  );
+  runtime.start();
+  await Promise.resolve();
+  assert.equal(ingested, true);
+  assert.ok(logs.some((message) => message.startsWith('AI action planning cycle failed.')));
+  assert.ok(logs.every((message) => !message.includes('private-plan-fixture')));
+  await runtime.onApplicationShutdown();
+});
+
 test('AI audit runs independently and shutdown drains its write before closing the pool', async () => {
   let release;
   let auditSignal;

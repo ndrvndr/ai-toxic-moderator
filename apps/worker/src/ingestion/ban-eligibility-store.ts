@@ -1,5 +1,6 @@
 import { uuid } from '@moderator/contracts';
 import type { createPool } from '@moderator/persistence';
+import { AiDispatchProvenance, aiDispatchAllowedSql } from './ai-dispatch-provenance';
 import type { BanExecution } from './ban-execution-store';
 import type { BanEligibility } from './ban-executor';
 import {
@@ -13,6 +14,7 @@ export class BanEligibilityStore implements BanEligibility {
     private readonly pool: ReturnType<typeof createPool>,
     private readonly isEnabled: () => boolean,
     private readonly allowedTestPolicyVersion: string | null = null,
+    private readonly allowedAiRunId: () => string | null = () => null,
   ) {}
 
   async resolve(execution: Readonly<BanExecution>): Promise<{ accountId: string } | null> {
@@ -25,8 +27,14 @@ export class BanEligibilityStore implements BanEligibility {
     ]) {
       uuid.parse(value);
     }
-    const result = await this.pool.query<{ account_id: string; blacklist_plan: boolean }>(
-      `SELECT r.credential_account_id AS account_id, p.policy_version LIKE 'blacklist-%' AS blacklist_plan
+    const result = await this.pool.query<{
+      account_id: string;
+      blacklist_plan: boolean;
+      ai_plan: boolean;
+      run_id: string;
+    }>(
+      `SELECT r.credential_account_id AS account_id, p.policy_version LIKE 'blacklist-%' AS blacklist_plan,
+        p.policy_version LIKE 'ai-%' AS ai_plan, r.id AS run_id
        FROM youtube_ban_executions e
        JOIN youtube_moderation_action_plans p ON p.id = e.plan_id
          AND p.channel_id = e.channel_id AND p.session_id = e.session_id
@@ -59,6 +67,7 @@ export class BanEligibilityStore implements BanEligibility {
          AND COALESCE(o.payload #>> '{authorDetails,channelId}', o.payload #>> '{snippet,authorChannelId}') = e.author_channel_id
          AND p.action IN ('TIMEOUT', 'BAN') AND o.event_type = 'textMessageEvent'
          AND ${blacklistDispatchAllowedSql('author')}
+         AND ${aiDispatchAllowedSql('author')}
          AND r.status = 'RUNNING' AND r.stop_requested_at IS NULL AND r.finished_at IS NULL
          AND s.source = 'YOUTUBE' AND s.closed_at IS NULL AND cp.chat_ended_at IS NULL
          AND credential_member.role IN ('OWNER', 'MODERATOR')
@@ -80,6 +89,22 @@ export class BanEligibilityStore implements BanEligibility {
       ],
     );
     const row = result.rows[0];
+    if (row?.ai_plan) {
+      const runId = this.allowedAiRunId();
+      if (
+        runId === null ||
+        uuid.parse(runId).toLowerCase() !== row.run_id ||
+        !(await new AiDispatchProvenance(this.pool).allows(
+          execution.plan_id,
+          execution.channel_id,
+          execution.session_id,
+          'author',
+          row.run_id,
+        )) ||
+        this.allowedAiRunId()?.toLowerCase() !== row.run_id
+      )
+        return null;
+    }
     if (
       row?.blacklist_plan &&
       !(await new BlacklistDispatchProvenance(this.pool).allows(

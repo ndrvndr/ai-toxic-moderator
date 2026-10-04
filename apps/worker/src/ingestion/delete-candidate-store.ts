@@ -1,4 +1,5 @@
 import type { createPool } from '@moderator/persistence';
+import { aiDispatchAllowedSql } from './ai-dispatch-provenance';
 import { blacklistDispatchAllowedSql } from './blacklist-dispatch-provenance';
 import { DELETE_RETRY_DUE_SQL } from './delete-retry-policy';
 
@@ -27,6 +28,7 @@ export class DeleteCandidateStore {
        ) latest ON true
        WHERE p.action = 'DELETE' AND r.status = 'RUNNING' AND r.stop_requested_at IS NULL
          AND ${blacklistDispatchAllowedSql('message')}
+         AND ${aiDispatchAllowedSql('message')}
          AND ($1::uuid IS NULL OR p.id > $1::uuid)
          AND (latest.id IS NULL OR latest.retry_due)
        ORDER BY p.id LIMIT 1`,

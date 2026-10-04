@@ -51,7 +51,8 @@ export function ChatAiShadow({ result }: { result?: AiShadowSummary | null }) {
       )}
 
       <p className="text-xs text-muted-foreground">
-        Model output only. It does not change moderation decisions.
+        Model output only. This is not an execution result. Automatic AI actions depend on the
+        settings captured for this run and whether enforcement is enabled.
       </p>
 
       <details className="text-xs text-muted-foreground">

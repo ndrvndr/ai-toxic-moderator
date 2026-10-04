@@ -107,9 +107,9 @@ function ChannelSettings({
           AI moderation thresholds
         </h2>
         <p className="text-sm text-muted-foreground">
-          Stage AI action thresholds for new monitoring runs. AI currently remains in shadow mode;
-          these settings do not trigger automatic AI actions yet. A custom blacklist match takes
-          priority.
+          AI thresholds apply to new monitoring runs. Automatic actions require enabled AI settings,
+          AI processing for the run, and the corresponding worker action switches. Custom blacklist
+          matches and selected built-in rule actions take priority.
         </p>
         <AiModerationSettingsEditor
           accountId={accountId}

@@ -30,6 +30,7 @@ export class WorkerRuntime {
     private readonly bans?: BanCycles,
     private readonly shadow?: ShadowCycle,
     private readonly aiDecisions?: WorkerCycle,
+    private readonly aiPlans?: WorkerCycle,
   ) {}
 
   start(): void {
@@ -66,6 +67,9 @@ export class WorkerRuntime {
     }
     if (this.aiDecisions) {
       loops.push(this.loop(this.aiDecisions, 'AI decision audit'));
+    }
+    if (this.aiPlans) {
+      loops.push(this.loop(this.aiPlans, 'AI action planning'));
     }
 
     // Every loop must finish before the shared pool closes.

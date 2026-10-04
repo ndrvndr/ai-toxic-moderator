@@ -115,7 +115,7 @@ describe('AI shadow presentation', () => {
     expect(panel.getByText(`Model rating: ${label} (${rating}/4)`)).toBeTruthy();
     expect(panel.getByText('Expected severity: 0.5600 / 1')).toBeTruthy();
     expect(panel.getByText(/not the probability of a policy violation/)).toBeTruthy();
-    expect(panel.getByText(/does not change moderation decisions/)).toBeTruthy();
+    expect(panel.getByText(/This is not an execution result/)).toBeTruthy();
     expect(panel.queryByText('Allowed')).toBeNull();
     expect(panel.queryByText('Flagged')).toBeNull();
   });

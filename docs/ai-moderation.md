@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Steps 1–7 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, authorized settings endpoints, dashboard controls, a pure AI threshold planner, immutable decision persistence with replay, and worker audit integration. The configured shadow run now records AI decision audits after terminal inference. Executor integration is not implemented; existing classification and moderation execution behavior remain unchanged.
+Steps 1–8 define shared settings contracts, immutable revisions and run snapshots, authorized settings controls, the threshold planner, decision audits, and executor integration. The explicitly configured AI run can now materialize persisted action slots and dispatch them through existing executors when its captured settings and worker action switches enable enforcement. Inference is still scoped to one configured run; saving channel settings does not automatically enable processing for every livestream.
 
 The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
 
@@ -22,9 +22,9 @@ No fields silently enable enforcement or supply calibrated threshold defaults. I
 
 The update contract requires `expected_revision`: zero for the first write, or the revision last read for later writes. Clients cannot provide channel ownership or record metadata. The record contract requires server-assigned identity, channel, author, creation time, and a positive revision. Responses represent missing settings as `{ "settings": null }`.
 
-## Planned decision flow
+## Decision flow
 
-The pure planner implements threshold selection below, and the worker persists its audit for the configured shadow run. Dispatch remains planned:
+The worker persists threshold decisions before materializing action slots for the configured AI run:
 
 1. Check the captured custom blacklist first. A match uses the blacklist's action bundle and skips AI.
 2. For other messages, evaluate AI using the exact model identity and settings captured when the monitoring run starts.
@@ -33,7 +33,7 @@ The pure planner implements threshold selection below, and the worker persists i
 5. If no enabled threshold is met, AI produces no action. Missing settings, inference failures, truncated input, and mismatched model identities must also produce no AI action.
 6. Persist the decision and its provenance before execution. Replay must reuse the stored decision, and settings edits must affect only new monitoring runs.
 
-Built-in rules and blacklist handling remain independent of AI availability. The later planner must define how their actions combine with AI decisions without duplicating message or author execution.
+Built-in rules and blacklist handling remain independent of AI availability. A captured blacklist match skips AI. If an actionable built-in plan already exists for the same observation, it takes priority over the entire AI bundle. A built-in `NONE` plan does not suppress AI. This deliberately preserves explicit rule choices rather than escalating an existing timeout into an AI ban. Audit data still records the model decision even when execution is suppressed.
 
 ## Calibration and verification
 
@@ -88,7 +88,7 @@ Both endpoints require a valid dashboard session and channel membership:
 | GET    | `/v1/channels/:channel_id/ai-moderation-settings` | Owner or moderator | `200` with `{ "settings": null }` or the latest settings record |
 | POST   | `/v1/channels/:channel_id/ai-moderation-settings` | Owner only         | `200` with the newly saved settings record                      |
 
-POST requires the configured dashboard Origin and a JSON body containing only `expected_revision` and `configuration`. Use zero when GET returns null; otherwise use the revision returned by GET. The configuration must include the explicit model identity, score metric, switches, ordered thresholds, and timeout duration described above. Persisting enabled settings does not activate AI actions while worker integration remains unfinished.
+POST requires the configured dashboard Origin and a JSON body containing only `expected_revision` and `configuration`. Use zero when GET returns null; otherwise use the revision returned by GET. The configuration must include the explicit model identity, score metric, switches, ordered thresholds, and timeout duration described above. Enabled settings can authorize AI actions only for new runs that capture them, with explicitly configured AI processing and enabled executor switches.
 
 Responses use `Cache-Control: no-store`. Errors carry a trace ID and safe field paths/codes, without echoing model input or database details:
 
@@ -109,7 +109,7 @@ HTTP tests run the built NestJS API against temporary local database schemas wit
 
 ## Dashboard settings
 
-Open `/settings/moderation`, select an accessible channel, and use **AI moderation thresholds** below the custom blacklist. Owners can edit; moderators see disabled controls without a save button. The section explicitly states that saved thresholds do not activate AI actions yet.
+Open `/settings/moderation`, select an accessible channel, and use **AI moderation thresholds** below the custom blacklist. Owners can edit; moderators see disabled controls without a save button. The section explains that settings apply to new runs and require AI processing and worker action switches before enforcement.
 
 The form provides a global AI action switch, independent delete/timeout/ban switches, thresholds in the range 0–1, and timeout duration. New forms start with every switch disabled and thresholds blank. The staged timeout duration starts at 30 seconds; it is not a calibrated AI threshold. No revision exists until a valid configuration is explicitly saved.
 
@@ -160,7 +160,7 @@ Saving missing output creates a terminal no-action audit. A late model result ca
 
 Database guards check classification/observation/run/model scope, captured snapshot equality, observed targets, threshold selection, independent plan slots, and the exact decision payload. Updates and deletes are rejected. The store recomputes literal blacklist matches from captured configuration; SQL metadata validation alone is not proof of a text match or authorization to dispatch.
 
-Plans remain embedded audit data. This step inserts no rows into `youtube_moderation_action_plans`, creates no execution attempts, and publishes no Live event. Materializing executor-visible plans, enforcing provenance, arbitrating built-in actions, and showing decisions in the dashboard remain later steps. The worker role has SELECT/INSERT on the new audit table; the API role has SELECT only. Neither role can update, delete, or truncate it.
+The decision store itself only saves embedded audit data. Step 8 adds a separate materialization cycle that inserts executor-visible plans from this immutable audit. The worker role has SELECT/INSERT on the audit table; the API role has SELECT only. Neither role can update, delete, or truncate it. The separate cycle requires no new table or migration and does not rewrite the audit.
 
 Run these checks manually, using an admin-capable local `TEST_DATABASE_URL` for the isolated database suite:
 
@@ -192,7 +192,7 @@ Selection occurs outside the persistence transaction. The cycle then uses `AiAct
 
 The audit cycle uses the runtime's existing shutdown signal and failure isolation. Cancellation before persistence prevents the save; writes already in progress are drained before the pool closes. A failed audit cycle logs a safe error and can retry on a later tick without stopping ingestion. Shadow inference retains its own cancellation and disposal lifecycle.
 
-Startup checks for enabled shadow mode now verify the decision table and captured AI snapshot table. The enabled log reads **AI shadow and decision audit are enabled for the configured run. AI actions are not dispatched.** Apply migration 025 and provision worker permissions before starting this mode. Audit backlog processing can include a stopped run, but does not restart monitoring or contact YouTube.
+Startup checks for enabled AI mode verify the decision table and captured AI snapshot table. The enabled log now reads **AI inference and action planning are enabled for the configured run. Dispatch requires captured enabled settings and executor switches.** Apply migration 025 and provision worker permissions before starting this mode. Audit backlog processing can include a stopped run; materialization and dispatch require a running original run.
 
 Run the checks manually:
 
@@ -208,4 +208,36 @@ npm run test:ai-shadow-cycle
 npm run test:ai-shadow-coordinator
 ```
 
-Cycle tests exercise pending inference, policy skips, snapshot scope checks, cursor precision, cancellation, transaction ordering, retries, and replay. Database integration tests additionally verify committed-result recovery, late classifications, terminal errors, and absence of queued actions or duplicate audit rows. They use isolated fixtures and do not run native inference or YouTube requests. Step 8 will integrate executor-visible AI plans, authorization/provenance checks, and arbitration with built-in actions.
+Cycle tests exercise pending inference, policy skips, snapshot scope checks, cursor precision, cancellation, transaction ordering, retries, and replay. Database integration tests additionally verify committed-result recovery, late classifications, terminal errors, and absence of queued actions from the audit store itself. They use isolated fixtures and do not run native inference or YouTube requests.
+
+## Executor integration
+
+`AiActionPlanCycle` runs independently alongside the audit loop, only for `AI_SHADOW_RUN_ID` when `AI_SHADOW_ENABLED` is enabled. It selects committed `THRESHOLD_MET` decisions on a `RUNNING` original run whose action slots are missing. It recovers a crash between audit persistence and materialization without rerunning inference. A selected decision without an available author can still materialize deletion alone.
+
+`AiActionPlanStore` re-reads authoritative observations, captured AI and blacklist snapshots, and the referenced stored model result. It recomputes both planners and compares the complete decision with the immutable audit. A short caller-owned transaction, an audit advisory lock, deterministic policy slots, and the existing action-plan uniqueness constraint serialize competing workers. Message and author slots commit together. If either fails, a savepoint removes all new slots even when the caller catches the failure. Replay returns existing plan IDs; it does not replan using current settings.
+
+All `ai-` policy names are reserved. Candidate discovery and executor eligibility require a linked scoped audit and captured enabled policy, successful untruncated inference, matching action metadata, and no competing built-in/blacklist action for the observation. `AiDispatchProvenance` additionally reconstructs the full evidence and compares the exact selected plan before dispatch. A policy name, a high score, or an inserted plan alone cannot authorize an AI request. Foreign runs/sessions, malformed evidence, forged action reasons, and missing model references fail closed.
+
+Existing authorization checks still apply: active original run, open YouTube session and chat, current owner/moderator memberships, credential scope, and the corresponding `YOUTUBE_DELETE_ENABLED` or `YOUTUBE_BAN_ENABLED` switch. AI dispatch additionally requires that AI initialization succeeded and the plan belongs to the explicitly configured run. Existing controlled test policy restrictions still apply. Removing AI opt-in blocks pending AI dispatch without preventing built-in actions.
+
+The existing executors continue to commit a dispatch claim before contacting YouTube and recheck eligibility after credential refresh and claim creation. Per-message deletion deduplication, per-observation author execution, timeout spacing, and conservative `UNKNOWN` handling are reused. No automatic author retry is added. Plans are not replaced or escalated after another execution has started. Existing execution events update chat over WebSocket; displaying the AI decision and suppression reason remains step 9.
+
+Enabled captured settings can now cause real moderation requests when the configured run is active and executor switches are enabled. Keep `automatic_actions_enabled` disabled when evaluating scores without enforcement. Disabling or editing channel settings affects new runs; the runtime action switches remain the way to stop execution for an existing captured run.
+
+Run these checks manually:
+
+```powershell
+npm run format
+npm run check
+npm run build:core
+npm run build --workspace @moderator/worker
+npm run test:ai-action-plan-cycle
+npm run test:ai-action-decision-store
+npm run test:ai-action-decision-cycle
+npm run test:worker-runtime
+npm run test:delete-execution-store
+npm run test:blacklist-action-store
+npm run test:live-hooks
+```
+
+The database suites require a local admin-capable `TEST_DATABASE_URL` and use isolated schemas and restricted worker roles. Added checks cover concurrent materialization, rollback of both slots, replay after restart, built-in priority, reserved policy rejection, current access and run scope, committed claims, and non-redispatch of uncertain author attempts. Provider responses are simulated; these checks consume no YouTube quota.
