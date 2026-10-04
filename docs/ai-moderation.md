@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Step 1 defines shared settings contracts, validation, public exports, and contract tests. It does not add database tables, settings endpoints, dashboard controls, or AI action dispatch. Existing AI output remains shadow output and does not change moderation decisions.
+Steps 1–2 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, and persistence tests. Settings endpoints, dashboard controls, and AI action dispatch are not implemented yet. Existing AI output remains shadow output and does not change moderation decisions.
 
 The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
 
@@ -39,17 +39,39 @@ Built-in rules and blacklist handling remain independent of AI availability. The
 
 The prototype showed overlapping scores for safe and abusive examples. Contract validation establishes valid configuration structure, not model accuracy or safe enforcement thresholds. Automatic AI ban stays disabled in initial settings; enabling it requires an explicit setting and separate verification.
 
-Run the contract checks manually:
+Run the checks manually, using a local admin-capable `TEST_DATABASE_URL` for persistence tests:
 
 ```powershell
 npm run format
 npm run check
 npm run build:core
+npm run db:migrate
+npm run db:runtime
+npm run db:worker
 npm run test:ai-moderation-contracts
+npm run test:ai-moderation-settings-store
 npm run test:ai-shadow-contracts
 npm run test:moderation-settings-contracts
+npm run test:custom-blacklist-store
+npm run test:monitoring-start
 ```
 
-These tests require neither a livestream nor YouTube quota. No database migration is needed for this step.
+These tests require neither a livestream nor YouTube quota. Migration `024_ai_moderation_settings.sql` adds the new tables and triggers. Apply migrations before reprovisioning API and worker permissions. Persistence tests use temporary schemas and roles and clean them up afterward.
 
-The next step adds immutable channel settings revisions and captured run snapshots, including a disabled policy for missing settings and legacy runs.
+## Persistence and snapshots
+
+`channel_ai_moderation_settings` stores consecutive immutable revisions per channel. `AiModerationSettingsStore` validates inputs, normalizes UUIDs, takes a per-channel transaction lock, rechecks the caller's authorization callback, and compares `expected_revision` before inserting. Conflicting writes return `AiModerationSettingsConflict` with the current revision. The caller must authorize reads; no public endpoint is exposed by this step.
+
+An insert trigger captures the latest committed settings visible during run creation in `monitoring_ai_settings_snapshots`. It runs in the same transaction as `monitoring_runs`, so a failed run creation also rolls back its snapshot. Existing runs keep their captured revision after settings edits. Capture does not wait for an uncommitted newer revision or take the settings writer's advisory lock.
+
+Snapshots have explicit provenance:
+
+- `SAVED`: exact settings ID, revision, and configuration from the same channel.
+- `DEFAULT`: no saved settings at capture time; ID, revision, and configuration are null.
+- `LEGACY`: migration backfill for historical runs; ID, revision, and configuration are null. Application inserts cannot claim this source.
+
+Null configuration means no AI enforcement policy. It does not imply a particular model or threshold. Database constraints validate configuration shape, score ordering, revision references, and channel relationships. Triggers prevent updates and deletes to historical settings and snapshots.
+
+The API role can select and insert revisions and snapshots, as required by run creation. The worker can select captured snapshots only; it cannot read current channel AI settings or write either table. Runtime AI policy consumption is deferred to the worker integration step.
+
+The next step exposes authorized settings endpoints with validation and revision conflict handling.

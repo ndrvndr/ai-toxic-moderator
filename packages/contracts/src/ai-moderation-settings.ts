@@ -66,8 +66,29 @@ export const aiModerationSettingsResponse = z.strictObject({
   settings: aiModerationSettingsRecord.nullable(),
 });
 
+// Missing and legacy settings carry no fabricated model or calibrated thresholds.
+export const aiModerationSettingsSnapshot = z.discriminatedUnion('source', [
+  z.strictObject({
+    source: z.literal('SAVED'),
+    run_id: z.uuid(),
+    channel_id: z.uuid(),
+    settings_id: z.uuid(),
+    settings_revision: z.number().int().positive().safe(),
+    configuration: aiModerationSettingsConfiguration,
+  }),
+  z.strictObject({
+    source: z.enum(['DEFAULT', 'LEGACY']),
+    run_id: z.uuid(),
+    channel_id: z.uuid(),
+    settings_id: z.null(),
+    settings_revision: z.null(),
+    configuration: z.null(),
+  }),
+]);
+
 export type AiModerationModelIdentity = z.infer<typeof aiModerationModelIdentity>;
 export type AiModerationSettingsConfiguration = z.infer<typeof aiModerationSettingsConfiguration>;
 export type AiModerationSettingsUpdate = z.infer<typeof aiModerationSettingsUpdate>;
 export type AiModerationSettingsRecord = z.infer<typeof aiModerationSettingsRecord>;
 export type AiModerationSettingsResponse = z.infer<typeof aiModerationSettingsResponse>;
+export type AiModerationSettingsSnapshot = z.infer<typeof aiModerationSettingsSnapshot>;

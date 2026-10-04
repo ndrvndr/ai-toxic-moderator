@@ -8,6 +8,7 @@ const {
   aiModerationSettingsUpdate,
   aiModerationSettingsRecord,
   aiModerationSettingsResponse,
+  aiModerationSettingsSnapshot,
 } = source('packages/contracts/src/ai-moderation-settings.ts');
 
 // Fixture values exercise validation; they are not calibrated enforcement defaults.
@@ -202,9 +203,54 @@ test('public exports initialize AI settings alongside existing chat and shadow c
   assert.equal(contracts.aiModerationSettingsUpdate, aiModerationSettingsUpdate);
   assert.equal(contracts.aiModerationSettingsRecord, aiModerationSettingsRecord);
   assert.equal(contracts.aiModerationModelIdentity, aiModerationModelIdentity);
+  assert.equal(contracts.aiModerationSettingsSnapshot, aiModerationSettingsSnapshot);
   assert.deepEqual(contracts.aiModerationSettingsResponse.parse({ settings: null }), {
     settings: null,
   });
   assert.ok(contracts.aiShadowResult);
   assert.ok(contracts.chatEvaluation);
+});
+
+test('saved snapshots require revision provenance while absent policies contain no model or thresholds', () => {
+  const identity = {
+    run_id: '10000000-0000-4000-8000-000000000001',
+    channel_id: '20000000-0000-4000-8000-000000000002',
+  };
+  const saved = {
+    ...identity,
+    source: 'SAVED',
+    settings_id: '30000000-0000-4000-8000-000000000003',
+    settings_revision: 1,
+    configuration: configuration(),
+  };
+  assert.deepEqual(aiModerationSettingsSnapshot.parse(saved), saved);
+  for (const source of ['DEFAULT', 'LEGACY']) {
+    const absent = {
+      ...identity,
+      source,
+      settings_id: null,
+      settings_revision: null,
+      configuration: null,
+    };
+    assert.deepEqual(aiModerationSettingsSnapshot.parse(absent), absent);
+    for (const change of [
+      { configuration: configuration() },
+      { settings_id: saved.settings_id },
+      { settings_revision: 1 },
+      { configuration: undefined },
+    ]) {
+      assert.equal(aiModerationSettingsSnapshot.safeParse({ ...absent, ...change }).success, false);
+    }
+  }
+  for (const change of [
+    { settings_id: null },
+    { settings_revision: null },
+    { settings_revision: 0 },
+    { configuration: null },
+    { source: 'UNKNOWN' },
+    { channel_id: 'invalid' },
+    { unexpected: true },
+  ]) {
+    assert.equal(aiModerationSettingsSnapshot.safeParse({ ...saved, ...change }).success, false);
+  }
 });

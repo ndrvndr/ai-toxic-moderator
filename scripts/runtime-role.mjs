@@ -124,6 +124,12 @@ export async function provisionRuntimeRole(client, { role, password, schema = 'p
     await client.query(
       `GRANT SELECT,INSERT ON ${schemaSql}.monitoring_blacklist_snapshots TO ${roleSql}`,
     );
+    await client.query(
+      `GRANT SELECT,INSERT ON ${schemaSql}.channel_ai_moderation_settings TO ${roleSql}`,
+    );
+    await client.query(
+      `GRANT SELECT,INSERT ON ${schemaSql}.monitoring_ai_settings_snapshots TO ${roleSql}`,
+    );
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
