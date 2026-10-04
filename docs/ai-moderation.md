@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Steps 1–3 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, and authorized settings endpoints. Dashboard controls and AI action dispatch are not implemented yet. Existing AI output remains shadow output and does not change moderation decisions.
+Steps 1–4 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, authorized settings endpoints, and dashboard controls. AI action planning and dispatch are not implemented yet. Existing AI output remains shadow output and does not change moderation decisions.
 
 The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
 
@@ -57,6 +57,8 @@ npm run test:moderation-settings-contracts
 npm run test:custom-blacklist-store
 npm run test:custom-blacklist-http
 npm run test:monitoring-start
+npm run test:live-hooks
+npm run build --workspace @moderator/dashboard
 ```
 
 These tests require neither a livestream nor YouTube quota. Migration `024_ai_moderation_settings.sql` adds the new tables and triggers. Apply migrations before reprovisioning API and worker permissions. Persistence tests use temporary schemas and roles and clean them up afterward.
@@ -105,4 +107,22 @@ Authorization is checked before settings validation or revision conflict handlin
 
 HTTP tests run the built NestJS API against temporary local database schemas with the provisioned API role. Build both core packages and the API before running them. They exercise access, validation, safe errors, immutable revisions, and competing writes without contacting YouTube.
 
-The next step adds dashboard controls for editing AI thresholds through these endpoints.
+## Dashboard settings
+
+Open `/settings/moderation`, select an accessible channel, and use **AI moderation thresholds** below the custom blacklist. Owners can edit; moderators see disabled controls without a save button. The section explicitly states that saved thresholds do not activate AI actions yet.
+
+The form provides a global AI action switch, independent delete/timeout/ban switches, thresholds in the range 0–1, and timeout duration. New forms start with every switch disabled and thresholds blank. The staged timeout duration starts at 30 seconds; it is not a calibrated AI threshold. No revision exists until a valid configuration is explicitly saved.
+
+Expand **Model identity** to enter the exact model ID, revision, and adapter version. For the current local prototype, read `modelId` and `revision` from `.cache/ai-prototype/manifest.json`. Use the adapter version recorded by the worker; the current Laskar adapter exports `laskar-shadow-1`. The variant is INT8. Saved model fields are retained when editing thresholds. Changing the model identity requires reviewing threshold behavior again.
+
+Every tier still needs a valid threshold while disabled, and the timeout duration is required while its tier is disabled. This preserves a valid staged configuration. Client validation rejects empty numeric fields instead of interpreting them as zero, and uses the same shared contract as the API.
+
+TanStack Query handles reads and mutations using keys scoped to account and channel. Switching either identity resets the local form draft. Save submits the last explicitly loaded revision and updates only that channel's cache after a verified response. A background read does not silently replace an unsaved draft.
+
+On a conflict or uncertain save result, the form retains the draft and blocks further writes. **Reload AI settings and discard changes** explicitly loads the latest revision and resets the draft. A transient reload failure retains the draft; an access failure hides the form, clears its cached settings, and refreshes account access information. Mutations are not automatically retried.
+
+Component tests cover initial disabled state, validation, revision handling, pending submission protection, conflict recovery, read-only access, cache clearing, identity changes, and rejection of mismatched API responses. Run `npm run test:live-hooks` to include them in the existing dashboard suite.
+
+For manual browser verification, keep the worker stopped and check that settings can be saved, survive page reload, reject equal thresholds, and display the updated revision. This step requires no active broadcast or YouTube quota.
+
+The next step implements the AI decision planner using captured settings and persisted model output.

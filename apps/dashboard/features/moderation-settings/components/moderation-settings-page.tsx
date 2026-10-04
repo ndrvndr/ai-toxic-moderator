@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useSession } from '@/features/auth/hooks/use-session';
 import { getErrorMessage } from '@/lib/api-client';
 
+import { AiModerationSettingsEditor } from './ai-moderation-settings-editor';
 import { CustomBlacklistEditor } from './custom-blacklist-editor';
 import { ModerationSettingsEditor } from './moderation-settings-editor';
 
@@ -96,6 +97,21 @@ function ChannelSettings({
           corresponding worker action switches to be enabled.
         </p>
         <CustomBlacklistEditor
+          accountId={accountId}
+          channelId={active.channel_id}
+          canEdit={active.role === 'OWNER'}
+        />
+      </section>
+      <section aria-labelledby="ai-settings-heading" className="space-y-4 rounded-lg border p-5">
+        <h2 id="ai-settings-heading" className="text-lg font-semibold">
+          AI moderation thresholds
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Stage AI action thresholds for new monitoring runs. AI currently remains in shadow mode;
+          these settings do not trigger automatic AI actions yet. A custom blacklist match takes
+          priority.
+        </p>
+        <AiModerationSettingsEditor
           accountId={accountId}
           channelId={active.channel_id}
           canEdit={active.role === 'OWNER'}
