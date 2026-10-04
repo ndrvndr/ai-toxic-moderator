@@ -10,6 +10,7 @@
     "node": ">=22.12.0 <23 || >=24.0.0"
   },
   "scripts": {
+    "test:ai-action-decision-store": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/ai-action-decision-store.test.cjs",
     "test:ai-action-planner": "node --experimental-test-isolation=none --test tests/ai-action-planner.test.cjs",
     "test:blacklist-action-store": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/blacklist-action-store.test.cjs",
     "test:blacklist-action-planner": "node --experimental-test-isolation=none --test tests/blacklist-action-planner.test.cjs",

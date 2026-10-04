@@ -1,0 +1,546 @@
+const { before, after, test } = require('node:test');
+const assert = require('node:assert/strict');
+const { randomUUID, createHash } = require('node:crypto');
+const { Client, Pool } = require('pg');
+const { source } = require('./helpers/source.cjs');
+const { AiActionDecisionStore } = source('apps/worker/src/ingestion/ai-action-decision-store.ts');
+const { AiShadowStore } = source('apps/worker/src/ingestion/ai-shadow-store.ts');
+const { transaction } = source('packages/persistence/src/index.ts');
+const { storedAiActionDecision } = source('packages/contracts/src/index.ts');
+
+const schema = `ai_decisions_${randomUUID().replaceAll('-', '')}`;
+const workerRole = `ai_decision_worker_${randomUUID().replaceAll('-', '')}`;
+const apiRole = `ai_decision_api_${randomUUID().replaceAll('-', '')}`;
+let admin, worker, api, migrate;
+let schemaCreated = false,
+  workerCreated = false,
+  apiCreated = false;
+before(async () => {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname))
+    throw new Error('Set TEST_DATABASE_URL to an admin-capable local test database.');
+  ({ migrate } = await import('../scripts/database.mjs'));
+  const { provisionWorkerRole } = await import('../scripts/worker-role.mjs');
+  const { provisionRuntimeRole } = await import('../scripts/runtime-role.mjs');
+  admin = new Client({ connectionString: url, connectionTimeoutMillis: 3000 });
+  await admin.connect();
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  schemaCreated = true;
+  await admin.query(`SET search_path TO ${schema}`);
+  await migrate(admin);
+  await provisionWorkerRole(admin, { role: workerRole, password: randomUUID(), schema });
+  workerCreated = true;
+  await provisionRuntimeRole(admin, { role: apiRole, password: randomUUID(), schema });
+  apiCreated = true;
+  const pool = (role) =>
+    new Pool({
+      connectionString: url,
+      options: `-c search_path=${schema} -c role=${role}`,
+      max: 4,
+      statement_timeout: 10000,
+      connectionTimeoutMillis: 3000,
+    });
+  worker = pool(workerRole);
+  api = pool(apiRole);
+});
+after(async () => {
+  try {
+    if (worker) await worker.end();
+    if (api) await api.end();
+  } finally {
+    if (admin) {
+      try {
+        if (schemaCreated) await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+        if (workerCreated) await admin.query(`DROP ROLE ${workerRole}`);
+        if (apiCreated) await admin.query(`DROP ROLE ${apiRole}`);
+      } finally {
+        await admin.end();
+      }
+    }
+  }
+});
+const model = {
+  model_id: 'test/model',
+  model_revision: 'a'.repeat(40),
+  model_variant: 'INT8',
+  adapter_version: 'laskar-shadow-1',
+};
+function configuration(overrides = {}) {
+  return {
+    schema_version: 1,
+    automatic_actions_enabled: true,
+    model,
+    score_metric: 'EXPECTED_SEVERITY',
+    delete: { enabled: true, threshold: 0.4 },
+    timeout: { enabled: true, threshold: 0.6, duration_seconds: 60 },
+    ban: { enabled: true, threshold: 0.9 },
+    ...overrides,
+  };
+}
+async function fixture({
+  saved = true,
+  score = 0.7,
+  enabled = true,
+  author = `UC${'a'.repeat(22)}`,
+  blacklisted = false,
+  result = true,
+  resultOverrides = {},
+  configurationOverrides = {},
+  eventType = 'textMessageEvent',
+} = {}) {
+  const f = {
+    channelId: randomUUID(),
+    accountId: randomUUID(),
+    sessionId: randomUUID(),
+    runId: randomUUID(),
+    observationId: randomUUID(),
+    classificationId: randomUUID(),
+    externalMessageId: `message-${randomUUID()}`,
+    author,
+  };
+  await admin.query('INSERT INTO accounts(id, display_name) VALUES ($1,$2)', [
+    f.accountId,
+    'AI decision owner',
+  ]);
+  await admin.query('INSERT INTO channels(id, display_name) VALUES ($1,$2)', [
+    f.channelId,
+    'AI decision channel',
+  ]);
+  await admin.query(
+    "INSERT INTO channel_memberships(channel_id, account_id, role) VALUES ($1,$2,'OWNER')",
+    [f.channelId, f.accountId],
+  );
+  await admin.query('INSERT INTO youtube_channels(channel_id, youtube_channel_id) VALUES ($1,$2)', [
+    f.channelId,
+    `channel-${randomUUID()}`,
+  ]);
+  await admin.query(
+    "INSERT INTO stream_sessions(id, channel_id, label, source) VALUES ($1,$2,$3,'YOUTUBE')",
+    [f.sessionId, f.channelId, 'AI decision broadcast'],
+  );
+  await admin.query(
+    'INSERT INTO youtube_broadcasts(session_id, channel_id, youtube_broadcast_id, live_chat_id) VALUES ($1,$2,$3,$4)',
+    [f.sessionId, f.channelId, `broadcast-${randomUUID()}`, `chat-${randomUUID()}`],
+  );
+  if (saved)
+    await admin.query(
+      'INSERT INTO channel_ai_moderation_settings(id, channel_id, revision, configuration, created_by) VALUES ($1,$2,1,$3::jsonb,$4)',
+      [
+        randomUUID(),
+        f.channelId,
+        JSON.stringify(
+          configuration({ automatic_actions_enabled: enabled, ...configurationOverrides }),
+        ),
+        f.accountId,
+      ],
+    );
+  if (blacklisted)
+    await admin.query(
+      'INSERT INTO channel_custom_blacklists(id, channel_id, revision, configuration, created_by) VALUES ($1,$2,1,$3::jsonb,$4)',
+      [
+        randomUUID(),
+        f.channelId,
+        JSON.stringify({
+          schema_version: 1,
+          enabled: true,
+          rules: [
+            {
+              id: randomUUID(),
+              enabled: true,
+              pattern: 'abc',
+              match_type: 'WORD',
+              action: 'DELETE',
+            },
+          ],
+        }),
+        f.accountId,
+      ],
+    );
+  await admin.query(
+    'INSERT INTO monitoring_runs(id, channel_id, session_id, requested_by_account_id, credential_account_id) VALUES ($1,$2,$3,$4,$4)',
+    [f.runId, f.channelId, f.sessionId, f.accountId],
+  );
+  const payload = {
+    id: f.externalMessageId,
+    snippet: {
+      type: eventType,
+      textMessageDetails: { messageText: blacklisted ? 'abc' : 'hello viewer' },
+    },
+    ...(author === null ? {} : { authorDetails: { channelId: author } }),
+  };
+  await admin.query(
+    `INSERT INTO youtube_chat_observations(id, channel_id, session_id, first_observed_run_id, external_message_id, event_type, published_at, payload, payload_hash)
+    VALUES ($1,$2,$3,$4,$5,$6,clock_timestamp(),$7::jsonb,$8)`,
+    [
+      f.observationId,
+      f.channelId,
+      f.sessionId,
+      f.runId,
+      f.externalMessageId,
+      eventType,
+      JSON.stringify(payload),
+      createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+    ],
+  );
+  await admin.query(
+    `INSERT INTO youtube_chat_classifications(id, channel_id, session_id, observation_id, run_id, classifier_version, policy_version, outcome, primary_category, severity, reason_code, reason, signals)
+    VALUES ($1,$2,$3,$4,$5,'fixture-1','policy-1','ALLOW',NULL,0,'NO_RULE_MATCH','Baseline fixture.','[]'::jsonb)`,
+    [f.classificationId, f.channelId, f.sessionId, f.observationId, f.runId],
+  );
+  f.scope = {
+    channel_id: f.channelId,
+    session_id: f.sessionId,
+    run_id: f.runId,
+    observation_id: f.observationId,
+    classification_id: f.classificationId,
+  };
+  f.result = {
+    channel_id: f.channelId,
+    session_id: f.sessionId,
+    run_id: f.runId,
+    observation_id: f.observationId,
+    ...model,
+    status: 'SUCCEEDED',
+    rating: 2,
+    severity_score: score,
+    truncated: false,
+    inference_ms: 6,
+    error_code: null,
+    ...resultOverrides,
+  };
+  f.modelResultId = result
+    ? (await transaction(worker, (client) => new AiShadowStore().save(client, f.result))).id
+    : null;
+  return f;
+}
+const save = (f, overrides = {}) =>
+  transaction(worker, (client) =>
+    new AiActionDecisionStore().save(client, {
+      ...f.scope,
+      model_result_id: f.modelResultId,
+      ...overrides,
+    }),
+  );
+const actions = (record) => record.decision.plans.map((plan) => plan.action);
+async function counts(f, connection = admin) {
+  return (
+    await connection.query(
+      `SELECT
+    (SELECT count(*)::int FROM youtube_ai_action_decisions WHERE run_id=$1 AND observation_id=$2) AS decisions,
+    (SELECT count(*)::int FROM youtube_moderation_action_plans WHERE classification_id=$3) AS queued_plans,
+    (SELECT count(*)::int FROM live_events WHERE session_id=$4) AS events`,
+      [f.runId, f.observationId, f.classificationId, f.sessionId],
+    )
+  ).rows[0];
+}
+
+test('migration is repeatable and independent AI plans persist as audit only under worker permissions', async () => {
+  await migrate(admin);
+  for (const [score, expected] of [
+    [0.2, []],
+    [0.4, ['DELETE']],
+    [0.7, ['DELETE', 'TIMEOUT']],
+    [1, ['DELETE', 'BAN']],
+  ]) {
+    const f = await fixture({ score });
+    const stored = await save(f);
+    assert.equal(stored.reused, false);
+    assert.deepEqual(actions(stored), expected);
+    assert.equal(stored.model_result_id, f.modelResultId);
+    assert.equal(stored.decision.snapshot.settings_revision, 1);
+    assert.equal(stored.decision.context.external_message_id, f.externalMessageId);
+    assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+    const { reused, ...record } = stored;
+    assert.deepEqual(
+      await transaction(worker, (client) => new AiActionDecisionStore().find(client, f.scope)),
+      record,
+    );
+  }
+});
+
+test('SQL guards agree with planner precedence for every enabled-tier combination and endpoint thresholds', async () => {
+  for (let mask = 0; mask < 8; mask++) {
+    const f = await fixture({
+      score: 1,
+      configurationOverrides: {
+        delete: { enabled: Boolean(mask & 1), threshold: 0 },
+        timeout: { enabled: Boolean(mask & 2), threshold: 0.5, duration_seconds: 60 },
+        ban: { enabled: Boolean(mask & 4), threshold: 1 },
+      },
+    });
+    assert.deepEqual(
+      actions(await save(f)),
+      mask & 4 ? ['DELETE', 'BAN'] : mask & 2 ? ['DELETE', 'TIMEOUT'] : mask & 1 ? ['DELETE'] : [],
+    );
+  }
+  const zero = await fixture({
+    score: 0,
+    configurationOverrides: {
+      delete: { enabled: true, threshold: 0 },
+    },
+  });
+  assert.deepEqual(actions(await save(zero)), ['DELETE']);
+});
+
+test('find is scoped, normalizes UUID casing, and returns null for unrelated observations', async () => {
+  const f = await fixture();
+  const stored = await save(f);
+  const scope = Object.fromEntries(
+    Object.entries(f.scope).map(([key, value]) => [key, value.toUpperCase()]),
+  );
+  await transaction(worker, async (client) => {
+    const store = new AiActionDecisionStore();
+    assert.equal((await store.find(client, scope)).id, stored.id);
+    for (const key of ['channel_id', 'session_id', 'run_id', 'observation_id']) {
+      assert.equal(await store.find(client, { ...f.scope, [key]: randomUUID() }), null);
+    }
+  });
+});
+
+test('competing writers create one decision and return the identical persisted audit', async () => {
+  const f = await fixture();
+  const results = await Promise.allSettled(Array.from({ length: 4 }, () => save(f)));
+  for (const result of results) if (result.status === 'rejected') throw result.reason;
+  const values = results.map((result) => result.value);
+  assert.equal(new Set(values.map((value) => value.id)).size, 1);
+  assert.equal(values.filter((value) => !value.reused).length, 1);
+  for (const value of values) assert.deepEqual(value.decision, values[0].decision);
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+});
+
+test('replay survives settings edits and another supplied model reference without changing the first decision', async () => {
+  const f = await fixture();
+  const original = await save(f);
+  await admin.query(
+    'INSERT INTO channel_ai_moderation_settings(id, channel_id, revision, configuration, created_by) VALUES ($1,$2,2,$3::jsonb,$4)',
+    [
+      randomUUID(),
+      f.channelId,
+      JSON.stringify(configuration({ automatic_actions_enabled: false })),
+      f.accountId,
+    ],
+  );
+  const newer = await transaction(worker, (client) =>
+    new AiShadowStore().save(client, {
+      ...f.result,
+      model_revision: 'b'.repeat(40),
+      severity_score: 1,
+    }),
+  );
+  const replay = await save(f, { model_result_id: newer.id });
+  assert.equal(replay.reused, true);
+  assert.equal(replay.id, original.id);
+  assert.equal(replay.model_result_id, original.model_result_id);
+  assert.deepEqual(replay.decision, original.decision);
+  assert.deepEqual(actions(replay), ['DELETE', 'TIMEOUT']);
+});
+
+test('missing output is terminal for this audit and late inference does not replan it', async () => {
+  const f = await fixture({ result: false });
+  const original = await save(f);
+  assert.equal(original.decision.reason_code, 'OUTPUT_MISSING');
+  const late = await transaction(worker, (client) => new AiShadowStore().save(client, f.result));
+  const replay = await save(f, { model_result_id: late.id });
+  assert.equal(replay.id, original.id);
+  assert.equal(replay.model_result_id, null);
+  assert.deepEqual(actions(replay), []);
+});
+
+test('no policy, disabled enforcement, errors, truncation, and mismatched model identities persist no-action reasons', async () => {
+  for (const [options, reason] of [
+    [{ saved: false }, 'NO_SAVED_POLICY'],
+    [{ enabled: false }, 'AI_DISABLED'],
+    [
+      {
+        resultOverrides: {
+          status: 'ERROR',
+          rating: null,
+          severity_score: null,
+          truncated: null,
+          inference_ms: null,
+          error_code: 'INFERENCE_TIMEOUT',
+        },
+      },
+      'INFERENCE_ERROR',
+    ],
+    [{ resultOverrides: { truncated: true } }, 'INPUT_TRUNCATED'],
+    [{ resultOverrides: { adapter_version: 'other-adapter' } }, 'MODEL_MISMATCH'],
+  ]) {
+    const f = await fixture(options);
+    const stored = await save(f);
+    assert.equal(stored.decision.reason_code, reason);
+    assert.deepEqual(actions(stored), []);
+    assert.equal((await save(f)).id, stored.id);
+  }
+});
+
+test('captured blacklist is recomputed from observed text and suppresses AI plans', async () => {
+  const f = await fixture({ blacklisted: true, score: 1 });
+  const stored = await save(f);
+  assert.equal(stored.decision.reason_code, 'BLACKLIST_MATCH');
+  assert.ok(stored.blacklist.selected_rule_id);
+  assert.equal(stored.decision.model_output, null);
+  assert.deepEqual(actions(stored), []);
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+});
+
+test('missing author preserves deletion and explicit unavailable-target provenance', async () => {
+  const f = await fixture({ author: null });
+  const stored = await save(f);
+  assert.equal(stored.decision.author_action_status, 'TARGET_UNAVAILABLE');
+  assert.deepEqual(actions(stored), ['DELETE']);
+});
+
+test('substituted scopes, model IDs, non-text messages and injected decisions cannot be saved', async () => {
+  const f = await fixture();
+  const other = await fixture();
+  for (const [key, value] of Object.entries(other.scope)) {
+    await assert.rejects(save(f, { [key]: value }), /matching text observation/);
+  }
+  await assert.rejects(
+    save(f, { model_result_id: other.modelResultId }),
+    /Model result does not belong/,
+  );
+  await assert.rejects(save(f, { model_result_id: randomUUID() }), /Model result does not belong/);
+  await assert.rejects(
+    save(f, { decision: { action: 'BAN' } }),
+    (error) => error.name === 'ZodError',
+  );
+  const event = await fixture({ eventType: 'userBannedEvent' });
+  await assert.rejects(save(event), /matching text observation/);
+  assert.deepEqual(await counts(f), { decisions: 0, queued_plans: 0, events: 0 });
+});
+
+test('a different classification cannot replace the decision for the same observation', async () => {
+  const f = await fixture();
+  await save(f);
+  const classification = randomUUID();
+  await admin.query(
+    `INSERT INTO youtube_chat_classifications(id, channel_id, session_id, observation_id, run_id, classifier_version, policy_version, outcome, primary_category, severity, reason_code, reason, signals)
+    VALUES ($1,$2,$3,$4,$5,'fixture-2','policy-1','ALLOW',NULL,0,'NO_RULE_MATCH','Another classification.','[]'::jsonb)`,
+    [classification, f.channelId, f.sessionId, f.observationId, f.runId],
+  );
+  await assert.rejects(save(f, { classification_id: classification }), /another classification/);
+});
+
+test('caller rollback and caught insert failures leave no audit or queued plans', async () => {
+  const f = await fixture();
+  await assert.rejects(
+    transaction(worker, async (client) => {
+      await new AiActionDecisionStore().save(client, {
+        ...f.scope,
+        model_result_id: f.modelResultId,
+      });
+      throw new Error('Caller rollback');
+    }),
+    /Caller rollback/,
+  );
+  await transaction(worker, async (client) => {
+    const failingClient = {
+      query(text, parameters) {
+        if (text.startsWith('INSERT INTO youtube_ai_action_decisions'))
+          throw new Error('Injected insert failure');
+        return client.query(text, parameters);
+      },
+    };
+    await assert.rejects(
+      new AiActionDecisionStore().save(failingClient, {
+        ...f.scope,
+        model_result_id: f.modelResultId,
+      }),
+      /Injected insert failure/,
+    );
+    assert.deepEqual(await counts(f, client), { decisions: 0, queued_plans: 0, events: 0 });
+  });
+  assert.deepEqual(await counts(f), { decisions: 0, queued_plans: 0, events: 0 });
+  await assert.rejects(
+    new AiActionDecisionStore().save(worker, { ...f.scope, model_result_id: f.modelResultId }),
+    { code: '25P01' },
+  );
+});
+
+test('database and shared contracts reject forged thresholds, targets and snapshot provenance', async () => {
+  const f = await fixture();
+  const stored = await save(f);
+  for (const mutation of [
+    { ...stored.decision, selected_threshold: 0.5 },
+    { ...stored.decision, plans: stored.decision.plans.slice(0, 1) },
+    {
+      ...stored.decision,
+      context: { ...stored.decision.context, external_message_id: 'other-message' },
+    },
+    { ...stored.decision, snapshot: { ...stored.decision.snapshot, settings_revision: 99 } },
+    { ...stored.decision, model_output: { ...stored.decision.model_output, severity_score: 1 } },
+  ]) {
+    await assert.rejects(
+      admin.query(
+        `INSERT INTO youtube_ai_action_decisions(id, channel_id, session_id, run_id, observation_id, classification_id, model_result_id, decision, blacklist)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)`,
+        [
+          randomUUID(),
+          f.channelId,
+          f.sessionId,
+          f.runId,
+          f.observationId,
+          f.classificationId,
+          f.modelResultId,
+          JSON.stringify(mutation),
+          JSON.stringify(stored.blacklist),
+        ],
+      ),
+      { code: '23514' },
+    );
+  }
+  const { reused, ...record } = stored;
+  assert.equal(storedAiActionDecision.safeParse(record).success, true);
+  assert.equal(
+    storedAiActionDecision.safeParse({
+      ...record,
+      decision: { ...record.decision, selected_threshold: 0.5 },
+    }).success,
+    false,
+  );
+});
+
+test('runtime roles have least privilege and admin updates/deletes cannot rewrite audit history', async () => {
+  const f = await fixture();
+  const stored = await save(f);
+  assert.equal(
+    (await api.query('SELECT id FROM youtube_ai_action_decisions WHERE id=$1', [stored.id]))
+      .rowCount,
+    1,
+  );
+  for (const connection of [api, worker]) {
+    await assert.rejects(
+      connection.query('UPDATE youtube_ai_action_decisions SET decision=decision WHERE id=$1', [
+        stored.id,
+      ]),
+      { code: '42501' },
+    );
+    await assert.rejects(
+      connection.query('DELETE FROM youtube_ai_action_decisions WHERE id=$1', [stored.id]),
+      { code: '42501' },
+    );
+    await assert.rejects(connection.query('TRUNCATE youtube_ai_action_decisions'), {
+      code: '42501',
+    });
+  }
+  await assert.rejects(
+    api.query('INSERT INTO youtube_ai_action_decisions(id) VALUES ($1)', [randomUUID()]),
+    { code: '42501' },
+  );
+  await assert.rejects(
+    admin.query('UPDATE youtube_ai_action_decisions SET decision=decision WHERE id=$1', [
+      stored.id,
+    ]),
+    { code: '23514' },
+  );
+  await assert.rejects(
+    admin.query('DELETE FROM youtube_ai_action_decisions WHERE id=$1', [stored.id]),
+    { code: '23514' },
+  );
+  await assert.rejects(
+    admin.query('DELETE FROM youtube_ai_shadow_results WHERE id=$1', [stored.model_result_id]),
+    { code: '23503' },
+  );
+});

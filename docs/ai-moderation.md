@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Steps 1–5 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, authorized settings endpoints, dashboard controls, and a pure AI threshold planner. The planner is not connected to the worker or executors yet. Existing AI output remains shadow output and does not change moderation decisions.
+Steps 1–6 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, authorized settings endpoints, dashboard controls, a pure AI threshold planner, and immutable decision persistence with replay. The store is not connected to the worker loop or executors yet. Existing AI output remains shadow output and does not change moderation decisions.
 
 The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
 
@@ -24,7 +24,7 @@ The update contract requires `expected_revision`: zero for the first write, or t
 
 ## Planned decision flow
 
-The pure planner implements threshold selection below. Persistence and runtime dispatch of its decisions remain planned:
+The pure planner implements threshold selection below, and the decision store persists its audit. Runtime integration and dispatch remain planned:
 
 1. Check the captured custom blacklist first. A match uses the blacklist's action bundle and skips AI.
 2. For other messages, evaluate AI using the exact model identity and settings captured when the monitoring run starts.
@@ -146,4 +146,36 @@ npm run test:blacklist-action-planner
 npm run test:ai-moderation-contracts
 ```
 
-Planner tests cover boundaries, every tier switch combination, blacklist priority, scope and identity substitution, unavailable output/targets, independent action slots, and immutable replay. These checks require no database or YouTube quota. Step 6 will add validated persistence and replay of AI decisions. Worker consumption, executor integration, and arbitration with built-in rule actions remain later steps.
+Planner tests cover boundaries, every tier switch combination, blacklist priority, scope and identity substitution, unavailable output/targets, independent action slots, and immutable replay. These planner checks require no database or YouTube quota.
+
+## Immutable decision persistence
+
+Migration `025_youtube_ai_action_decisions.sql` adds `youtube_ai_action_decisions`, with one immutable decision per run and observation. Each row references the original classification and optional persisted model result. It contains the decision, captured settings, scoped model output when considered, and the recomputed blacklist audit. No historical decisions are backfilled and no existing classifications are rewritten.
+
+`AiActionDecisionStore.save(client, input)` requires a caller-owned transaction and only accepts run/channel/session/observation/classification IDs plus an explicit nullable `model_result_id`. It does not accept caller-provided targets, scores, snapshots, or decisions. It derives targets and text from the observation, loads both captured snapshots, recomputes the blacklist match, reads the referenced stored model result, and invokes the planner. Inference and provider calls do not run inside this transaction.
+
+An advisory transaction lock serializes writers for the same run and observation. The first saved decision wins; later saves return that row with `reused: true`, retaining the original model reference even if another reference is supplied. A different classification cannot replace the original decision. `find(client, scope)` reads and validates the stored audit without resolving a newer model output or running the planner again.
+
+Saving missing output creates a terminal no-action audit. A late model result cannot change it. Worker integration must therefore wait until inference finishes or reaches a terminal failure before saving, rather than treating an in-progress inference as missing output. Missing, disabled, mismatched, failed, truncated, and blacklist-priority cases retain explicit reason codes.
+
+Database guards check classification/observation/run/model scope, captured snapshot equality, observed targets, threshold selection, independent plan slots, and the exact decision payload. Updates and deletes are rejected. The store recomputes literal blacklist matches from captured configuration; SQL metadata validation alone is not proof of a text match or authorization to dispatch.
+
+Plans remain embedded audit data. This step inserts no rows into `youtube_moderation_action_plans`, creates no execution attempts, and publishes no Live event. Materializing executor-visible plans, enforcing provenance, arbitrating built-in actions, and showing decisions in the dashboard remain later steps. The worker role has SELECT/INSERT on the new audit table; the API role has SELECT only. Neither role can update, delete, or truncate it.
+
+Run these checks manually, using an admin-capable local `TEST_DATABASE_URL` for the isolated database suite:
+
+```powershell
+npm run format
+npm run check
+npm run build:core
+npm run build --workspace @moderator/worker
+npm run db:migrate
+npm run db:runtime
+npm run db:worker
+npm run test:ai-action-decision-store
+npm run test:ai-action-planner
+npm run test:ai-moderation-settings-store
+npm run test:blacklist-action-store
+```
+
+Apply the new migration before reprovisioning runtime permissions. Tests create and clean up temporary schemas/roles and exercise concurrent saves, immutable replay, scope substitution, malformed audit rejection, transaction rollback, database guards, restricted permissions, and absence of queued actions. No livestream, model inference, or YouTube quota is required. Step 7 connects decision persistence to the worker pipeline.
