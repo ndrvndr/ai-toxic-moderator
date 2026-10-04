@@ -13,6 +13,8 @@ const errorDescriptions: Record<AiShadowErrorCode, string> = {
   INFERENCE_TIMEOUT: 'Inference exceeded its deadline for this message.',
   INVALID_OUTPUT: 'The model response failed validation.',
   INPUT_TOO_LONG: 'This message exceeded the inference input limit.',
+  INPUT_EXPIRED:
+    'This message exceeded the two-minute AI queue age limit. No AI action was planned from this result.',
 };
 
 export function ChatAiShadow({ result }: { result?: AiShadowSummary | null }) {

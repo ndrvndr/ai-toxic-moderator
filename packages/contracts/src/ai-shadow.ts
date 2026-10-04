@@ -7,6 +7,7 @@ export const aiShadowErrorCode = z.enum([
   'INFERENCE_TIMEOUT',
   'INVALID_OUTPUT',
   'INPUT_TOO_LONG',
+  'INPUT_EXPIRED',
 ]);
 
 const identity = {

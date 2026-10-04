@@ -230,6 +230,7 @@ test('inference errors and truncated successful output cannot authorize actions'
     'INFERENCE_TIMEOUT',
     'INVALID_OUTPUT',
     'INPUT_TOO_LONG',
+    'INPUT_EXPIRED',
   ]) {
     const result = output(null, {
       status: 'ERROR',

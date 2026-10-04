@@ -26,8 +26,12 @@ export function inferenceErrorCode(outcome: unknown): AiOperationalErrorCode | n
     outcome.status !== 'ERROR'
   )
     return null;
-  // A single overlong input is not evidence that the model or pipeline is down.
-  if ('error_code' in outcome && outcome.error_code === 'INPUT_TOO_LONG') return null;
+  // Input exclusions do not establish a model or pipeline outage.
+  if (
+    'error_code' in outcome &&
+    ['INPUT_TOO_LONG', 'INPUT_EXPIRED'].includes(String(outcome.error_code))
+  )
+    return null;
   const parsed = aiOperationalErrorCode.safeParse(
     'error_code' in outcome ? outcome.error_code : undefined,
   );

@@ -80,6 +80,7 @@ export class AiOperationalStatusReader {
            AND result.model_id=$1 AND result.model_revision=$2
            AND result.model_variant=$3 AND result.adapter_version=$4
            AND result.error_code IS DISTINCT FROM 'INPUT_TOO_LONG'
+           AND result.error_code IS DISTINCT FROM 'INPUT_EXPIRED'
          ORDER BY result.created_at DESC,result.id DESC LIMIT 1
        ) inference ON true
        ORDER BY channels.channel_id,r.requested_at DESC,r.id DESC`,

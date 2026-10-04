@@ -1,5 +1,6 @@
 import { aiShadowIdentity, aiShadowResult, uuid } from '@moderator/contracts';
 
+import { expiredAiInput } from './ai-backlog-policy';
 import type { AiShadowCandidateReader } from './ai-shadow-candidate-reader';
 import type { AiShadowResultWriter } from './ai-shadow-result-writer';
 import type { AiShadowRunner } from './ai-shadow-runner';
@@ -27,7 +28,9 @@ export class AiShadowCoordinator {
 
       let output;
       try {
-        output = await this.runner.predict(identity, candidate.text);
+        output = candidate.expired
+          ? expiredAiInput(identity)
+          : await this.runner.predict(identity, candidate.text);
       } catch (error) {
         // Backpressure is not a terminal result for this observation.
         if (error instanceof Error && error.message === 'AI_ADAPTER_BUSY') {

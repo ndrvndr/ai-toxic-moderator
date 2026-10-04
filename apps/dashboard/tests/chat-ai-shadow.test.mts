@@ -140,6 +140,7 @@ describe('AI shadow presentation', () => {
     ['INFERENCE_TIMEOUT', /exceeded its deadline/],
     ['INVALID_OUTPUT', /response failed validation/],
     ['INPUT_TOO_LONG', /exceeded the inference input limit/],
+    ['INPUT_EXPIRED', /exceeded the two-minute AI queue age limit/],
   ];
   it.each(errors)('explains %s without a fabricated rating or score', (code, description) => {
     render(createElement(ChatAiShadow, { result: failure(code) }));

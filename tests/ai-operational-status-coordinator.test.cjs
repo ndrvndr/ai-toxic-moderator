@@ -322,6 +322,7 @@ test('safe fault mapping does not treat input length as model failure or leak ex
   assert.equal(operationalErrorCode({ code: '57P01', message: 'private' }), 'DATABASE_UNAVAILABLE');
   assert.equal(operationalErrorCode(new Error('private')), 'PIPELINE_FAILED');
   assert.equal(inferenceErrorCode({ status: 'ERROR', error_code: 'INPUT_TOO_LONG' }), null);
+  assert.equal(inferenceErrorCode({ status: 'ERROR', error_code: 'INPUT_EXPIRED' }), null);
   assert.equal(
     inferenceErrorCode({ status: 'ERROR', error_code: 'INFERENCE_TIMEOUT' }),
     'INFERENCE_TIMEOUT',

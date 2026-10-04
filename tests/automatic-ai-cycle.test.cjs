@@ -400,6 +400,9 @@ test('operational inference fault survives idle ticks until a successful result'
   outcome = { status: 'ERROR', error_code: 'INPUT_TOO_LONG' };
   await cycle.tick(signal());
   assert.equal(cycle.operationalState().fault.error_code, 'MODEL_UNAVAILABLE');
+  outcome = { status: 'ERROR', error_code: 'INPUT_EXPIRED' };
+  await cycle.tick(signal());
+  assert.equal(cycle.operationalState().fault.error_code, 'MODEL_UNAVAILABLE');
   outcome = { status: 'SUCCEEDED' };
   await cycle.tick(signal());
   assert.equal(cycle.operationalState().fault, null);

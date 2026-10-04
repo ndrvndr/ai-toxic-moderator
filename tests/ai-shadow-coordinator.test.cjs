@@ -60,7 +60,10 @@ test('blacklist candidates are skipped without starving the next message or invo
     {
       async query(_sql, values) {
         reads++;
-        assert.deepEqual(values.slice(5), reads === 1 ? [null, null] : [receivedAt, firstId]);
+        assert.deepEqual(
+          values.slice(5),
+          reads === 1 ? [null, null, 120000] : [receivedAt, firstId, 120000],
+        );
         return {
           rows: [
             {
@@ -69,6 +72,7 @@ test('blacklist candidates are skipped without starving the next message or invo
               observation_id: reads === 1 ? firstId : nextId,
               run_id: identity.run_id,
               text: reads === 1 ? 'abc' : 'Hello fixture',
+              expired: false,
               received_at: receivedAt,
               snapshot: enabledSnapshot,
             },
@@ -215,6 +219,7 @@ test('default, legacy and disabled saved snapshots retain normal AI selection', 
                 run_id: identity.run_id,
                 text: 'abc',
                 snapshot,
+                expired: false,
               },
             ],
           };
@@ -222,7 +227,7 @@ test('default, legacy and disabled saved snapshots retain normal AI selection', 
       },
       model,
     );
-    assert.deepEqual(await reader.next(identity.run_id), { identity, text: 'abc' });
+    assert.deepEqual(await reader.next(identity.run_id), { identity, text: 'abc', expired: false });
   }
 });
 const success = {
@@ -412,7 +417,7 @@ test('candidate reader binds run and model identity and rejects invalid run IDs 
     {
       async query(_sql, values) {
         queries++;
-        assert.deepEqual(values, [identity.run_id, ...Object.values(model), null, null]);
+        assert.deepEqual(values, [identity.run_id, ...Object.values(model), null, null, 120000]);
         return {
           rows: [
             {
@@ -422,6 +427,7 @@ test('candidate reader binds run and model identity and rejects invalid run IDs 
               run_id: identity.run_id,
               text: 'Hello fixture',
               snapshot: defaultSnapshot,
+              expired: false,
             },
           ],
         };
@@ -431,7 +437,11 @@ test('candidate reader binds run and model identity and rejects invalid run IDs 
   );
   await assert.rejects(reader.next('invalid'));
   assert.equal(queries, 0);
-  assert.deepEqual(await reader.next(identity.run_id), { identity, text: 'Hello fixture' });
+  assert.deepEqual(await reader.next(identity.run_id), {
+    identity,
+    text: 'Hello fixture',
+    expired: false,
+  });
 });
 
 test('writer commits or rolls back and always releases its connection', async () => {
@@ -439,6 +449,10 @@ test('writer commits or rolls back and always releases its connection', async ()
     const calls = [];
     const client = {
       async query(sql) {
+        if (sql.startsWith('SELECT clock_timestamp()')) {
+          calls.push('age');
+          return { rows: [{ expired: false }] };
+        }
         calls.push(sql);
       },
       release() {
@@ -478,14 +492,19 @@ test('writer commits or rolls back and always releases its connection', async ()
     assert.deepEqual(
       calls,
       fails
-        ? ['connect', 'BEGIN', 'save', 'ROLLBACK', 'release']
-        : ['connect', 'BEGIN', 'save', 'publish', 'COMMIT', 'release'],
+        ? ['connect', 'BEGIN', 'age', 'save', 'ROLLBACK', 'release']
+        : ['connect', 'BEGIN', 'age', 'save', 'publish', 'COMMIT', 'release'],
     );
   }
 });
 
 test('writer does not publish an event for an existing result', async () => {
-  const client = { async query() {}, release() {} };
+  const client = {
+    async query() {
+      return { rows: [{ expired: false }] };
+    },
+    release() {},
+  };
   const writer = new AiShadowResultWriter(
     {
       async connect() {
@@ -508,6 +527,10 @@ test('publication failure rolls back the result instead of committing an invisib
   const calls = [];
   const client = {
     async query(sql) {
+      if (sql.startsWith('SELECT clock_timestamp()')) {
+        calls.push('age');
+        return { rows: [{ expired: false }] };
+      }
       calls.push(sql);
     },
     release() {
@@ -530,5 +553,59 @@ test('publication failure rolls back the result instead of committing an invisib
     },
   );
   await assert.rejects(writer.save(success), /Publication failed/);
-  assert.deepEqual(calls, ['BEGIN', 'ROLLBACK', 'release']);
+  assert.deepEqual(calls, ['BEGIN', 'age', 'ROLLBACK', 'release']);
+});
+
+test('expired inputs are audited without invoking inference or fabricating a safe score', async () => {
+  const { coordinator, calls } = harness({
+    candidate: { identity, text: 'Hello fixture', expired: true },
+    save: async (result) => {
+      assert.equal(result.status, 'ERROR');
+      assert.equal(result.error_code, 'INPUT_EXPIRED');
+      assert.equal(result.rating, null);
+      assert.equal(result.severity_score, null);
+      return { result, inserted: true };
+    },
+  });
+  assert.equal((await coordinator.tick(identity.run_id, signal())).error_code, 'INPUT_EXPIRED');
+  assert.deepEqual(calls, ['read', 'save']);
+});
+
+test('writer drops a score that expires during inference and rejects unverifiable queue age', async () => {
+  for (const expired of [true, undefined]) {
+    const calls = [];
+    const client = {
+      async query(sql) {
+        if (sql.startsWith('SELECT clock_timestamp()'))
+          return { rows: expired === undefined ? [] : [{ expired }] };
+        calls.push(sql);
+      },
+      release() {},
+    };
+    const writer = new AiShadowResultWriter(
+      {
+        async connect() {
+          return client;
+        },
+      },
+      {
+        async save(_client, result) {
+          assert.equal(result.error_code, 'INPUT_EXPIRED');
+          assert.equal(result.rating, null);
+          calls.push('save');
+          return { result, inserted: true };
+        },
+      },
+      async () => {
+        calls.push('publish');
+      },
+    );
+    if (expired === undefined) {
+      await assert.rejects(writer.save(success), /age could not be verified/);
+      assert.deepEqual(calls, ['BEGIN', 'ROLLBACK']);
+    } else {
+      assert.equal((await writer.save(success)).result.status, 'ERROR');
+      assert.deepEqual(calls, ['BEGIN', 'save', 'publish', 'COMMIT']);
+    }
+  }
 });

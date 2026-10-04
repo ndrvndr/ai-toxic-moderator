@@ -196,7 +196,7 @@ async function fixture(configuration = null) {
   };
 }
 
-async function insertObservation(f, id = randomUUID(), snippet = {}) {
+async function insertObservation(f, id = randomUUID(), snippet = {}, ageSeconds = 0) {
   const payload = {
     authorDetails: { channelId: 'test-viewer-channel' },
     snippet: {
@@ -223,7 +223,8 @@ async function insertObservation(f, id = randomUUID(), snippet = {}) {
         event_type,
         published_at,
         payload,
-        payload_hash
+        payload_hash,
+        received_at
       )
       VALUES(
         $1,
@@ -234,7 +235,8 @@ async function insertObservation(f, id = randomUUID(), snippet = {}) {
         $8,
         clock_timestamp(),
         $6::jsonb,
-        $7
+        $7,
+        clock_timestamp() - $9::double precision * interval '1 second'
       )
     `,
     [
@@ -246,11 +248,121 @@ async function insertObservation(f, id = randomUUID(), snippet = {}) {
       serialized,
       payloadHash,
       payload.snippet.type,
+      ageSeconds,
     ],
   );
 
   return id;
 }
+
+test('expired AI queue entries persist once and allow the next fresh entry to reach inference', async () => {
+  const { AiShadowCandidateReader } = source(
+    'apps/worker/src/ingestion/ai-shadow-candidate-reader.ts',
+  );
+  const { AiShadowCoordinator } = source('apps/worker/src/ingestion/ai-shadow-coordinator.ts');
+  const { AiShadowResultWriter } = source('apps/worker/src/ingestion/ai-shadow-result-writer.ts');
+  const f = await fixture();
+  const staleId = await insertObservation(f, randomUUID(), {}, 121);
+  const freshId = await insertObservation(f, randomUUID(), {}, 119);
+  const pool = new Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+    options: `-c search_path=${schema}`,
+  });
+  const model = {
+    model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
+    model_revision: 'a'.repeat(40),
+    model_variant: 'INT8',
+    adapter_version: 'laskar-shadow-1',
+  };
+  const reader = new AiShadowCandidateReader(pool, model);
+  const writer = new AiShadowResultWriter(pool);
+  const inferred = [];
+  const signal = new AbortController().signal;
+  const coordinator = new AiShadowCoordinator(
+    reader,
+    {
+      async predict(identity) {
+        inferred.push(identity.observation_id);
+        return {
+          ...identity,
+          status: 'SUCCEEDED',
+          rating: 2,
+          severity_score: 0.56,
+          truncated: false,
+          inference_ms: 5,
+          error_code: null,
+        };
+      },
+    },
+    writer,
+  );
+  try {
+    assert.equal((await reader.next(f.runId)).expired, true);
+    assert.equal((await coordinator.tick(f.runId, signal)).error_code, 'INPUT_EXPIRED');
+    assert.deepEqual(inferred, []);
+    const expiry = (
+      await client.query('SELECT * FROM youtube_ai_shadow_results WHERE observation_id=$1', [
+        staleId,
+      ])
+    ).rows[0];
+    assert.equal(expiry.status, 'ERROR');
+    assert.equal(expiry.rating, null);
+    assert.equal(expiry.severity_score, null);
+    assert.equal((await coordinator.tick(f.runId, signal)).status, 'SUCCEEDED');
+    assert.deepEqual(inferred, [freshId]);
+    const restarted = new AiShadowCoordinator(
+      new AiShadowCandidateReader(pool, model),
+      {
+        predict() {
+          assert.fail('Already processed');
+        },
+      },
+      new AiShadowResultWriter(pool),
+    );
+    assert.equal((await restarted.tick(f.runId, signal)).kind, 'IDLE');
+    assert.equal(
+      (await client.query('SELECT sequence FROM live_events WHERE run_id=$1', [f.runId])).rowCount,
+      2,
+    );
+    const identity = {
+      channel_id: f.channelId,
+      session_id: f.sessionId,
+      observation_id: staleId,
+      run_id: f.runId,
+      ...model,
+    };
+    const replay = await writer.save({
+      ...identity,
+      status: 'SUCCEEDED',
+      rating: 4,
+      severity_score: 1,
+      truncated: false,
+      inference_ms: 5,
+      error_code: null,
+    });
+    assert.equal(replay.inserted, false);
+    assert.equal(replay.result.error_code, 'INPUT_EXPIRED');
+    assert.equal(
+      (await client.query('SELECT sequence FROM live_events WHERE run_id=$1', [f.runId])).rowCount,
+      2,
+    );
+    // Simulate a score returning after its candidate passed the freshness check.
+    const delayed = await writer.save({
+      ...identity,
+      model_revision: 'b'.repeat(40),
+      status: 'SUCCEEDED',
+      rating: 4,
+      severity_score: 1,
+      truncated: false,
+      inference_ms: 5,
+      error_code: null,
+    });
+    assert.equal(delayed.result.error_code, 'INPUT_EXPIRED');
+    assert.equal(delayed.result.severity_score, null);
+  } finally {
+    await pool.end();
+  }
+});
 
 async function insertShadow(f, observationId, overrides = {}) {
   const row = {

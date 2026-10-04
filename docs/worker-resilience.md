@@ -36,14 +36,41 @@ Regression tests cover cooldown boundaries, repeated failed probes, successful
 recovery, overlapping probe rejection, coordinator deferral without writes,
 shutdown, and failed child termination. They use simulated child processes.
 
-1. Define a small, explicit backlog policy for the portfolio workload. Current
-   selection processes one candidate at a time, but there is no maximum pending
-   age or queue-size policy. Establish how delayed messages are handled before
-   introducing a limit; a skipped message must never be reported as safe.
-2. Verify worker restart and slow/failing inference with focused regression tests
+The AI queue age policy was implemented on October 5, 2026:
+
+- Inputs expire at an age of 120 seconds or more, measured from local
+  `received_at` using the PostgreSQL clock. This measures queue delay, not the
+  age of the original YouTube message.
+- Expired candidates bypass inference. Successful inference output is checked
+  again after acquiring the persistence connection; expired output is stored
+  as `ERROR / INPUT_EXPIRED`, with no rating or severity score.
+- The terminal result and `chat.updated` event commit atomically. Restart and
+  replay reuse the stored result without duplicate notifications.
+- AI action planning treats this result as `INFERENCE_ERROR` and creates no
+  AI actions. Live and History explain the expiry. Input expiry alone does not
+  mark the model as unavailable or clear an existing inference outage.
+- Existing blacklist/rule actions and previously stored results are retained.
+  This does not cancel previously planned provider actions or expire them at
+  dispatch time.
+
+The runner still processes one input at a time. The database backlog has no
+count cap or retention deletion; expired inputs are audited in queue order.
+This is a freshness safeguard for the portfolio workload, not a throughput
+guarantee or an automatic purge of historical chat.
+
+Apply migration `027_youtube_ai_input_expiry.sql` before starting the updated
+worker or API. No new environment setting is required.
+
+Verification covered 79 focused unit tests, 13 shadow database tests, 21 automatic
+AI integration tests, 27 action-decision persistence tests, and 211 dashboard
+tests. All passed without skipped tests. Source typechecking, formatting, and
+core/API/worker/dashboard builds also passed. Database tests used isolated test
+schemas, not the application's live schema; its migration must still be applied.
+
+1. Verify worker restart and slow/failing inference with focused regression tests
    after those changes. Preserve checkpoint recovery, run-snapshot checks,
    publication idempotency, and the prohibition on uncertain-action retries.
-3. Record a manual browser E2E restart test, including chat continuity, operational
+2. Record a manual browser E2E restart test, including chat continuity, operational
    status, and absence of duplicate provider actions. This has not been performed
    as part of the initial audit.
 

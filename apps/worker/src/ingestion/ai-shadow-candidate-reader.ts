@@ -6,12 +6,13 @@ import {
 } from '@moderator/contracts';
 import { CustomBlacklistMatcher } from '@moderator/moderation-core';
 import type { createPool } from '@moderator/persistence';
+import { AI_MAX_QUEUE_AGE_MS } from './ai-backlog-policy';
 
 export type AiShadowModel = Pick<
   AiShadowIdentity,
   'model_id' | 'model_revision' | 'model_variant' | 'adapter_version'
 >;
-export type AiShadowCandidate = { identity: AiShadowIdentity; text: string };
+export type AiShadowCandidate = { identity: AiShadowIdentity; text: string; expired: boolean };
 
 const modelSchema = aiShadowIdentity.pick({
   model_id: true,
@@ -43,6 +44,7 @@ export class AiShadowCandidateReader {
         text: string;
         snapshot: unknown;
         received_at: string;
+        expired: boolean;
       }>(
         `SELECT o.channel_id, o.session_id, o.id AS observation_id,
                 o.first_observed_run_id AS run_id,
@@ -51,6 +53,7 @@ export class AiShadowCandidateReader {
                   o.payload #>> '{snippet,displayMessage}'
                 ) AS text,
                 o.received_at::text AS received_at,
+                (clock_timestamp() - o.received_at >= $8::double precision * interval '1 millisecond') AS expired,
                 CASE WHEN captured.run_id IS NOT NULL THEN jsonb_build_object(
                   'run_id', captured.run_id, 'channel_id', captured.channel_id,
                   'blacklist_id', captured.blacklist_id, 'blacklist_revision', captured.blacklist_revision,
@@ -98,6 +101,7 @@ export class AiShadowCandidateReader {
           this.model.adapter_version,
           after?.receivedAt ?? null,
           after?.id ?? null,
+          AI_MAX_QUEUE_AGE_MS,
         ],
       );
       if (result.rows.length === 0) return null;
@@ -132,7 +136,8 @@ export class AiShadowCandidateReader {
           after = next;
           continue;
         }
-        return { identity, text: row.text };
+        if (typeof row.expired !== 'boolean') throw new Error('Invalid AI queue age.');
+        return { identity, text: row.text, expired: row.expired };
       }
     }
   }

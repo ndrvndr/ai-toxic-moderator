@@ -70,6 +70,7 @@ test('cycle scopes selection and persists terminal output using the configured r
     observation_id: '30000000-0000-4000-8000-000000000003',
     run_id: runId,
     text: 'Hello fixture',
+    expired: false,
     snapshot: {
       run_id: runId,
       channel_id: '10000000-0000-4000-8000-000000000001',
@@ -92,6 +93,7 @@ test('cycle scopes selection and persists terminal output using the configured r
         'laskar-shadow-1',
         null,
         null,
+        120000,
       ]);
       return { rows: persisted ? [] : [row] };
     },

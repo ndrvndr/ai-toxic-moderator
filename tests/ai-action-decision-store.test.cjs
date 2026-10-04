@@ -877,6 +877,19 @@ test('no policy, disabled enforcement, errors, truncation, and mismatched model 
           severity_score: null,
           truncated: null,
           inference_ms: null,
+          error_code: 'INPUT_EXPIRED',
+        },
+      },
+      'INFERENCE_ERROR',
+    ],
+    [
+      {
+        resultOverrides: {
+          status: 'ERROR',
+          rating: null,
+          severity_score: null,
+          truncated: null,
+          inference_ms: null,
           error_code: 'INFERENCE_TIMEOUT',
         },
       },
