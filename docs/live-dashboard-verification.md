@@ -225,3 +225,17 @@ advancing persisted heartbeats, but did not independently observe the final
 browser scenarios. See [AI operational status](ai-operational-status.md#step-7-reported-local-browser-verification)
 for the checklist results and limits. No real quota exhaustion or new moderation
 execution is claimed by this verification.
+
+## Worker Resilience Restart Verification
+
+On October 5, 2026 (Asia/Jakarta), the developer reported that the supplied
+livestream worker-restart procedure passed. It covered stale operational status
+after stopping only the worker, recovery to `ACTIVE`, ingestion and AI output
+for a new message without refreshing, preservation of the prior message, History,
+and monitoring stop. The assistant did not independently execute this browser
+check, and no run/session identifiers or screenshots accompanied the report.
+
+The procedure used disabled moderation executor switches. It does not establish
+real-provider duplicate-action prevention, recovery from hard termination or a
+real ONNX crash, or high-volume throughput. See the [worker resilience report](worker-resilience.md)
+for automated coverage and the repeatable manual procedure.

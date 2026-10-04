@@ -444,9 +444,11 @@ See [YouTube ingestion](docs/youtube-ingestion.md) for the verification scope.
 
 ## Next steps
 
-Next, develop and evaluate the AI classification stage (phase 8), including model
-selection, an evaluation dataset, inference integration, and policy safeguards.
-The initial scope and dataset design are in the [AI classification plan](docs/ai-classification-plan.md).
+Next, improve dashboard readability through the planned design revamp. AI
+inference, settings-driven action planning, operational status, and the scoped
+[worker resilience work](docs/worker-resilience.md) are implemented. AI quality
+evaluation remains deferred until after the design revamp; the initial dataset
+design is in the [AI classification plan](docs/ai-classification-plan.md).
 Integration/connection settings, remaining browser acceptance checks, and
 production security/deployment verification remain separate work.
 

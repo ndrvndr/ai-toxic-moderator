@@ -84,10 +84,12 @@ The automatic AI integration suite passed all 24 tests. Existing execution-store
 tests separately cover uncertain provider outcomes remaining blocked after
 restart; ingestion integration tests cover checkpoint and lease recovery.
 
-## Manual browser restart check — pending
+## Manual browser restart check — reported passed
 
-Keep this verification separate from the simulated database tests above. Do not
-record it as passed until the browser and real worker behavior have been observed.
+On October 5, 2026 (Asia/Jakarta), the developer confirmed the supplied manual
+restart procedure passed by reporting "aman lanjut". This is developer-reported
+evidence; the assistant did not independently observe the browser or real worker.
+The procedure is retained below for repeat verification.
 
 1. Apply the new migration with `npm run db:migrate`. Keep API, dashboard, and
    worker builds current. Start API and dashboard in separate terminals.
@@ -121,8 +123,17 @@ real native-model crashes, high-volume throughput, and real-provider uncertain
 responses are not established by it. No API or Google secrets should be included
 in the report.
 
-Manual result: **pending**. Real-provider duplicate-action testing is separate;
-executor switches are disabled in this procedure.
+Manual result: **developer-reported passed**. The supplied scenario covered stale
+operational status after worker shutdown, return to `ACTIVE` after restart,
+message B and its AI output appearing without refresh, preservation of message A,
+History, and monitoring stop. No run/session IDs, screenshots, or database output
+were supplied with this confirmation. Real-provider duplicate-action testing is
+separate; executor switches are disabled in this procedure.
+
+The planned portfolio worker-resilience scope is complete: initial audit,
+bounded inference recovery, input freshness policy, integrated recovery tests,
+and developer-reported graceful browser restart verification. The unverified
+failure modes described above remain outside this completion claim.
 
 AI quality evaluation remains deferred until after the design revamp. This
 resilience work does not change model scores or moderation thresholds.
