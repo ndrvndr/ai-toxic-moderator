@@ -461,6 +461,7 @@ readiness.
 
 ## Documentation
 
+- [Worker resilience audit](docs/worker-resilience.md)
 - [AI classification plan](docs/ai-classification-plan.md)
 - [Development sessions](docs/dev-session-access.md)
 - [Google OAuth setup](docs/google-oauth.md)
