@@ -67,12 +67,62 @@ tests. All passed without skipped tests. Source typechecking, formatting, and
 core/API/worker/dashboard builds also passed. Database tests used isolated test
 schemas, not the application's live schema; its migration must still be applied.
 
-1. Verify worker restart and slow/failing inference with focused regression tests
-   after those changes. Preserve checkpoint recovery, run-snapshot checks,
-   publication idempotency, and the prohibition on uncertain-action retries.
-2. Record a manual browser E2E restart test, including chat continuity, operational
-   status, and absence of duplicate provider actions. This has not been performed
-   as part of the initial audit.
+## Integrated recovery verification
+
+On October 5, 2026, the automatic AI integration suite added three scenarios
+using the real `AiShadowRunner`, persisted run snapshots, restricted worker
+permissions, and isolated PostgreSQL schemas. Child IPC and native crashes are
+simulated; these tests do not launch ONNX or send YouTube requests.
+
+| Scenario                                      | Verified outcome                                                                                                                                                                                                                                                                                |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Three crashes, cooldown, expiry, and recovery | Waiting fresh inputs produce no cooldown error records. An expired input produces an audit with no AI plans. One probe restores processing and operational status. Restart creates no additional model process, result, plan, or update for completed work; the event cursor remains unchanged. |
+| Slow inference followed by restart            | The deadline terminates the simulated child and stores `INFERENCE_TIMEOUT` without AI plans. Restart preserves that error, then processes only a new message.                                                                                                                                   |
+| Shutdown during inference                     | Cancellation and runner disposal leave no partial result, audit, plan, or event. A replacement pipeline processes the pending observation once; a subsequent tick does not duplicate its updates.                                                                                               |
+
+The automatic AI integration suite passed all 24 tests. Existing execution-store
+tests separately cover uncertain provider outcomes remaining blocked after
+restart; ingestion integration tests cover checkpoint and lease recovery.
+
+## Manual browser restart check — pending
+
+Keep this verification separate from the simulated database tests above. Do not
+record it as passed until the browser and real worker behavior have been observed.
+
+1. Apply the new migration with `npm run db:migrate`. Keep API, dashboard, and
+   worker builds current. Start API and dashboard in separate terminals.
+2. For this recovery check, set `WORKER_ENABLED=true` and
+   `AI_AUTOMATIC_ENABLED=true`, with the cached model's matching revision.
+   Set `YOUTUBE_DELETE_ENABLED=false` and `YOUTUBE_BAN_ENABLED=false` before
+   starting the worker. This check does not require real moderation actions.
+3. Enable AI in Moderation Settings using the matching model identity. Start one
+   livestream and one monitoring run, then start `npm run dev:worker`. Confirm
+   the run is `RUNNING`, operational status is `ACTIVE`, and Live updates connect.
+   Keep Settings unchanged during this check so the captured run policy is stable.
+4. Send a unique safe message such as `Recovery check A`. Wait for its stored AI
+   result. Record its observation ID from the chat API, model result, current
+   run/session IDs, and WebSocket cursor. Keep DevTools Network open.
+5. Stop only the worker with `Ctrl+C`, leaving monitoring, API, and dashboard
+   running. Wait 35–40 seconds for operational status to become stale. The
+   dashboard's WebSocket can remain connected because the API is still running;
+   worker shutdown does not imply WebSocket disconnection.
+6. Restart `npm run dev:worker`, keeping the same monitoring run. Confirm
+   heartbeat resumes and operational status becomes `ACTIVE`. Send
+   `Recovery check B`; confirm ingestion resumes and the new AI result appears
+   without refreshing the page. A new observation for A, a changed stored result
+   for A, or a replay-triggered duplicate action would be a failure. Cursor
+   increases alone are not a duplicate: lifecycle or new-chat events may be valid.
+7. Verify History retains both messages, then stop monitoring and confirm
+   `STOPPED`. Record the observed run/session IDs and results below. Restore your
+   intended executor switches before a separate moderation-execution test.
+
+This procedure checks a graceful worker restart. Hard process termination,
+real native-model crashes, high-volume throughput, and real-provider uncertain
+responses are not established by it. No API or Google secrets should be included
+in the report.
+
+Manual result: **pending**. Real-provider duplicate-action testing is separate;
+executor switches are disabled in this procedure.
 
 AI quality evaluation remains deferred until after the design revamp. This
 resilience work does not change model scores or moderation thresholds.

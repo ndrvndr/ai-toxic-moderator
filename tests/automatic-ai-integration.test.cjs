@@ -2,9 +2,11 @@ const { before, after, afterEach, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID, createHash } = require('node:crypto');
 const { Client, Pool } = require('pg');
+const { EventEmitter } = require('node:events');
 const { source } = require('./helpers/source.cjs');
 const { AutomaticAiRunReader } = source('apps/worker/src/ingestion/automatic-ai-run-reader.ts');
 const { createAutomaticAiCycle } = source('apps/worker/src/ingestion/automatic-ai-cycle.ts');
+const { AiShadowRunner } = source('apps/worker/src/ingestion/ai-shadow-runner.ts');
 const { DeleteExecutionStore } = source('apps/worker/src/ingestion/delete-execution-store.ts');
 const { BanExecutionStore } = source('apps/worker/src/ingestion/ban-execution-store.ts');
 const { DeleteEligibilityStore } = source('apps/worker/src/ingestion/delete-eligibility-store.ts');
@@ -227,7 +229,10 @@ async function classify(f) {
   );
 }
 
-async function observe(f, { baseline = true, text = 'Local AI fixture text' } = {}) {
+async function observe(
+  f,
+  { baseline = true, text = 'Local AI fixture text', ageSeconds = 0 } = {},
+) {
   const observed = {
     ...f,
     observationId: randomUUID(),
@@ -241,8 +246,8 @@ async function observe(f, { baseline = true, text = 'Local AI fixture text' } = 
   };
   await admin.query(
     `INSERT INTO youtube_chat_observations
-    (id,channel_id,session_id,first_observed_run_id,external_message_id,event_type,published_at,payload,payload_hash)
-    VALUES($1,$2,$3,$4,$5,'textMessageEvent',clock_timestamp(),$6::jsonb,$7)`,
+    (id,channel_id,session_id,first_observed_run_id,external_message_id,event_type,published_at,payload,payload_hash,received_at)
+    VALUES($1,$2,$3,$4,$5,'textMessageEvent',clock_timestamp(),$6::jsonb,$7,clock_timestamp()-$8::double precision*interval '1 second')`,
     [
       observed.observationId,
       f.channelId,
@@ -251,11 +256,172 @@ async function observe(f, { baseline = true, text = 'Local AI fixture text' } = 
       observed.externalMessageId,
       JSON.stringify(payload),
       createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+      ageSeconds,
     ],
   );
   if (baseline) await classify(observed);
   return observed;
 }
+
+// Exercise the real runner/IPC boundary without loading a model or contacting YouTube.
+class RecoveryChild extends EventEmitter {
+  exitCode = null;
+  signalCode = null;
+  kills = 0;
+  constructor(mode, onPredict = () => {}) {
+    super();
+    this.mode = mode;
+    this.onPredict = onPredict;
+  }
+  send(payload, callback) {
+    callback?.(null);
+    queueMicrotask(() => {
+      if (payload.type === 'init')
+        this.emit('message', { type: 'ready', revision: payload.revision });
+      else {
+        this.onPredict(payload);
+        if (this.mode === 'crash') {
+          this.signalCode = 'SIGSEGV';
+          this.emit('exit', null, 'SIGSEGV');
+        } else if (this.mode === 'success')
+          this.emit('message', {
+            type: 'result',
+            request_id: payload.request_id,
+            result: {
+              ...payload.identity,
+              status: 'SUCCEEDED',
+              rating: 2,
+              severity_score: 0.75,
+              truncated: false,
+              inference_ms: 1,
+              error_code: null,
+            },
+          });
+      }
+    });
+  }
+  kill() {
+    this.kills++;
+    this.signalCode = 'SIGKILL';
+    this.emit('exit', null, 'SIGKILL');
+    return true;
+  }
+}
+
+function recoveryHarness(mode, onPredict = () => {}) {
+  const h = { now: 0, children: [] };
+  h.cycle = createAutomaticAiCycle(
+    {
+      AI_AUTOMATIC_ENABLED: true,
+      AI_SHADOW_MODEL_REVISION: model.model_revision,
+      AI_SHADOW_CACHE_DIRECTORY: '.cache/test-fixture-unused',
+      AI_SHADOW_STARTUP_TIMEOUT_MS: 1000,
+      AI_SHADOW_INFERENCE_TIMEOUT_MS: 20,
+    },
+    worker,
+    (options) =>
+      new AiShadowRunner(
+        options,
+        () => {
+          const child = new RecoveryChild(mode(h.children.length), onPredict);
+          h.children.push(child);
+          return child;
+        },
+        () => h.now,
+      ),
+  );
+  cycles.push(h.cycle);
+  return h;
+}
+
+test('real runner cooldown recovers a fresh backlog, audits expiry and replays after restart without duplicates', async () => {
+  const f = await fixture();
+  const h = recoveryHarness((index) => (index < 3 ? 'crash' : 'success'));
+  const monitor = statusHarness(h.cycle);
+  for (let i = 0; i < 3; i++) {
+    await observe(f);
+    await h.cycle.tick(signal());
+  }
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).error_code, 'INFERENCE_FAILED');
+  const stale = await observe(f, { ageSeconds: 121 });
+  await h.cycle.tick(signal());
+  assert.equal((await decision(stale)).model_output.error_code, 'INPUT_EXPIRED');
+  assert.equal((await decision(stale)).selected_tier, null);
+  const fresh = await observe(f);
+  const before = await counts(f);
+  for (let i = 0; i < 3; i++) await h.cycle.tick(signal());
+  assert.deepEqual(await counts(f), before);
+  assert.equal(h.children.length, 3);
+  assert.equal(h.cycle.operationalState().fault.error_code, 'INFERENCE_FAILED');
+  h.now = 30_000;
+  await h.cycle.tick(signal());
+  await monitor.status.tick(signal());
+  assert.equal(h.children.length, 4);
+  assert.equal((await storedStatus(f)).status, 'ACTIVE');
+  assert.equal((await storedStatus(f)).error_code, null);
+  assert.equal((await decision(fresh)).selected_tier, 'TIMEOUT');
+  assert.deepEqual(await counts(f), { results: 5, decisions: 5, plans: 2, events: 11 });
+  await h.cycle.dispose();
+  assert.equal(h.children[3].kills, 1);
+  const restarted = recoveryHarness(() => 'success');
+  await restarted.cycle.tick(signal());
+  assert.equal(restarted.children.length, 0);
+  assert.deepEqual(await counts(f), { results: 5, decisions: 5, plans: 2, events: 11 });
+  const feed = await transaction(worker, (client) =>
+    readLiveEvents(client, { channelId: f.channelId, sessionId: f.sessionId, after: '0' }),
+  );
+  assert.equal(feed.watermark, '11');
+  assert.deepEqual(
+    feed.items.map((item) => item.sequence),
+    Array.from({ length: 11 }, (_, index) => String(index + 1)),
+  );
+});
+
+test('slow native inference records timeout without plans and restart processes only new work', async () => {
+  const f = await observe(await fixture());
+  const h = recoveryHarness(() => 'hang');
+  await h.cycle.tick(signal());
+  assert.equal((await decision(f)).model_output.error_code, 'INFERENCE_TIMEOUT');
+  assert.deepEqual(await counts(f), { results: 1, decisions: 1, plans: 0, events: 2 });
+  assert.equal(h.children[0].kills, 1);
+  await h.cycle.dispose();
+  const restarted = recoveryHarness(() => 'success');
+  await restarted.cycle.tick(signal());
+  assert.equal(restarted.children.length, 0);
+  const fresh = await observe(f);
+  await restarted.cycle.tick(signal());
+  assert.equal(restarted.children.length, 1);
+  assert.equal((await decision(f)).model_output.error_code, 'INFERENCE_TIMEOUT');
+  assert.equal((await decision(fresh)).selected_tier, 'TIMEOUT');
+  assert.deepEqual(await counts(f), { results: 2, decisions: 2, plans: 2, events: 5 });
+});
+
+test('shutdown during native inference leaves work recoverable without a partial result or update', async () => {
+  const f = await observe(await fixture());
+  let started;
+  const predicting = new Promise((resolve) => {
+    started = resolve;
+  });
+  const h = recoveryHarness(
+    () => 'hang',
+    () => started(),
+  );
+  const controller = new AbortController();
+  const pending = h.cycle.tick(controller.signal);
+  await predicting;
+  controller.abort();
+  await h.cycle.dispose();
+  await pending;
+  assert.equal(h.children[0].kills, 1);
+  assert.deepEqual(await counts(f), { results: 0, decisions: 0, plans: 0, events: 0 });
+  const restarted = recoveryHarness(() => 'success');
+  await restarted.cycle.tick(signal());
+  assert.equal(restarted.children.length, 1);
+  assert.deepEqual(await counts(f), { results: 1, decisions: 1, plans: 2, events: 3 });
+  await restarted.cycle.tick(signal());
+  assert.deepEqual(await counts(f), { results: 1, decisions: 1, plans: 2, events: 3 });
+});
 
 function harness({ pool = worker, score = 0.75, output = {}, predict } = {}) {
   const h = { calls: [], constructions: 0, disposals: 0, statuses: [] };
