@@ -22,6 +22,7 @@
     "test:ai-shadow-runner": "node --experimental-test-isolation=none --test tests/ai-shadow-runner.test.cjs",
     "test:laskar-shadow-adapter": "node --experimental-test-isolation=none --test tests/laskar-shadow-adapter.test.cjs",
     "test:ai-shadow-store": "node --experimental-test-isolation=none --test tests/ai-shadow-store.test.cjs",
+    "test:ai-moderation-contracts": "node --experimental-test-isolation=none --test tests/ai-moderation-contracts.test.cjs",
     "test:ai-shadow-contracts": "node --experimental-test-isolation=none --test tests/ai-shadow-contracts.test.cjs",
     "test:ai-shadow-schema": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/ai-shadow-schema.test.cjs",
     "build": "node scripts/build.mjs",
