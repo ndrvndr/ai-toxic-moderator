@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Steps 1–2 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, and persistence tests. Settings endpoints, dashboard controls, and AI action dispatch are not implemented yet. Existing AI output remains shadow output and does not change moderation decisions.
+Steps 1–3 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, and authorized settings endpoints. Dashboard controls and AI action dispatch are not implemented yet. Existing AI output remains shadow output and does not change moderation decisions.
 
 The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
 
@@ -24,7 +24,7 @@ The update contract requires `expected_revision`: zero for the first write, or t
 
 ## Planned decision flow
 
-The following behavior is planned; this contract step does not implement it:
+The following behavior is planned; settings persistence and endpoints do not implement AI action planning or dispatch:
 
 1. Check the captured custom blacklist first. A match uses the blacklist's action bundle and skips AI.
 2. For other messages, evaluate AI using the exact model identity and settings captured when the monitoring run starts.
@@ -45,14 +45,17 @@ Run the checks manually, using a local admin-capable `TEST_DATABASE_URL` for per
 npm run format
 npm run check
 npm run build:core
+npm run build --workspace @moderator/api
 npm run db:migrate
 npm run db:runtime
 npm run db:worker
 npm run test:ai-moderation-contracts
 npm run test:ai-moderation-settings-store
+npm run test:ai-moderation-settings-http
 npm run test:ai-shadow-contracts
 npm run test:moderation-settings-contracts
 npm run test:custom-blacklist-store
+npm run test:custom-blacklist-http
 npm run test:monitoring-start
 ```
 
@@ -60,7 +63,7 @@ These tests require neither a livestream nor YouTube quota. Migration `024_ai_mo
 
 ## Persistence and snapshots
 
-`channel_ai_moderation_settings` stores consecutive immutable revisions per channel. `AiModerationSettingsStore` validates inputs, normalizes UUIDs, takes a per-channel transaction lock, rechecks the caller's authorization callback, and compares `expected_revision` before inserting. Conflicting writes return `AiModerationSettingsConflict` with the current revision. The caller must authorize reads; no public endpoint is exposed by this step.
+`channel_ai_moderation_settings` stores consecutive immutable revisions per channel. `AiModerationSettingsStore` validates inputs, normalizes UUIDs, takes a per-channel transaction lock, rechecks the caller's authorization callback, and compares `expected_revision` before inserting. Conflicting writes return `AiModerationSettingsConflict` with the current revision. The settings service authorizes reads and maps write conflicts to the public error contract.
 
 An insert trigger captures the latest committed settings visible during run creation in `monitoring_ai_settings_snapshots`. It runs in the same transaction as `monitoring_runs`, so a failed run creation also rolls back its snapshot. Existing runs keep their captured revision after settings edits. Capture does not wait for an uncommitted newer revision or take the settings writer's advisory lock.
 
@@ -74,4 +77,32 @@ Null configuration means no AI enforcement policy. It does not imply a particula
 
 The API role can select and insert revisions and snapshots, as required by run creation. The worker can select captured snapshots only; it cannot read current channel AI settings or write either table. Runtime AI policy consumption is deferred to the worker integration step.
 
-The next step exposes authorized settings endpoints with validation and revision conflict handling.
+## Settings endpoints
+
+Both endpoints require a valid dashboard session and channel membership:
+
+| Method | Route                                             | Access             | Result                                                          |
+| ------ | ------------------------------------------------- | ------------------ | --------------------------------------------------------------- |
+| GET    | `/v1/channels/:channel_id/ai-moderation-settings` | Owner or moderator | `200` with `{ "settings": null }` or the latest settings record |
+| POST   | `/v1/channels/:channel_id/ai-moderation-settings` | Owner only         | `200` with the newly saved settings record                      |
+
+POST requires the configured dashboard Origin and a JSON body containing only `expected_revision` and `configuration`. Use zero when GET returns null; otherwise use the revision returned by GET. The configuration must include the explicit model identity, score metric, switches, ordered thresholds, and timeout duration described above. Persisting enabled settings does not activate AI actions while worker integration remains unfinished.
+
+Responses use `Cache-Control: no-store`. Errors carry a trace ID and safe field paths/codes, without echoing model input or database details:
+
+| Status | Code                            | Meaning                                                            |
+| ------ | ------------------------------- | ------------------------------------------------------------------ |
+| 401    | `UNAUTHENTICATED`               | Missing, expired, or revoked session                               |
+| 403    | `CHANNEL_FORBIDDEN`             | No owner/moderator access to the requested channel                 |
+| 403    | `AI_SETTINGS_WRITE_FORBIDDEN`   | A moderator attempted to change settings                           |
+| 403    | `ORIGIN_FORBIDDEN`              | Missing or untrusted Origin on a mutation                          |
+| 422    | `VALIDATION_ERROR`              | Invalid channel ID or settings body                                |
+| 409    | `AI_SETTINGS_REVISION_CONFLICT` | Settings changed since the supplied revision; reload before saving |
+| 413    | `PAYLOAD_TOO_LARGE`             | JSON body exceeds the existing 16 KiB API limit                    |
+| 400    | `BAD_REQUEST`                   | Malformed JSON                                                     |
+
+Authorization is checked before settings validation or revision conflict handling, and is checked again inside the write transaction after the channel revision lock is acquired. Operators and owners of unrelated channels cannot read or change the settings. A conflict never rewrites an existing revision or automatically retries an edit.
+
+HTTP tests run the built NestJS API against temporary local database schemas with the provisioned API role. Build both core packages and the API before running them. They exercise access, validation, safe errors, immutable revisions, and competing writes without contacting YouTube.
+
+The next step adds dashboard controls for editing AI thresholds through these endpoints.
