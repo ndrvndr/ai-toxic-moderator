@@ -2,7 +2,7 @@
 
 ## Step 1: shared contract
 
-`aiOperationalStatus` describes automatic AI processing for one authorized channel. It is separate from ingestion state, per-message inference results, saved AI action decisions, and provider execution outcomes. This step adds schemas and tests only; the worker does not yet persist these reports, and no endpoint or dashboard indicator is added.
+`aiOperationalStatus` describes automatic AI processing for one authorized channel. It is separate from ingestion state, per-message inference results, saved AI action decisions, and provider execution outcomes. The store is implemented, but the automatic worker loop is not yet connected to it. No endpoint or dashboard indicator is added yet.
 
 | State               | Reason                    | Meaning                                                                                                  | Run scope                                             |
 | ------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -14,7 +14,7 @@
 | `CAPACITY_EXCEEDED` | `MULTIPLE_ELIGIBLE_RUNS`  | The single-stream worker cannot select one of multiple eligible runs.                                    | None                                                  |
 | `ERROR`             | `PROCESSING_FAILED`       | Discovery or processing failed; an allowlisted error code identifies the failure class.                  | Required when the failed run is known; otherwise none |
 
-Channel scope is always required. Run and session IDs must either both be present or both be null. A schema cannot establish database ownership: the future store and endpoint must validate the run/session/channel relationship and current membership. Capacity reports must not expose identifiers or counts belonging to other channels.
+Channel scope is always required. Run and session IDs must either both be present or both be null. The persistence layer validates the run/session/channel relationship with a composite foreign key. Current membership must still be checked by the future discovery integration and endpoint. Capacity reports must not expose identifiers or counts belonging to other channels.
 
 `error_code` is null outside `ERROR`. Supported error codes are `MODEL_UNAVAILABLE`, `INFERENCE_FAILED`, `INFERENCE_TIMEOUT`, `INVALID_OUTPUT`, `DATABASE_UNAVAILABLE`, and `PIPELINE_FAILED`. Raw exceptions, stack traces, credentials, process IDs, and connection details are not public fields. Model mismatch is a configuration state, not a failed inference result.
 
@@ -30,18 +30,40 @@ Channel scope is always required. Run and session IDs must either both be presen
 | `ONLINE`     | A report exists and its heartbeat age is less than `stale_after_ms`.                                                                                                  |
 | `STALE`      | Heartbeat age is at least `stale_after_ms`. The last report remains available for diagnosis, but its stored `ACTIVE` state must not be displayed as currently active. |
 
-The API assesses freshness using a shared server/database time source. Browser time must not decide availability. `checked_at` cannot precede the heartbeat. The expiry interval must be an integer between 1 and 300000 milliseconds; this contract does not yet choose the runtime interval. Database read errors must follow the safe API error path, rather than masquerading as `UNKNOWN`.
+The API assesses freshness using a shared server/database time source. Browser time must not decide availability. `checked_at` cannot precede the heartbeat. The contract permits an integer interval between 1 and 300000 milliseconds; the status store uses 30000 milliseconds. Database read errors must follow the safe API error path, rather than masquerading as `UNKNOWN`.
 
 Freshness is not inference progress. A live heartbeat can coexist with processing errors or an empty chat backlog. Likewise, a stale heartbeat does not establish that a provider request failed and must not trigger an automatic moderation retry.
 
+## Step 2: persistence and ownership
+
+Migration `026_ai_operational_status.sql` adds one mutable current report per channel. State, reason, safe error code, optional run/session scope, and heartbeat are updated atomically. Composite foreign keys prevent cross-channel run references and substituted sessions. Database checks mirror the public state combinations; the table does not store raw errors or credentials.
+
+`AiOperationalStatusStore.claim(channelId)` acquires an expired or missing report lease and initializes `WAITING`. It returns a private owner/generation token, or null while another live claim exists. The lease lasts 30 seconds. Even the same owner must retain its existing token rather than repeatedly claiming a live report. After expiry, a new claim advances the generation and clears the old run scope. A restarted worker with a new owner may wait up to 30 seconds before taking over.
+
+`publish(lease, update)` validates the public state fields and updates the report only while the owner/generation token is current and unexpired. A lost or expired token returns null; malformed input or database failures propagate. These status leases fence reporting only: they do not claim ingestion ownership or authorize moderation dispatch.
+
+A database trigger assigns heartbeat, expiry, and state-change timestamps after acquiring the row lock. Client clock fields are rejected by the store and overridden by the database trigger. Publishing the same state renews heartbeat/expiry while preserving `updated_at`; state, scope, reason, error, or owner-generation changes advance `updated_at`. Ownership changes require expiry and the next generation. No live-feed event is created by these writes.
+
+The worker role receives SELECT/INSERT/UPDATE on this table and cannot DELETE reports. The API role receives SELECT only. Table privileges do not establish end-user authorization; the future endpoint must check membership and project only the public contract, excluding owner, generation, and expiry internals. Heartbeat throttling and the independent runtime scheduling needed to report during inference are part of the next integration step.
+
+Before connecting this store in the application, apply the migration and refresh the managed roles:
+
+```powershell
+npm run build:core
+npm run db:migrate
+npm run db:runtime
+npm run db:worker
+```
+
 ## Remaining implementation
 
-1. Add persistence and restricted database permissions for scoped reports, with heartbeat and state changes written atomically.
-2. Connect automatic discovery and processing to status updates, distinguishing mismatch/disabled/capacity/error states and recovering from errors.
-3. Add an authenticated channel-scoped status endpoint that assesses freshness and rechecks access.
-4. Add a compact dashboard indicator with separate monitoring-end reasons, including quota exhaustion.
-5. Verify transitions, stale heartbeat behavior, cross-channel access, recovery, and dashboard rendering.
+1. Connect automatic discovery and processing to status updates, distinguishing mismatch/disabled/capacity/error states and recovering from errors.
+2. Add an authenticated channel-scoped status endpoint that assesses freshness and rechecks access.
+3. Add a compact dashboard indicator with separate monitoring-end reasons, including quota exhaustion.
+4. Verify transitions, stale heartbeat behavior, cross-channel access, recovery, and dashboard rendering.
 
 ## Validation
 
 `npm run test:ai-operational-status-contracts` covers status/reason consistency, run scope, timestamp ordering, public error restrictions, heartbeat expiry boundaries, unknown reports, and cross-channel envelope rejection. These are schema checks, not proof of authorization, persisted heartbeat behavior, or a running worker.
+
+`npm run test:ai-operational-status-store` uses PostgreSQL in a random isolated schema with temporary worker/API roles. It checks atomic reports, stable state-change timestamps, concurrent claims/heartbeats, fenced restart takeover, scope substitution, direct SQL constraints, database-owned timestamps, read-only API permissions, and absence of live events. Expiry is simulated only within the isolated schema. The suite does not clear application data, load the model, or call YouTube.

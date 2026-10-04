@@ -69,7 +69,11 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
   ) ON ${schemaSql}.monitoring_runs TO ${roleSql}`,
     );
 
-    for (const table of ['monitoring_worker_leases', 'youtube_chat_checkpoints']) {
+    for (const table of [
+      'monitoring_worker_leases',
+      'youtube_chat_checkpoints',
+      'ai_operational_status',
+    ]) {
       await client.query(
         `GRANT SELECT,INSERT,UPDATE ON ${schemaSql}.${identifier(table)} TO ${roleSql}`,
       );
