@@ -283,6 +283,7 @@ test('one tick reads, infers, and persists a shadow result in order', async () =
     kind: 'INSERTED',
     observation_id: identity.observation_id,
     status: 'SUCCEEDED',
+    error_code: null,
   });
   assert.deepEqual(calls, ['read', 'infer', 'save']);
 });
@@ -310,6 +311,7 @@ test('a competing committed result wins over new inference output', async () => 
     kind: 'EXISTING',
     observation_id: identity.observation_id,
     status: 'ERROR',
+    error_code: 'INFERENCE_TIMEOUT',
   });
 });
 

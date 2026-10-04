@@ -12,6 +12,15 @@ const { BanEligibilityStore } = source('apps/worker/src/ingestion/ban-eligibilit
 const { DeleteExecutor } = source('apps/worker/src/ingestion/delete-executor.ts');
 const { BanExecutor } = source('apps/worker/src/ingestion/ban-executor.ts');
 const { transaction, readLiveEvents } = source('packages/persistence/src/index.ts');
+const { AiOperationalStatusReader } = source(
+  'apps/worker/src/ingestion/ai-operational-status-reader.ts',
+);
+const { AiOperationalStatusStore } = source(
+  'apps/worker/src/ingestion/ai-operational-status-store.ts',
+);
+const { AiOperationalStatusCoordinator } = source(
+  'apps/worker/src/ingestion/ai-operational-status-coordinator.ts',
+);
 
 const schema = `automatic_ai_${randomUUID().replaceAll('-', '')}`;
 const role = `automatic_ai_worker_${randomUUID().replaceAll('-', '')}`;
@@ -286,6 +295,201 @@ function harness({ pool = worker, score = 0.75, output = {}, predict } = {}) {
   cycles.push(h.cycle);
   return h;
 }
+
+function statusHarness(cycle, enabled = true) {
+  const h = { now: 0 };
+  h.status = new AiOperationalStatusCoordinator(
+    new AiOperationalStatusReader(worker, enabled, enabled ? model : undefined),
+    new AiOperationalStatusStore(worker),
+    () => cycle?.operationalState() ?? { selected_run_id: null, fault: null },
+    () => h.now,
+  );
+  return h;
+}
+async function storedStatus(f) {
+  return (
+    await admin.query('SELECT * FROM ai_operational_status WHERE channel_id=$1', [f.channelId])
+  ).rows[0];
+}
+
+test('operational SQL follows captured enabled, disabled and mismatched settings across runs', async () => {
+  const f = await fixture(),
+    h = harness(),
+    monitor = statusHarness(h.cycle);
+  await h.cycle.tick(signal());
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'ACTIVE');
+  await saveSettings(f, configuration({ automatic_actions_enabled: false }));
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'ACTIVE');
+  await stop(f);
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'WAITING');
+  const disabled = await startRun(f);
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).reason, 'RUN_AI_DISABLED');
+  assert.equal((await storedStatus(f)).run_id, disabled.runId);
+  await stop(disabled);
+  await saveSettings(f, configuration({ model: { ...model, adapter_version: 'other-adapter' } }));
+  const mismatch = await startRun(f);
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'MODEL_MISMATCH');
+  assert.equal((await storedStatus(f)).run_id, mismatch.runId);
+  await stop(mismatch);
+});
+
+test('operational reporting handles capacity, membership loss, and disabled worker mode safely', async () => {
+  const f = await fixture(),
+    h = harness(),
+    monitor = statusHarness(h.cycle);
+  await h.cycle.tick(signal());
+  await monitor.status.tick(signal());
+  const second = await fixture();
+  await monitor.status.tick(signal());
+  for (const scope of [f, second]) {
+    const report = await storedStatus(scope);
+    assert.equal(report.status, 'CAPACITY_EXCEEDED');
+    assert.equal(report.run_id, null);
+    assert.equal(report.session_id, null);
+  }
+  await stop(second);
+  await h.cycle.tick(signal());
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'ACTIVE');
+  await admin.query(
+    "UPDATE channel_memberships SET role='OPERATOR' WHERE channel_id=$1 AND account_id=$2",
+    [f.channelId, f.requesterId],
+  );
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'WAITING');
+  assert.equal((await storedStatus(f)).run_id, null);
+  await admin.query(
+    "UPDATE channel_memberships SET role='MODERATOR' WHERE channel_id=$1 AND account_id=$2",
+    [f.channelId, f.requesterId],
+  );
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'ACTIVE');
+  const disabledReader = new AiOperationalStatusReader(worker, false);
+  const disabled = (await disabledReader.scan(signal())).find((r) => r.channel_id === f.channelId);
+  assert.equal(disabled.reason, 'WORKER_AI_DISABLED');
+  assert.equal(disabled.run_id, null);
+  const emptyChannel = randomUUID();
+  await admin.query("INSERT INTO channels(id,display_name) VALUES($1,'New connected channel')", [
+    emptyChannel,
+  ]);
+  await admin.query('INSERT INTO youtube_channels(channel_id,youtube_channel_id) VALUES($1,$2)', [
+    emptyChannel,
+    randomUUID(),
+  ]);
+  const waiting = (await new AiOperationalStatusReader(worker, true, model).scan(signal())).find(
+    (r) => r.channel_id === emptyChannel,
+  );
+  assert.equal(waiting.status, 'WAITING');
+  assert.equal(waiting.run_id, null);
+  assert.equal(
+    (await disabledReader.scan(signal())).find((r) => r.channel_id === emptyChannel).status,
+    'DISABLED',
+  );
+});
+
+test('status heartbeat continues during deferred inference without duplicate native work', async () => {
+  const f = await fixture();
+  await observe(f);
+  let release, started;
+  const beginning = new Promise((resolve) => {
+    started = resolve;
+  });
+  const h = harness({
+    predict: async () => {
+      started();
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    },
+  });
+  const pending = h.cycle.tick(signal());
+  await beginning;
+  const monitor = statusHarness(h.cycle);
+  try {
+    await monitor.status.tick(signal());
+    const first = await storedStatus(f);
+    assert.equal(first.status, 'ACTIVE');
+    monitor.now = 10000;
+    await monitor.status.tick(signal());
+    const next = await storedStatus(f);
+    assert.ok(next.heartbeat_at > first.heartbeat_at);
+    assert.equal(next.updated_at.toISOString(), first.updated_at.toISOString());
+    assert.equal((await h.cycle.tick(signal())).kind, 'BUSY');
+    assert.equal(h.calls.length, 1);
+  } finally {
+    release();
+    await pending;
+  }
+});
+
+test('stored inference faults remain visible through idle and recover on a successful result', async () => {
+  const f = await fixture();
+  await observe(f);
+  const output = {
+    status: 'ERROR',
+    rating: null,
+    severity_score: null,
+    truncated: null,
+    inference_ms: null,
+    error_code: 'MODEL_UNAVAILABLE',
+  };
+  const h = harness({ output }),
+    monitor = statusHarness(h.cycle);
+  await h.cycle.tick(signal());
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).error_code, 'MODEL_UNAVAILABLE');
+  await h.cycle.tick(signal());
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'ERROR');
+  const restarted = harness();
+  await restarted.cycle.tick(signal());
+  const diagnostic = new AiOperationalStatusReader(worker, true, model);
+  assert.equal(
+    (await diagnostic.scan(signal())).find((r) => r.run_id === f.runId).error_code,
+    'MODEL_UNAVAILABLE',
+  );
+  Object.assign(output, {
+    status: 'SUCCEEDED',
+    rating: 2,
+    severity_score: 0.2,
+    truncated: false,
+    inference_ms: 1,
+    error_code: null,
+  });
+  await observe(f);
+  await h.cycle.tick(signal());
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'ACTIVE');
+  assert.equal((await storedStatus(f)).error_code, null);
+});
+
+test('pipeline database failures publish safe status and recover without stopping ingestion loops', async () => {
+  const f = await fixture();
+  let failed = true;
+  const pool = {
+    connect: (...args) => worker.connect(...args),
+    query(sql, ...args) {
+      if (failed && sql.includes('youtube_ai_shadow_results'))
+        throw Object.assign(new Error('private database details'), { code: 'ECONNRESET' });
+      return worker.query(sql, ...args);
+    },
+  };
+  const h = harness({ pool }),
+    monitor = statusHarness(h.cycle);
+  await assert.rejects(h.cycle.tick(signal()));
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'ERROR');
+  assert.equal((await storedStatus(f)).error_code, 'DATABASE_UNAVAILABLE');
+  failed = false;
+  await h.cycle.tick(signal());
+  await monitor.status.tick(signal());
+  assert.equal((await storedStatus(f)).status, 'ACTIVE');
+});
 
 async function counts(f) {
   return (

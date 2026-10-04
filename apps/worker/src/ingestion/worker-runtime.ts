@@ -31,6 +31,7 @@ export class WorkerRuntime {
     private readonly shadow?: ShadowCycle,
     private readonly aiDecisions?: WorkerCycle,
     private readonly aiPlans?: WorkerCycle,
+    private readonly aiStatus?: WorkerCycle,
   ) {}
 
   start(): void {
@@ -70,6 +71,9 @@ export class WorkerRuntime {
     }
     if (this.aiPlans) {
       loops.push(this.loop(this.aiPlans, 'AI action planning'));
+    }
+    if (this.aiStatus) {
+      loops.push(this.loop(this.aiStatus, 'AI operational status'));
     }
 
     // Every loop must finish before the shared pool closes.

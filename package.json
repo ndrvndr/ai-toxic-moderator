@@ -10,6 +10,7 @@
     "node": ">=22.12.0 <23 || >=24.0.0"
   },
   "scripts": {
+    "test:ai-operational-status-coordinator": "node --experimental-test-isolation=none --test tests/ai-operational-status-coordinator.test.cjs",
     "test:ai-operational-status-store": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/ai-operational-status-store.test.cjs",
     "test:ai-operational-status-contracts": "node --experimental-test-isolation=none --test tests/ai-operational-status-contracts.test.cjs",
     "test:automatic-ai-integration": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/automatic-ai-integration.test.cjs",

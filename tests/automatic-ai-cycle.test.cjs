@@ -385,3 +385,48 @@ test('disposal during discovery never constructs cycles or re-enables dispatch',
   assert.deepEqual(builds, []);
   assert.equal(cycle.allowedRunId(), null);
 });
+
+test('operational inference fault survives idle ticks until a successful result', async () => {
+  let outcome = { status: 'ERROR', error_code: 'MODEL_UNAVAILABLE' };
+  const { cycle } = harness({ inference: () => outcome });
+  await cycle.tick(signal());
+  assert.deepEqual(cycle.operationalState(), {
+    selected_run_id: runId,
+    fault: { run_id: runId, error_code: 'MODEL_UNAVAILABLE', source: 'INFERENCE' },
+  });
+  outcome = { kind: 'IDLE' };
+  await cycle.tick(signal());
+  assert.equal(cycle.operationalState().fault.error_code, 'MODEL_UNAVAILABLE');
+  outcome = { status: 'ERROR', error_code: 'INPUT_TOO_LONG' };
+  await cycle.tick(signal());
+  assert.equal(cycle.operationalState().fault.error_code, 'MODEL_UNAVAILABLE');
+  outcome = { status: 'SUCCEEDED' };
+  await cycle.tick(signal());
+  assert.equal(cycle.operationalState().fault, null);
+  await cycle.dispose();
+});
+
+test('pipeline faults are safe and clear after successful recovery without another message', async () => {
+  let fail = true;
+  const { cycle } = harness({
+    decisions: () => {
+      if (fail)
+        throw Object.assign(new Error('private connection and credential details'), {
+          code: 'ECONNRESET',
+        });
+      return { kind: 'IDLE' };
+    },
+  });
+  await assert.rejects(cycle.tick(signal()));
+  assert.deepEqual(cycle.operationalState(), {
+    selected_run_id: null,
+    fault: { run_id: runId, error_code: 'DATABASE_UNAVAILABLE', source: 'PIPELINE' },
+  });
+  const copy = cycle.operationalState();
+  copy.fault.error_code = 'INFERENCE_FAILED';
+  assert.equal(cycle.operationalState().fault.error_code, 'DATABASE_UNAVAILABLE');
+  fail = false;
+  await cycle.tick(signal());
+  assert.equal(cycle.operationalState().fault, null);
+  await cycle.dispose();
+});

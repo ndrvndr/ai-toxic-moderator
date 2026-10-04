@@ -4,6 +4,91 @@ const { source } = require('./helpers/source.cjs');
 
 const { WorkerRuntime } = source('apps/worker/src/ingestion/worker-runtime.ts');
 const { AutomaticAiCycle } = source('apps/worker/src/ingestion/automatic-ai-cycle.ts');
+const { AiOperationalStatusCoordinator } = source(
+  'apps/worker/src/ingestion/ai-operational-status-coordinator.ts',
+);
+
+test('operational reporting runs during inference and shutdown drains its write before pool closure', async () => {
+  const run = '10000000-0000-4000-8000-000000000001';
+  const channel = '20000000-0000-4000-8000-000000000002';
+  const session = '30000000-0000-4000-8000-000000000003';
+  const events = [];
+  let releaseInference, releaseReport, startedInference, startedReport;
+  const inferenceStarted = new Promise((resolve) => {
+    startedInference = resolve;
+  });
+  const reportStarted = new Promise((resolve) => {
+    startedReport = resolve;
+  });
+  const report = {
+    channel_id: channel,
+    session_id: session,
+    run_id: run,
+    status: 'ACTIVE',
+    reason: 'RUN_SELECTED',
+    error_code: null,
+  };
+  const status = new AiOperationalStatusCoordinator(
+    {
+      async scan() {
+        return [report];
+      },
+    },
+    {
+      async claim() {
+        return { channel_id: channel, owner_id: channel, generation: '1' };
+      },
+      async publish() {
+        startedReport();
+        events.push('report-start');
+        await new Promise((resolve) => {
+          releaseReport = resolve;
+        });
+        events.push('report-end');
+        return report;
+      },
+    },
+    () => ({ selected_run_id: run, fault: null }),
+  );
+  const shadow = {
+    async tick() {
+      startedInference();
+      await new Promise((resolve) => {
+        releaseInference = resolve;
+      });
+    },
+    async dispose() {
+      events.push('disposed');
+    },
+  };
+  const runtime = new WorkerRuntime(
+    { async tick() {} },
+    {
+      async end() {
+        events.push('pool-closed');
+      },
+    },
+    undefined,
+    undefined,
+    undefined,
+    shadow,
+    undefined,
+    undefined,
+    status,
+  );
+  runtime.start();
+  await Promise.all([inferenceStarted, reportStarted]);
+  const stopping = runtime.onApplicationShutdown();
+  await Promise.resolve();
+  assert.ok(!events.includes('pool-closed'));
+  releaseInference();
+  await Promise.resolve();
+  assert.ok(!events.includes('pool-closed'));
+  releaseReport();
+  await stopping;
+  assert.ok(events.indexOf('report-end') < events.indexOf('pool-closed'));
+  assert.equal(events.at(-1), 'pool-closed');
+});
 
 test('automatic AI shutdown drains its plan write and disposes the runner before pool closure', async () => {
   const runId = 'a0000000-0000-4000-8000-000000000001';

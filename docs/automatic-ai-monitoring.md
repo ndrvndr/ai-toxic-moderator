@@ -105,7 +105,7 @@ The low thresholds were functional test settings. Safe greetings selected Timeou
 2. Confirm worker continuity, updates without refresh, History results, and WebSocket cursor behavior for the reported A/B/C sequence or a subsequent final E2E run.
 3. Expose model mismatch/capacity/failure status in the dashboard and evaluate the limited portfolio workload, including restart recovery and action deduplication.
 
-Capacity and selection changes currently produce worker log messages. A model mismatch is excluded from discovery and can appear as waiting for an eligible run; it is not yet a distinct dashboard status. Public deployment, multi-stream scheduling, and model calibration are separate work.
+Capacity and selection changes produce worker log messages. Independent operational reporting now persists disabled, waiting, active, mismatch, capacity, and safe error states with a heartbeat; see [AI operational status](ai-operational-status.md). Model mismatch is still excluded from processing discovery, but the diagnostic reader distinguishes it. The authenticated status endpoint and dashboard display remain pending. Public deployment, multi-stream scheduling, and model calibration are separate work.
 
 ## Manual validation
 

@@ -49,6 +49,7 @@ export class AiShadowCoordinator {
         kind: saved.inserted ? ('INSERTED' as const) : ('EXISTING' as const),
         observation_id: identity.observation_id,
         status: saved.result.status,
+        error_code: saved.result.error_code,
       };
     } finally {
       this.busy = false;

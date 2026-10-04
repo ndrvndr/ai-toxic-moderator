@@ -2,7 +2,7 @@
 
 ## Step 1: shared contract
 
-`aiOperationalStatus` describes automatic AI processing for one authorized channel. It is separate from ingestion state, per-message inference results, saved AI action decisions, and provider execution outcomes. The store is implemented, but the automatic worker loop is not yet connected to it. No endpoint or dashboard indicator is added yet.
+`aiOperationalStatus` describes automatic AI processing for one authorized channel. It is separate from ingestion state, per-message inference results, saved AI action decisions, and provider execution outcomes. The worker publishes reports through the store in an independent runtime loop. No endpoint or dashboard indicator is added yet.
 
 | State               | Reason                    | Meaning                                                                                                  | Run scope                                             |
 | ------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -44,7 +44,7 @@ Migration `026_ai_operational_status.sql` adds one mutable current report per ch
 
 A database trigger assigns heartbeat, expiry, and state-change timestamps after acquiring the row lock. Client clock fields are rejected by the store and overridden by the database trigger. Publishing the same state renews heartbeat/expiry while preserving `updated_at`; state, scope, reason, error, or owner-generation changes advance `updated_at`. Ownership changes require expiry and the next generation. No live-feed event is created by these writes.
 
-The worker role receives SELECT/INSERT/UPDATE on this table and cannot DELETE reports. The API role receives SELECT only. Table privileges do not establish end-user authorization; the future endpoint must check membership and project only the public contract, excluding owner, generation, and expiry internals. Heartbeat throttling and the independent runtime scheduling needed to report during inference are part of the next integration step.
+The worker role receives SELECT/INSERT/UPDATE on this table and cannot DELETE reports. The API role receives SELECT only. Table privileges do not establish end-user authorization; the future endpoint must check membership and project only the public contract, excluding owner, generation, and expiry internals.
 
 Before connecting this store in the application, apply the migration and refresh the managed roles:
 
@@ -55,15 +55,32 @@ npm run db:runtime
 npm run db:worker
 ```
 
+## Step 3: independent worker reporting
+
+`AiOperationalStatusReader` scans connected YouTube channels, including channels with no monitoring history. For each channel it inspects current `RUNNING` runs using the same lifecycle and requester/credential membership boundaries as automatic discovery. Disabled/default/legacy captured settings produce `RUN_AI_DISABLED`; enabled settings with a different model identity produce `MODEL_MISMATCH`. It reads captured settings, never the latest channel configuration. No active authorized run produces `WAITING`.
+
+Matching enabled runs are counted across the single-stream worker scope. Multiple eligible runs produce unscoped `CAPACITY_EXCEEDED` reports only for affected channels; competing identifiers and counts are not public fields. If exactly one run is eligible, `ACTIVE` additionally requires that `AutomaticAiCycle` currently selects that run. Diagnostic discovery cannot grant dispatch permission.
+
+The reader also inspects the latest committed inference outcome for the current run and exact worker model identity. A terminal model failure stays visible across worker restart and idle ticks until a successful result is committed or the run ends. `INPUT_TOO_LONG` is a per-message failure and is excluded from this health assessment; it does not prove the model is unavailable. Pipeline exceptions are mapped to allowlisted fault codes in memory and clear after a successful pipeline tick. A successful inference clears an in-memory inference fault. Private exception text is never persisted in reports.
+
+`AiOperationalStatusCoordinator` runs in its own `WorkerRuntime` loop, independently of inference and action planning. State changes are written on the next status tick; unchanged reports renew heartbeat every 10 seconds, within the 30-second reporting lease. Competing claim attempts are also limited to once per 10 seconds. The scheduling clock is monotonic; persisted timestamps remain database-owned. Overlapping status ticks are ignored rather than queued.
+
+Database or status-write failures are isolated from ingestion and moderation loops. When possible, a diagnostic-read failure produces an allowlisted `ERROR` report using the last known scope. During a database outage, writes may also fail: the last stored heartbeat ages out instead of being fabricated. After recovery, leases are reclaimed as needed and normal reports resume. Shutdown aborts reporting and waits for its pending database write before closing the pool. Reporting leases do not gate AI or provider dispatch.
+
+When `AI_AUTOMATIC_ENABLED=false`, the running ingestion worker reports `WORKER_AI_DISABLED`; this specifically describes automatic mode, including when optional manual AI testing is enabled. When the worker itself is stopped or disabled, no heartbeat is published: existing reports expire and channels with no report remain unknown. Startup checks require migration 026 even if automatic AI is disabled. The worker role also needs SELECT on `youtube_channels`; refresh it with `npm run db:worker` after updating the code. Model artifacts and executor switches are unchanged.
+
+The diagnostic reader currently scans connected channels on each runtime tick. This implementation targets the portfolio scope of one streamer/one eligible livestream and does not introduce production multitenant scheduling or workload guarantees.
+
 ## Remaining implementation
 
-1. Connect automatic discovery and processing to status updates, distinguishing mismatch/disabled/capacity/error states and recovering from errors.
-2. Add an authenticated channel-scoped status endpoint that assesses freshness and rechecks access.
-3. Add a compact dashboard indicator with separate monitoring-end reasons, including quota exhaustion.
-4. Verify transitions, stale heartbeat behavior, cross-channel access, recovery, and dashboard rendering.
+1. Add an authenticated channel-scoped status endpoint that assesses freshness and rechecks access.
+2. Add a compact dashboard indicator with separate monitoring-end reasons, including quota exhaustion.
+3. Verify API access, stale heartbeat behavior, and dashboard rendering in the final end-to-end flow.
 
 ## Validation
 
 `npm run test:ai-operational-status-contracts` covers status/reason consistency, run scope, timestamp ordering, public error restrictions, heartbeat expiry boundaries, unknown reports, and cross-channel envelope rejection. These are schema checks, not proof of authorization, persisted heartbeat behavior, or a running worker.
 
 `npm run test:ai-operational-status-store` uses PostgreSQL in a random isolated schema with temporary worker/API roles. It checks atomic reports, stable state-change timestamps, concurrent claims/heartbeats, fenced restart takeover, scope substitution, direct SQL constraints, database-owned timestamps, read-only API permissions, and absence of live events. Expiry is simulated only within the isolated schema. The suite does not clear application data, load the model, or call YouTube.
+
+`npm run test:ai-operational-status-coordinator` covers diagnostic states, cancellation, capacity projection, heartbeat throttling, lost claims, safe error mapping, and recovery. `test:automatic-ai-cycle`, `test:ai-shadow-coordinator`, and `test:worker-runtime` cover pipeline fault tracking, committed outcome propagation, reporting during inference, and shutdown draining. `test:automatic-ai-integration` now also verifies real diagnostic SQL and status writes using the restricted worker role, captured settings, capacity/membership changes, deferred inference heartbeat, persisted failure visibility after restart, and subsequent recovery. Its inference and provider adapters remain simulated; these tests consume no YouTube quota.

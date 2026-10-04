@@ -20,6 +20,9 @@ import {
   type AiActionDecisionCycle,
 } from './ingestion/ai-action-decision-cycle';
 import { createAiActionPlanCycle, type AiActionPlanCycle } from './ingestion/ai-action-plan-cycle';
+import { AiOperationalStatusCoordinator } from './ingestion/ai-operational-status-coordinator';
+import { AiOperationalStatusReader } from './ingestion/ai-operational-status-reader';
+import { AiOperationalStatusStore } from './ingestion/ai-operational-status-store';
 import { createAiShadowCycle, type AiShadowCycle } from './ingestion/ai-shadow-cycle';
 import { createAutomaticAiCycle, type AutomaticAiCycle } from './ingestion/automatic-ai-cycle';
 import { BanCandidateStore } from './ingestion/ban-candidate-store';
@@ -42,6 +45,7 @@ import { DeleteEligibilityStore } from './ingestion/delete-eligibility-store';
 import { DeleteExecutionStore } from './ingestion/delete-execution-store';
 import { DeleteExecutor } from './ingestion/delete-executor';
 import { DeleteRecovery } from './ingestion/delete-recovery';
+import { LASKAR_ADAPTER_VERSION, LASKAR_MODEL_ID } from './ingestion/laskar-shadow-adapter';
 import { LeaseStore } from './ingestion/lease-store';
 import { PollCycle } from './ingestion/poll-cycle';
 import { RetryStore } from './ingestion/retry-store';
@@ -99,6 +103,9 @@ async function bootstrap() {
 
     await pool.query('SELECT revision, chat_ended_at FROM youtube_chat_checkpoints LIMIT 0');
     await pool.query('SELECT id FROM youtube_chat_classifications LIMIT 0');
+    await pool.query(
+      'SELECT channel_id, owner_id, generation, expires_at FROM ai_operational_status LIMIT 0',
+    );
     await pool.query('SELECT id FROM youtube_moderation_action_plans LIMIT 0');
     await pool.query(`SELECT run_id, settings_id, settings_revision, source, configuration
       FROM monitoring_settings_snapshots LIMIT 0`);
@@ -262,6 +269,32 @@ async function bootstrap() {
       automaticAi ?? shadow,
       aiDecisions,
       aiPlans,
+      new AiOperationalStatusCoordinator(
+        new AiOperationalStatusReader(
+          pool,
+          config.AI_AUTOMATIC_ENABLED,
+          config.AI_AUTOMATIC_ENABLED
+            ? {
+                model_id: LASKAR_MODEL_ID,
+                model_revision: config.AI_SHADOW_MODEL_REVISION,
+                model_variant: 'INT8',
+                adapter_version: LASKAR_ADAPTER_VERSION,
+              }
+            : undefined,
+        ),
+        new AiOperationalStatusStore(pool),
+        () =>
+          automaticAi?.operationalState() ?? {
+            selected_run_id: null,
+            fault: config.AI_AUTOMATIC_ENABLED
+              ? {
+                  run_id: null,
+                  error_code: 'PIPELINE_FAILED',
+                  source: 'PIPELINE',
+                }
+              : null,
+          },
+      ),
     );
 
     @Module({

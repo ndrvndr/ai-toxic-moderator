@@ -4,6 +4,11 @@ import type { createPool } from '@moderator/persistence';
 
 import { createAiActionDecisionCycle } from './ai-action-decision-cycle';
 import { createAiActionPlanCycle } from './ai-action-plan-cycle';
+import {
+  inferenceErrorCode,
+  operationalErrorCode,
+  type AiOperationalFault,
+} from './ai-operational-fault';
 import { createAiShadowCycle } from './ai-shadow-cycle';
 import { AiShadowRunner } from './ai-shadow-runner';
 import { AutomaticAiRunReader } from './automatic-ai-run-reader';
@@ -30,6 +35,7 @@ export class AutomaticAiCycle {
   private closed = false;
   private disposal: Promise<void> | null = null;
   private lastStatus: string | null = null;
+  private fault: AiOperationalFault | null = null;
 
   constructor(
     private readonly reader: Pick<AutomaticAiRunReader, 'next'>,
@@ -40,6 +46,10 @@ export class AutomaticAiCycle {
 
   allowedRunId(): string | null {
     return this.closed ? null : this.selectedRun;
+  }
+
+  operationalState(): { selected_run_id: string | null; fault: AiOperationalFault | null } {
+    return { selected_run_id: this.allowedRunId(), fault: this.fault ? { ...this.fault } : null };
   }
 
   tick(signal: AbortSignal): Promise<unknown> {
@@ -82,8 +92,10 @@ export class AutomaticAiCycle {
   }
 
   private async process(signal: AbortSignal): Promise<unknown> {
+    let currentRun: string | null = null;
     try {
       const runId = await this.select(signal);
+      currentRun = runId;
       if (this.closed || signal.aborted) {
         this.selectedRun = null;
         return { kind: 'CANCELLED' };
@@ -98,7 +110,18 @@ export class AutomaticAiCycle {
       const cycles = scoped.work;
       this.selectedRun = runId;
       this.status('SELECTED', runId);
-      await cycles.inference.tick(signal);
+      const outcome = await cycles.inference.tick(signal);
+      const inferenceFailure = inferenceErrorCode(outcome);
+      if (inferenceFailure && !signal.aborted && !this.closed) {
+        this.fault = { run_id: runId, error_code: inferenceFailure, source: 'INFERENCE' };
+      } else if (
+        outcome &&
+        typeof outcome === 'object' &&
+        'status' in outcome &&
+        outcome.status === 'SUCCEEDED'
+      ) {
+        this.fault = null;
+      }
       const afterInference = await this.select(signal, runId);
       if (!afterInference || this.closed || signal.aborted) {
         this.selectedRun = null;
@@ -117,10 +140,18 @@ export class AutomaticAiCycle {
         this.selectedRun = null;
         return { kind: 'SCOPE_CHANGED' };
       }
+      if (this.fault?.source === 'PIPELINE' || this.fault?.run_id !== runId) this.fault = null;
       return { kind: 'PROCESSED', run_id: runId };
     } catch (error) {
       this.selectedRun = null;
-      if (!this.closed && !signal.aborted) this.status('ERROR');
+      if (!this.closed && !signal.aborted) {
+        this.fault = {
+          run_id: currentRun,
+          error_code: operationalErrorCode(error),
+          source: 'PIPELINE',
+        };
+        this.status('ERROR');
+      }
       throw error;
     }
   }

@@ -54,6 +54,7 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
       'monitoring_blacklist_snapshots',
       'monitoring_ai_settings_snapshots',
       'youtube_broadcasts',
+      'youtube_channels',
       'channel_memberships',
       'stream_sessions',
     ]) {
