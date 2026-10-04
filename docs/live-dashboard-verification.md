@@ -50,7 +50,8 @@ restoring the disabled test configuration.
 
 See [deletion integration verification](deletion-integration-verification.md) for
 evidence scope and remaining checks. This supplements the classification verification;
-TIMEOUT, BAN, and general production moderation accuracy remain unverified.
+this historical deletion check did not cover TIMEOUT or BAN. Their later verifications
+are recorded below; general production moderation accuracy remains unverified.
 
 ## Repeated Timeout Verification
 
@@ -110,13 +111,15 @@ must be valid and match the request.
 
 Historical attempts recorded as `UNKNOWN` remain unchanged.
 
-### Remaining work
+### Follow-up scope
 
-- Clearly distinguish blocked executions from pending executions.
-- Verify permanent BAN behavior separately.
-- Define reconciliation for uncertain provider outcomes.
 - Evaluate production moderation policies independently of controlled
   test markers.
+
+Permanent BAN verification is recorded below. Later implementation and verification
+of evidence for uncertain outcomes are documented in
+[moderation reconciliation](moderation-reconciliation.md). Historical request
+outcomes remain separate from observed moderation events.
 
 This verification establishes the controlled repeated-timeout flow.
 It does not establish classifier accuracy or production readiness.
@@ -187,3 +190,23 @@ semantics, dispatch switches, and automated test coverage. These reported checks
 did not independently resolve reconnect and cleanup checks at that stage. The later
 [fresh-database E2E report](end-to-end-verification.md) covers those local browser
 scenarios. Production HTTPS/WSS and classifier accuracy remain separate work.
+
+## AI Threshold Moderation Verification
+
+On October 4, 2026 (Asia/Jakarta), the developer reported that real livestream AI
+DELETE, TIMEOUT, and BAN scenarios passed, including Live updates without a manual
+refresh and the shared results in History. The assistant did not independently
+execute the tests. See [AI moderation real-provider verification](ai-moderation.md#real-provider-verification)
+for captured thresholds, model identity, executor switches, and evidence limits.
+
+Pasted DELETE output showed a safe greeting with baseline `ALLOW`, model rating
+`Safe`, and expected severity `0.1685`. It crossed the deliberately low test DELETE
+threshold of `0.10` and displayed a separate confirmed deletion result. The developer
+subsequently confirmed timeout worked after enabling `YOUTUBE_BAN_ENABLED`, then
+reported all BAN checks passed.
+
+These results establish the reported local threshold-to-executor flow for the
+configured run. The low test thresholds are not recommended defaults, and the
+results do not establish toxicity accuracy, high-volume performance, processing
+for every livestream, or production readiness. Test cleanup was instructed and
+should be completed before unrelated streams.

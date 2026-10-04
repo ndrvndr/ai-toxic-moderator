@@ -6,7 +6,7 @@ import {
   aiModerationSettingsConfiguration,
   type AiModerationSettingsRecord,
 } from '@moderator/contracts';
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   isAiSettingsAccessError,
   useSaveAiModerationSettings,
@@ -33,11 +33,16 @@ export function AiModerationSettingsForm({
   const [validation, setValidation] = useState('');
   const [reloading, setReloading] = useState(false);
   const submitting = useRef(false);
+  const validationNotice = useRef<HTMLParagraphElement>(null);
   const mutation = useSaveAiModerationSettings(accountId, channelId);
   const busy = mutation.isPending || reloading;
   const blocked = mutation.isError;
-  const dirty = JSON.stringify(draft) !== JSON.stringify(toAiModerationDraft(saved?.configuration));
+  const dirty = !saved || JSON.stringify(draft) !== JSON.stringify(toAiModerationDraft(saved.configuration));
   const editable = canEdit && !busy && !blocked;
+
+  useEffect(() => {
+    if (validation) validationNotice.current?.focus();
+  }, [validation]);
 
   async function reload() {
     if (busy || submitting.current) return;
@@ -68,6 +73,7 @@ export function AiModerationSettingsForm({
       setValidation(
         `Check ${issue?.path.join('.') ?? 'configuration'}: ${issue?.message ?? 'Invalid AI settings.'}`,
       );
+      validationNotice.current?.focus();
       return;
     }
     submitting.current = true;
@@ -104,16 +110,6 @@ export function AiModerationSettingsForm({
         </p>
       )}
       {!canEdit && <p role="status">Only the channel owner can change AI settings.</p>}
-      {notice && <p role="status">{notice}</p>}
-      {validation && <p role="alert">{validation}</p>}
-      {blocked && (
-        <p role="alert">
-          {mutation.error instanceof ApiError && mutation.error.status === 409
-            ? 'Another change was saved. Reload the latest AI settings before saving again.'
-            : 'The save could not be confirmed. Reload AI settings before saving again.'}{' '}
-          Your draft has been retained.
-        </p>
-      )}
       <fieldset disabled={!editable} className="space-y-4">
         <legend className="sr-only">AI moderation configuration</legend>
         <label className="flex items-center gap-2 text-sm">
@@ -184,6 +180,20 @@ export function AiModerationSettingsForm({
           </p>
         </details>
       </fieldset>
+      {validation && (
+        <p ref={validationNotice} role="alert" tabIndex={-1} className="text-sm text-destructive">
+          {validation}
+        </p>
+      )}
+      {blocked && (
+        <p role="alert" className="text-sm text-destructive">
+          {mutation.error instanceof ApiError && mutation.error.status === 409
+            ? 'Another change was saved. Reload the latest AI settings before saving again.'
+            : 'The save could not be confirmed. Reload AI settings before saving again.'}{' '}
+          Your draft has been retained.
+        </p>
+      )}
+      {notice && <p role="status" className="text-sm">{notice}</p>}
       <div className="flex flex-wrap gap-3">
         {canEdit && (
           <Button type="submit" disabled={!editable || !dirty}>

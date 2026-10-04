@@ -4,6 +4,8 @@
 
 Steps 1–9 define shared settings contracts, immutable revisions and run snapshots, authorized settings controls, the threshold planner, decision audits, executor integration, and public decision summaries in Live and History chat. The explicitly configured AI run can materialize persisted action slots and dispatch them through existing executors when its captured settings and worker action switches enable enforcement. Inference is still scoped to one configured run; saving channel settings does not automatically enable processing for every livestream.
 
+Step 10 real-provider DELETE, TIMEOUT, and BAN scenarios were reported successful by the developer on October 4, 2026 (Asia/Jakarta). See [real-provider verification](#real-provider-verification) for evidence and limitations. The assistant did not independently execute these scenarios.
+
 The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
 
 ## Configuration contract
@@ -279,3 +281,35 @@ npm run build --workspace @moderator/dashboard
 The contract and component tests require no model downloads or YouTube quota. Database and HTTP tests use isolated local fixtures with simulated model results. They cover provenance scope, current authorization, immutable evidence after model/settings changes, baseline filters, planning versus execution, transactional event replay, and rollback. They do not establish real model accuracy or successful moderation on YouTube.
 
 For browser verification, select the configured AI run and a new text message. Confirm that its AI decision panel appears without refreshing, identifies the captured settings and considered score, and shows the selected tier or explicit skip reason. Check that later action outcomes appear separately. Open the saved session in History and compare the same evidence. Existing messages without an audit should have no AI decision panel.
+
+## Real-provider verification
+
+On October 4, 2026 (Asia/Jakarta), the developer reported that the local livestream AI enforcement scenarios passed. These are operator-reported browser and YouTube results, supplemented by pasted dashboard output. They are separate from automated tests with simulated provider responses; the assistant did not run the worker, browser checks, or terminal commands.
+
+The procedure isolated AI decisions by disabling custom blacklist matches and built-in automatic actions, clearing controlled marker scopes, and saving the exact cached model identity before starting each new monitoring run:
+
+- Model: `laskar-ks/toxic-guardrail-minilm-id-en`.
+- Revision: `0e011be8ba6aca297059e7ab1a07d4f11054e653`.
+- Variant: `INT8`; adapter: `laskar-shadow-1`.
+
+Each settings change used a new run snapshot. Inference and planning were enabled for that run through `AI_SHADOW_ENABLED` and `AI_SHADOW_RUN_ID`.
+
+| Scenario | Captured enabled thresholds | Reported result |
+| --- | --- | --- |
+| DELETE | Delete 0.10; timeout and ban disabled | AI selected DELETE; YouTube deletion was confirmed. |
+| TIMEOUT | Delete 0.05; timeout 0.10 for 30 seconds; ban disabled | AI selected TIMEOUT with a deletion plan; the developer confirmed that the viewer could be timed out after enabling the author executor. |
+| BAN | Delete 0.05; timeout 0.10 for 30 seconds; ban 0.15 | The developer reported the BAN scenario and its owner-side restriction checks passed. |
+
+The DELETE output supplied for `Halo, terima kasih sudah streaming!` showed baseline `ALLOW`, model rating `Safe` (0/4), expected severity `0.1685`, selected tier DELETE with captured threshold `0.1000`, stored plans, and a separate `Deleted` provider result. This demonstrates that threshold selection uses expected severity rather than the baseline rule outcome or discrete model label.
+
+The initial TIMEOUT check produced deletion alone while `YOUTUBE_BAN_ENABLED` was disabled. Enabling that switch and restarting the worker preceded the developer's report that timeout worked. `YOUTUBE_DELETE_ENABLED` gates deletion; `YOUTUBE_BAN_ENABLED` gates both timeout and permanent ban execution. Captured settings determine which author tier is selected.
+
+The developer reported the prescribed Live and History checks passed, including action updates without a manual refresh. Complete provider payloads, execution IDs, and owner-side timing records were not supplied for the final timeout and ban checks. The pasted planning output alone is not proof of either provider execution.
+
+### Scope and cleanup
+
+The thresholds above were deliberately low test values, not recommended defaults or calibrated production thresholds. Restricting a safe greeting verifies the enforcement path; it does not demonstrate accurate toxicity detection. The prototype evaluation already shows overlapping scores for safe and abusive examples.
+
+Processing remains scoped to one explicitly configured run. This verification does not establish automatic AI processing for every livestream, behavior under high chat volume, or production readiness. Conservative `UNKNOWN` handling, repeated-timeout scheduling, and the external-unban limitation still apply.
+
+After the test, stop monitoring and the worker, disable automatic AI actions before starting unrelated streams, and remove the test viewer from Hidden users if needed. These cleanup steps were instructed; their final completion was not separately confirmed in the report. Editing channel settings affects future snapshots; stop the existing run or disable executor switches to prevent further dispatch under its captured settings.

@@ -145,6 +145,27 @@ it('starts without implicit thresholds or enabled AI actions and saves an explic
   expect(client.getQueryData(aiModerationSettingsKey(accountId, otherChannel))).toBeUndefined();
 });
 
+it('explains an incomplete first save near the save button and focuses the error without sending HTTP', async () => {
+  render(editor(), { wrapper });
+  await screen.findByText('No AI policy saved. Enter your model identity and thresholds before saving.');
+  const button = screen.getByRole('button', { name: 'Save AI settings' }) as HTMLButtonElement;
+  expect(button.disabled).toBe(false);
+  save();
+  const alert = screen.getByRole('alert');
+  expect(alert.textContent).toContain('model.model_id');
+  expect(document.activeElement).toBe(alert);
+  const form = button.closest('form')!;
+  const controls = form.querySelector('fieldset')!;
+  expect(controls.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(posts()).toHaveLength(0);
+  fill();
+  save();
+  await screen.findByText('AI settings revision 1 saved.');
+  expect(posts()).toHaveLength(1);
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(button.disabled).toBe(true);
+});
+
 it('preserves model identity, disables saved AI policy, and uses each newly returned revision', async () => {
   records.set(
     channelId,
@@ -180,6 +201,7 @@ it.each([
   change(label, value);
   save();
   expect(screen.getByRole('alert').textContent).toContain(path);
+  expect(document.activeElement).toBe(screen.getByRole('alert'));
   expect(posts()).toHaveLength(0);
 });
 
