@@ -84,12 +84,12 @@ If AI Settings or the worker model do not match, no run is selected. Verify the 
 
 The operator supplied the following Live chat results after following the automatic-mode A/B/C procedure. This is operator-reported browser evidence, not an independently executed assistant test.
 
-| Check | Message | Observed result |
-| --- | --- | --- |
-| A captures enabled AI settings | `Halo pengujian otomatis A` | AI output and decision appeared. Safe rating (0/4), expected severity 0.1498; selected Timeout at threshold 0.1000. |
-| A retains its snapshot after Settings are disabled | `Halo snapshot A` | AI output and decision still appeared. Safe rating (0/4), expected severity 0.1582; selected Ban at threshold 0.1500. |
-| B captures disabled AI settings | `Halo pengujian otomatis B` | Baseline Allowed evaluation appeared without AI output or an AI decision. |
-| C captures enabled AI settings again | `Halo pengujian otomatis C` | AI output and decision resumed. Safe rating (0/4), expected severity 0.1462; selected Timeout at threshold 0.1000. |
+| Check                                              | Message                     | Observed result                                                                                                       |
+| -------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| A captures enabled AI settings                     | `Halo pengujian otomatis A` | AI output and decision appeared. Safe rating (0/4), expected severity 0.1498; selected Timeout at threshold 0.1000.   |
+| A retains its snapshot after Settings are disabled | `Halo snapshot A`           | AI output and decision still appeared. Safe rating (0/4), expected severity 0.1582; selected Ban at threshold 0.1500. |
+| B captures disabled AI settings                    | `Halo pengujian otomatis B` | Baseline Allowed evaluation appeared without AI output or an AI decision.                                             |
+| C captures enabled AI settings again               | `Halo pengujian otomatis C` | AI output and decision resumed. Safe rating (0/4), expected severity 0.1462; selected Timeout at threshold 0.1000.    |
 
 All four messages received baseline Allowed evaluations. AI results identified model `laskar-ks/toxic-guardrail-minilm-id-en`, revision `0e011be8ba6aca297059e7ab1a07d4f11054e653`, INT8 variant, and adapter `laskar-shadow-1`.
 

@@ -4,6 +4,7 @@ import { category, outcome } from './moderation-enums';
 
 export * from './ai-action-decision';
 export * from './ai-moderation-settings';
+export * from './ai-operational-status';
 export * from './ai-shadow';
 export * from './blacklist-action-plan';
 export * from './chat';
