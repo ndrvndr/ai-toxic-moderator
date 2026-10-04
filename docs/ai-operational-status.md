@@ -2,7 +2,7 @@
 
 ## Step 1: shared contract
 
-`aiOperationalStatus` describes automatic AI processing for one authorized channel. It is separate from ingestion state, per-message inference results, saved AI action decisions, and provider execution outcomes. The worker publishes reports through the store in an independent runtime loop. An authenticated endpoint reads these reports; the dashboard indicator is still pending.
+`aiOperationalStatus` describes automatic AI processing for one authorized channel. It is separate from ingestion state, per-message inference results, saved AI action decisions, and provider execution outcomes. The worker publishes reports through the store in an independent runtime loop. An authenticated endpoint reads these reports, and the Live page displays a channel-level indicator.
 
 | State               | Reason                    | Meaning                                                                                                  | Run scope                                             |
 | ------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -79,12 +79,24 @@ The response uses `aiOperationalStatusResponse`: `channel_id`, `availability`, `
 
 The endpoint selects only public report fields and uses the API role's existing read-only permission. It does not expose reporting owner IDs, generations, lease expiry, model configuration, or raw errors. The API sends `Cache-Control: no-store`. This read performs no inference, provider request, heartbeat update, or moderation action and consumes no YouTube quota.
 
+## Step 5: Live dashboard indicator
+
+The Live page displays a compact automatic-AI panel for each current owner/moderator channel membership. It is independent of the YouTube broadcast list, so empty results or a failed broadcast request do not prevent reading local worker status. It is channel-level current health, not the state of a historical session. History continues to show stored per-message model and execution results.
+
+The panel describes disabled worker configuration, captured disabled settings, waiting, active processing, model mismatch, single-stream capacity limits, and safe processing errors. `UNKNOWN` means no report exists. `STALE` displays **AI worker not reporting** even if the last report was `ACTIVE`. A failed status request hides the cached active label and offers a retry. Active processing never confirms deletion, timeout, or ban. Expandable details show the API check time, last heartbeat/state, channel, and reported run.
+
+`useAiOperationalStatus` polls the local authenticated endpoint every five seconds while mounted in the foreground; this adds no YouTube requests or model work. Freshness still comes from the API's database clock. The panel checks again on mount/window focus and shows a checking state while refreshing stale query data. Successful updates appear without a page reload. Cache keys include account and channel, request cancellation is forwarded, and unmount stops polling. Access errors (`401`, `403`, `404`) clear the cached report and stop interval polling; `401` also refreshes the dashboard session. Manual retry can check restored access. Other failures retain automatic polling but hide the old report until a successful response.
+
+Monitoring lifecycle and WebSocket connection status remain separate. Clearer monitoring-end reasons are the next implementation step.
+
 ## Remaining implementation
 
-1. Add a compact dashboard indicator with separate monitoring-end reasons, including quota exhaustion.
-2. Verify dashboard rendering and status transitions in the final end-to-end flow.
+1. Add clearer separate monitoring-end reasons, including quota exhaustion.
+2. Verify status transitions with a running worker in the final browser end-to-end flow.
 
 ## Validation
+
+`npm run test:live-hooks` includes `ai-operational-status.test.mts`, covering all displayed states, loading and live refresh, stale/error suppression of cached active status, empty/failed broadcast lists, operator omission, response scope validation, polling, unmount cancellation, access denial cache clearing, session refresh, and account/channel cache separation. These browser-component tests simulate the API; they do not establish a live worker connection.
 
 `npm run test:monitoring-http` verifies the status endpoint through real HTTP and the restricted API role in an isolated PostgreSQL schema. It covers all public states, unknown reports, stale active reports, channel isolation, current owner/moderator access, operator and missing-membership denial, UUID validation, session expiry/revocation, private-field omission, no-store responses, and denied API writes. Stale timestamps are simulated only in the isolated test schema.
 

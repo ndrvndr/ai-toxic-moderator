@@ -5,12 +5,14 @@ import { useSession } from '@/features/auth/hooks/use-session';
 import { ApiError, getErrorMessage, GOOGLE_LOGIN_URL } from '@/lib/api-client';
 
 import { useBroadcasts } from '../hooks/use-broadcasts';
+import { AiOperationalStatusPanel } from './ai-operational-status-panel';
 import { BroadcastList } from './broadcast-list';
 import { LiveHeader } from './live-header';
 import { SavedSessions } from './saved-sessions';
 
 export function LivePage() {
   const session = useSession();
+  const accountId = session.data?.account.id;
   const broadcasts = useBroadcasts(session.data?.account.id);
 
   const reconnect =
@@ -19,6 +21,17 @@ export function LivePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <LiveHeader refreshing={broadcasts.isFetching} onRefresh={() => void broadcasts.refetch()} />
+
+      {accountId &&
+        session.data?.memberships
+          .filter((membership) => ['OWNER', 'MODERATOR'].includes(membership.role))
+          .map((membership) => (
+            <AiOperationalStatusPanel
+              key={`${accountId}:${membership.channel_id}`}
+              accountId={accountId}
+              channelId={membership.channel_id}
+            />
+          ))}
 
       {broadcasts.isPending && (
         <p role="status" className="text-sm text-muted-foreground">

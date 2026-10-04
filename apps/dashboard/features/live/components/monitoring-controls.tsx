@@ -90,8 +90,8 @@ export function MonitoringControls({ broadcastId, liveChatAvailable }: Monitorin
       </div>
 
       <p className="text-xs leading-5 text-muted-foreground">
-        Monitoring collects chat messages. Classification and automatic moderation are not available
-        yet.
+        Monitoring collects chat messages. AI processing follows the settings captured for each run;
+        moderation execution outcomes appear on individual messages.
       </p>
 
       {run && session.data && (
