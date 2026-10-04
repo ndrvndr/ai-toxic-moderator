@@ -52,7 +52,7 @@ The native runner and provider adapters are simulated. No model download, native
 - Loss of access during inference, two-stream capacity conflicts, and revocation of actual deletion/author eligibility.
 - Rollback of an incomplete action bundle followed by recovery from committed inference/audit, and simulated executor dispatch through a committed claim with no retry of an uncertain author outcome.
 
-These tests have been added but have not been executed by the assistant. A passing operator run is required before marking database verification complete. Even a passing integration suite does not prove real model accuracy or successful requests to YouTube.
+The operator reported passing checks and continued after committing the integration step. The assistant has not executed these tests. This integration coverage does not prove real model accuracy or successful requests to YouTube.
 
 Run the new suite manually after the preceding unit/build checks:
 
@@ -80,11 +80,30 @@ After database tests pass, use a test livestream and viewer account to verify th
 
 If AI Settings or the worker model do not match, no run is selected. Verify the complete model identity before diagnosing the pipeline. If two eligible runs exist, stop the extra run and confirm automatic selection resumes.
 
+## Operator browser results — 2026-10-04
+
+The operator supplied the following Live chat results after following the automatic-mode A/B/C procedure. This is operator-reported browser evidence, not an independently executed assistant test.
+
+| Check | Message | Observed result |
+| --- | --- | --- |
+| A captures enabled AI settings | `Halo pengujian otomatis A` | AI output and decision appeared. Safe rating (0/4), expected severity 0.1498; selected Timeout at threshold 0.1000. |
+| A retains its snapshot after Settings are disabled | `Halo snapshot A` | AI output and decision still appeared. Safe rating (0/4), expected severity 0.1582; selected Ban at threshold 0.1500. |
+| B captures disabled AI settings | `Halo pengujian otomatis B` | Baseline Allowed evaluation appeared without AI output or an AI decision. |
+| C captures enabled AI settings again | `Halo pengujian otomatis C` | AI output and decision resumed. Safe rating (0/4), expected severity 0.1462; selected Timeout at threshold 0.1000. |
+
+All four messages received baseline Allowed evaluations. AI results identified model `laskar-ks/toxic-guardrail-minilm-id-en`, revision `0e011be8ba6aca297059e7ab1a07d4f11054e653`, INT8 variant, and adapter `laskar-shadow-1`.
+
+The procedure keeps the same worker running without changing a manual run ID. The reported sequence is consistent with automatic discovery and immutable captured settings. The supplied chat output does not independently establish process continuity, absence of browser refreshes, WebSocket cursor advancement, or History behavior; those details were not supplied with these results. Run IDs and captured revision numbers were also not supplied.
+
+Deletion and author executors were disabled for this procedure. AI-enabled messages showed stored plans and `Deletion pending`, with no confirmed provider outcome. This verifies inference, decision display, and planning behavior; it does not verify deletion, timeout, or ban execution in this test.
+
+The low thresholds were functional test settings. Safe greetings selected Timeout or Ban because their expected severity exceeded those thresholds. These results are not evidence of toxicity accuracy, calibrated probabilities, or suitable moderation defaults. Threshold evaluation with safe, abusive, and ambiguous examples remains required before configuring the portfolio demo.
+
 ## Remaining verification
 
-1. Run the new database suite manually and record the results.
-2. Verify real browser behavior across stop/start without run-ID edits or worker restarts.
-3. Expose model mismatch/capacity/failure status in the dashboard and evaluate the limited portfolio workload.
+1. Evaluate conservative demo thresholds using safe, abusive, and ambiguous examples; document false positives and false negatives.
+2. Confirm worker continuity, updates without refresh, History results, and WebSocket cursor behavior for the reported A/B/C sequence or a subsequent final E2E run.
+3. Expose model mismatch/capacity/failure status in the dashboard and evaluate the limited portfolio workload, including restart recovery and action deduplication.
 
 Capacity and selection changes currently produce worker log messages. A model mismatch is excluded from discovery and can appear as waiting for an eligible run; it is not yet a distinct dashboard status. Public deployment, multi-stream scheduling, and model calibration are separate work.
 
