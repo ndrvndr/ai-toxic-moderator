@@ -9,7 +9,7 @@ const { AiActionDecisionCandidateReader } = source(
   'apps/worker/src/ingestion/ai-action-decision-candidate-reader.ts',
 );
 const { AiActionDecisionCycle } = source('apps/worker/src/ingestion/ai-action-decision-cycle.ts');
-const { transaction } = source('packages/persistence/src/index.ts');
+const { transaction, readLiveEvents } = source('packages/persistence/src/index.ts');
 const { storedAiActionDecision } = source('packages/contracts/src/index.ts');
 const { AiActionPlanStore } = source('apps/worker/src/ingestion/ai-action-plan-store.ts');
 const { AiActionPlanCycle } = source('apps/worker/src/ingestion/ai-action-plan-cycle.ts');
@@ -254,6 +254,74 @@ async function activate(f) {
 const materialize = (f, record) =>
   transaction(worker, (client) => new AiActionPlanStore().save(client, record.id, f.runId));
 
+test('committed audit and plan events replay in order without duplicate notifications', async () => {
+  const f = await fixture();
+  await activate(f);
+  const record = await save(f);
+  await save(f);
+  const feed = () =>
+    transaction(api, (client) =>
+      readLiveEvents(client, {
+        channelId: f.channelId,
+        sessionId: f.sessionId,
+        after: '0',
+      }),
+    );
+  assert.deepEqual((await feed()).items, [
+    { sequence: '1', run_id: f.runId, event_type: 'chat.updated' },
+  ]);
+  await assert.rejects(
+    transaction(worker, async (client) => {
+      await new AiActionPlanStore().save(client, record.id, f.runId);
+      throw new Error('Rollback event and plans');
+    }),
+    /Rollback event and plans/,
+  );
+  assert.equal((await feed()).watermark, '1');
+  await materialize(f, record);
+  await materialize(f, record);
+  assert.deepEqual((await feed()).items, [
+    { sequence: '1', run_id: f.runId, event_type: 'chat.updated' },
+    { sequence: '2', run_id: f.runId, event_type: 'chat.updated' },
+  ]);
+  assert.equal((await feed()).watermark, '2');
+});
+
+test('event insertion failure rolls back audit or new plans even when callers catch the failure', async () => {
+  const f = await fixture();
+  await activate(f);
+  const failEvent = (client) => ({
+    query(sql, values) {
+      if (sql.includes('INSERT INTO live_events(')) throw new Error('Event insert failed');
+      return client.query(sql, values);
+    },
+  });
+  await transaction(worker, async (client) => {
+    await assert.rejects(
+      new AiActionDecisionStore().save(failEvent(client), {
+        ...f.scope,
+        model_result_id: f.modelResultId,
+      }),
+      /Event insert failed/,
+    );
+    assert.deepEqual(await counts(f, client), { decisions: 0, queued_plans: 0, events: 0 });
+  });
+  const record = await save(f);
+  await transaction(worker, async (client) => {
+    await assert.rejects(
+      new AiActionPlanStore().save(failEvent(client), record.id, f.runId),
+      /Event insert failed/,
+    );
+    assert.deepEqual(await counts(f, client), { decisions: 1, queued_plans: 0, events: 1 });
+  });
+  await materialize(f, record);
+  const counter = await api.query(
+    'SELECT last_sequence::text AS sequence FROM live_event_counters WHERE session_id=$1',
+    [f.sessionId],
+  );
+  assert.equal(counter.rows[0].sequence, '2');
+});
+
 test('AI action slots materialize atomically with worker permissions and concurrent replay reuses IDs', async () => {
   for (const [score, expected] of [
     [0.5, ['DELETE']],
@@ -277,7 +345,7 @@ test('AI action slots materialize atomically with worker permissions and concurr
       values[0].map((item) => item.id),
       values[1].map((item) => item.id),
     );
-    assert.deepEqual(await counts(f), { decisions: 1, queued_plans: expected.length, events: 0 });
+    assert.deepEqual(await counts(f), { decisions: 1, queued_plans: expected.length, events: 2 });
     assert.equal(
       (await transaction(worker, (client) => readAiActionEvidence(client, record.id, f.runId))).id,
       record.id,
@@ -318,7 +386,7 @@ test('plan loop recovers a committed audit after restart and settings edits reta
     (await new AiActionPlanCycle(f.runId, worker).tick(new AbortController().signal)).kind,
     'IDLE',
   );
-  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 2, events: 0 });
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 2, events: 2 });
 });
 
 test('no-action audits, unavailable authors and stopped runs never invent author actions', async () => {
@@ -428,10 +496,10 @@ test('plan failure or caller rollback never leaves one half of an AI action bund
       new AiActionPlanStore().save(failing, record.id, f.runId),
       /Author slot failed/,
     );
-    assert.equal((await counts(f, client)).queued_plans, 0);
+    assert.deepEqual(await counts(f, client), { decisions: 1, queued_plans: 0, events: 1 });
   });
   await assert.rejects(materialize({ ...f, runId: randomUUID() }, record), /evidence/);
-  assert.equal((await counts(f)).queued_plans, 0);
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 1 });
 });
 
 test('AI executor authorization enforces configured run, kill switches, memberships and run state', async () => {
@@ -608,7 +676,7 @@ test('worker audit waits for terminal inference and restart does not repeat comp
     (await transaction(worker, (client) => new AiActionDecisionStore().find(client, f.scope))).id,
     original.id,
   );
-  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 1 });
 });
 
 test('committed shadow output remains recoverable when classification becomes available later', async () => {
@@ -625,7 +693,7 @@ test('committed shadow output remains recoverable when classification becomes av
   );
   const cycle = new AiActionDecisionCycle(f.runId, reader, worker);
   assert.equal((await cycle.tick(new AbortController().signal)).kind, 'INSERTED');
-  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 1 });
 });
 
 test('worker audits captured blacklist and disabled/missing policies without creating AI results', async () => {
@@ -650,7 +718,7 @@ test('worker audits captured blacklist and disabled/missing policies without cre
       ).rowCount,
       0,
     );
-    assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+    assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 1 });
   }
 });
 
@@ -700,7 +768,7 @@ test('migration is repeatable and independent AI plans persist as audit only und
     assert.equal(stored.model_result_id, f.modelResultId);
     assert.equal(stored.decision.snapshot.settings_revision, 1);
     assert.equal(stored.decision.context.external_message_id, f.externalMessageId);
-    assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+    assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 1 });
     const { reused, ...record } = stored;
     assert.deepEqual(
       await transaction(worker, (client) => new AiActionDecisionStore().find(client, f.scope)),
@@ -756,7 +824,7 @@ test('competing writers create one decision and return the identical persisted a
   assert.equal(new Set(values.map((value) => value.id)).size, 1);
   assert.equal(values.filter((value) => !value.reused).length, 1);
   for (const value of values) assert.deepEqual(value.decision, values[0].decision);
-  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 1 });
 });
 
 test('replay survives settings edits and another supplied model reference without changing the first decision', async () => {
@@ -832,7 +900,7 @@ test('captured blacklist is recomputed from observed text and suppresses AI plan
   assert.ok(stored.blacklist.selected_rule_id);
   assert.equal(stored.decision.model_output, null);
   assert.deepEqual(actions(stored), []);
-  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 0 });
+  assert.deepEqual(await counts(f), { decisions: 1, queued_plans: 0, events: 1 });
 });
 
 test('missing author preserves deletion and explicit unavailable-target provenance', async () => {

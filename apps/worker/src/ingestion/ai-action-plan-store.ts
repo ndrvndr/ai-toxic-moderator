@@ -1,5 +1,5 @@
 import { uuid } from '@moderator/contracts';
-import type { PoolClient } from '@moderator/persistence';
+import { appendLiveEvent, type PoolClient } from '@moderator/persistence';
 import { randomUUID } from 'node:crypto';
 import { ActionPlanStore } from './action-plan-store';
 import { AI_UNOPPOSED_SQL, readAiActionEvidence } from './ai-dispatch-provenance';
@@ -30,6 +30,14 @@ export class AiActionPlanStore {
       if (eligible.rows.length && record.decision.reason_code === 'THRESHOLD_MET') {
         const store = new ActionPlanStore();
         for (const plan of record.decision.plans) plans.push(await store.save(client, plan));
+      }
+      if (plans.some((plan) => !plan.reused)) {
+        await appendLiveEvent(client, {
+          channelId: record.decision.context.channel_id,
+          sessionId: record.decision.context.session_id,
+          runId,
+          type: 'chat.updated',
+        });
       }
       await client.query(`RELEASE SAVEPOINT ${savepoint}`);
       return plans;

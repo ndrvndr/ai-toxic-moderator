@@ -8,7 +8,7 @@ import {
   type StoredAiActionDecision,
 } from '@moderator/contracts';
 import { AiActionPlanner, BlacklistActionPlanner } from '@moderator/moderation-core';
-import type { PoolClient } from '@moderator/persistence';
+import { appendLiveEvent, type PoolClient } from '@moderator/persistence';
 import { randomUUID } from 'node:crypto';
 import { AiShadowStore } from './ai-shadow-store';
 import { RunBlacklistMatcher } from './run-blacklist-matcher';
@@ -141,6 +141,12 @@ export class AiActionDecisionStore {
         ],
       );
       const stored = readRow(inserted.rows[0]);
+      await appendLiveEvent(client, {
+        channelId: scope.channel_id,
+        sessionId: scope.session_id,
+        runId: scope.run_id,
+        type: 'chat.updated',
+      });
       await client.query(`RELEASE SAVEPOINT ${savepoint}`);
       return { ...stored, reused: false };
     } catch (error) {

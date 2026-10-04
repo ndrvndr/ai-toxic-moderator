@@ -1,5 +1,6 @@
 import type { ChatObservation } from '@moderator/contracts';
 
+import { ChatAiDecision } from './chat-ai-decision';
 import { ChatAiShadow } from './chat-ai-shadow';
 import { ChatAuthorAction } from './chat-author-action';
 import { ChatBlacklist } from './chat-blacklist';
@@ -50,6 +51,7 @@ export function ChatMessage({ message }: { message: ChatObservation }) {
       <ChatEvaluation evaluation={message.evaluation} />
       <ChatBlacklist decision={message.blacklist} />
       <ChatAiShadow result={message.ai_shadow} />
+      <ChatAiDecision decision={message.ai_decision} />
       <ChatDeletion deletion={message.deletion} />
       <ChatAuthorAction action={message.author_action} />
     </li>

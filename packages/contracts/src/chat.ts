@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { aiShadowSummary } from './ai-shadow';
+import { chatAiDecision } from './chat-ai-decision';
 import { customBlacklistRule } from './custom-blacklist';
 import { category, outcome } from './moderation-enums';
 
@@ -160,9 +161,17 @@ export const chatObservation = z
     deletion: chatDeletion.nullable().optional(),
     author_action: chatAuthorAction.nullable().optional(),
     ai_shadow: aiShadowSummary.nullable().optional(),
+    ai_decision: chatAiDecision.nullable().optional(),
     blacklist: chatBlacklistDecision.nullable().optional(),
   })
   .superRefine((value, context) => {
+    if (value.ai_decision && value.event_type !== 'textMessageEvent') {
+      context.addIssue({
+        code: 'custom',
+        path: ['ai_decision'],
+        message: 'AI policy evidence belongs to an observed text message.',
+      });
+    }
     if (
       value.blacklist &&
       (value.evaluation_status !== 'ACTION_REQUIRED' ||

@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Steps 1–8 define shared settings contracts, immutable revisions and run snapshots, authorized settings controls, the threshold planner, decision audits, and executor integration. The explicitly configured AI run can now materialize persisted action slots and dispatch them through existing executors when its captured settings and worker action switches enable enforcement. Inference is still scoped to one configured run; saving channel settings does not automatically enable processing for every livestream.
+Steps 1–9 define shared settings contracts, immutable revisions and run snapshots, authorized settings controls, the threshold planner, decision audits, executor integration, and public decision summaries in Live and History chat. The explicitly configured AI run can materialize persisted action slots and dispatch them through existing executors when its captured settings and worker action switches enable enforcement. Inference is still scoped to one configured run; saving channel settings does not automatically enable processing for every livestream.
 
 The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
 
@@ -160,7 +160,7 @@ Saving missing output creates a terminal no-action audit. A late model result ca
 
 Database guards check classification/observation/run/model scope, captured snapshot equality, observed targets, threshold selection, independent plan slots, and the exact decision payload. Updates and deletes are rejected. The store recomputes literal blacklist matches from captured configuration; SQL metadata validation alone is not proof of a text match or authorization to dispatch.
 
-The decision store itself only saves embedded audit data. Step 8 adds a separate materialization cycle that inserts executor-visible plans from this immutable audit. The worker role has SELECT/INSERT on the audit table; the API role has SELECT only. Neither role can update, delete, or truncate it. The separate cycle requires no new table or migration and does not rewrite the audit.
+The decision store saves embedded audit data and appends one transactional `chat.updated` event for a new audit. Replay does not append another event. Step 8 adds a separate materialization cycle that inserts executor-visible plans from this immutable audit. The worker role has SELECT/INSERT on the audit table; the API role has SELECT only. Neither role can update, delete, or truncate it. The separate cycle requires no new table or migration and does not rewrite the audit.
 
 Run these checks manually, using an admin-capable local `TEST_DATABASE_URL` for the isolated database suite:
 
@@ -220,7 +220,7 @@ All `ai-` policy names are reserved. Candidate discovery and executor eligibilit
 
 Existing authorization checks still apply: active original run, open YouTube session and chat, current owner/moderator memberships, credential scope, and the corresponding `YOUTUBE_DELETE_ENABLED` or `YOUTUBE_BAN_ENABLED` switch. AI dispatch additionally requires that AI initialization succeeded and the plan belongs to the explicitly configured run. Existing controlled test policy restrictions still apply. Removing AI opt-in blocks pending AI dispatch without preventing built-in actions.
 
-The existing executors continue to commit a dispatch claim before contacting YouTube and recheck eligibility after credential refresh and claim creation. Per-message deletion deduplication, per-observation author execution, timeout spacing, and conservative `UNKNOWN` handling are reused. No automatic author retry is added. Plans are not replaced or escalated after another execution has started. Existing execution events update chat over WebSocket; displaying the AI decision and suppression reason remains step 9.
+The existing executors continue to commit a dispatch claim before contacting YouTube and recheck eligibility after credential refresh and claim creation. Per-message deletion deduplication, per-observation author execution, timeout spacing, and conservative `UNKNOWN` handling are reused. No automatic author retry is added. Plans are not replaced or escalated after another execution has started. Execution events update chat over WebSocket; step 9 also displays the saved AI decision and planning state.
 
 Enabled captured settings can now cause real moderation requests when the configured run is active and executor switches are enabled. Keep `automatic_actions_enabled` disabled when evaluating scores without enforcement. Disabling or editing channel settings affects new runs; the runtime action switches remain the way to stop execution for an existing captured run.
 
@@ -241,3 +241,41 @@ npm run test:live-hooks
 ```
 
 The database suites require a local admin-capable `TEST_DATABASE_URL` and use isolated schemas and restricted worker roles. Added checks cover concurrent materialization, rollback of both slots, replay after restart, built-in priority, reserved policy rejection, current access and run scope, committed claims, and non-redispatch of uncertain author attempts. Provider responses are simulated; these checks consume no YouTube quota.
+
+## Public AI decision summaries
+
+The authorized chat endpoint exposes optional nullable `ai_decision` on each text observation. An absent audit returns `null`; it does not imply pending inference, an allowed message, or a selected action. Existing baseline evaluations and outcome/category filters remain independent of AI decisions. Live and History use the same chat message component.
+
+The summary includes the immutable reason code, selected tier and threshold, captured settings revision and model identity, considered model identity and severity score, requested timeout duration when applicable, author planning status, and decision timestamp. It refers to the original observation's run and stored audit, even after settings edits or a later model result. The separate model output panel can show a newer result. The public response omits full settings, action plan payloads, internal audit/result/classification IDs, raw provider payloads, and credentials.
+
+Planning state is read from the same database snapshot as chat:
+
+- `NOT_SELECTED`: the audit selected no AI action; its reason explains the skip.
+- `BUILT_IN_PRIORITY`: an actionable built-in or blacklist plan for this observation takes priority. The API and worker share the same arbitration SQL.
+- `AWAITING_PLANS`: the original run is active but some selected action slots are missing.
+- `PLANS_CREATED`: all selected action slots are stored. This is not a provider confirmation or proof that dispatch is currently authorized.
+- `RUN_INACTIVE`: some selected slots are missing and the original run is inactive.
+
+Deletion and author execution panels remain the source of provider outcomes. A saved AI timeout or ban tier does not establish the author's current YouTube restriction. `TARGET_UNAVAILABLE` explains that only deletion was planned when the author target could not be identified. Severity remains a model score, not a probability of a policy violation.
+
+New audit insertion emits one `chat.updated` event. Materializing any new slots in a bundle emits one additional event after all slots are saved. Both events commit with their resource changes; savepoint failure or caller rollback removes the new event and its cursor increment. Replaying either operation appends nothing. Existing WebSocket refresh handling updates the shared chat cache without a new event type or client protocol.
+
+Run these checks manually; no migration or new environment variable is needed for this step:
+
+```powershell
+npm run format
+npm run check
+npm run build:core
+npm run build --workspace @moderator/api
+npm run build --workspace @moderator/worker
+npm run test:chat-ai-decision
+npm run test:ai-action-decision-store
+npm run test:monitoring-http
+npm run test:live-hooks
+npm run test:ai-action-plan-cycle
+npm run build --workspace @moderator/dashboard
+```
+
+The contract and component tests require no model downloads or YouTube quota. Database and HTTP tests use isolated local fixtures with simulated model results. They cover provenance scope, current authorization, immutable evidence after model/settings changes, baseline filters, planning versus execution, transactional event replay, and rollback. They do not establish real model accuracy or successful moderation on YouTube.
+
+For browser verification, select the configured AI run and a new text message. Confirm that its AI decision panel appears without refreshing, identifies the captured settings and considered score, and shows the selected tier or explicit skip reason. Check that later action outcomes appear separately. Open the saved session in History and compare the same evidence. Existing messages without an audit should have no AI decision panel.

@@ -26,5 +26,6 @@ export async function transaction<T>(
   }
 }
 export type { PoolClient } from 'pg';
+export * from './ai-dispatch-policy';
 export { BAN_DISPATCH_ALLOWED_SQL, BAN_DISPATCH_BLOCK_REASON_SQL } from './ban-dispatch-policy';
 export * from './live-events';

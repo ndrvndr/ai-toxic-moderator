@@ -6,6 +6,9 @@ const { Client, Pool } = require('pg');
 const { createApi } = require('../apps/api/dist/app');
 const { GoogleService } = require('../apps/api/dist/auth/google.service');
 const { loadConfig } = require('@moderator/config');
+const { source } = require('./helpers/source.cjs');
+const { AiActionDecisionStore } = source('apps/worker/src/ingestion/ai-action-decision-store.ts');
+const { AiActionPlanStore } = source('apps/worker/src/ingestion/ai-action-plan-store.ts');
 const {
   startMonitoringResponse,
   stopMonitoringResponse,
@@ -2328,6 +2331,202 @@ test('chat returns captured blacklist provenance separately from provider outcom
       .items.find((value) => value.id === observationId);
     assert.equal(updatedItem.evaluation_status, 'ALLOW');
     assert.equal(updatedItem.blacklist, null);
+  }
+});
+
+async function aiChatFixture() {
+  const initial = await startRun();
+  const model = {
+    model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
+    model_revision: 'a'.repeat(40),
+    model_variant: 'INT8',
+    adapter_version: 'http-shadow-1',
+  };
+  const configuration = {
+    schema_version: 1,
+    automatic_actions_enabled: true,
+    model,
+    score_metric: 'EXPECTED_SEVERITY',
+    delete: { enabled: true, threshold: 0.4 },
+    timeout: { enabled: true, threshold: 0.6, duration_seconds: 60 },
+    ban: { enabled: true, threshold: 0.9 },
+  };
+  await admin.query(
+    `INSERT INTO channel_ai_moderation_settings(id,channel_id,revision,configuration,created_by)
+    VALUES($1,$2,1,$3::jsonb,$4)`,
+    [randomUUID(), initial.channel_id, JSON.stringify(configuration), accountId],
+  );
+  const stopped = await request(`${runPath(initial)}/stop`, { method: 'POST', body: {} });
+  assert.equal(stopped.status, 200);
+  const restarted = await request('/v1/monitoring/start', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': randomUUID() },
+    body: { youtube_broadcast_id: initial.youtube_broadcast_id },
+  });
+  assert.equal(restarted.status, 200, await restarted.clone().text());
+  const run = startMonitoringResponse.parse(await restarted.json()).run;
+  const observationId = await insertChatObservation(run, {
+    authorChannelId: `UC${'a'.repeat(22)}`,
+  });
+  const siblingId = await insertChatObservation(run, { receivedAt: '2026-01-01T00:00:00.123455Z' });
+  const classificationId = randomUUID();
+  await admin.query(
+    `INSERT INTO youtube_chat_classifications(id,channel_id,session_id,observation_id,run_id,
+    classifier_version,policy_version,outcome,primary_category,severity,reason_code,reason,signals)
+    VALUES($1,$2,$3,$4,$5,'fixture-1','policy-1','ALLOW',NULL,0,'NO_RULE_MATCH','Baseline fixture.','[]'::jsonb)`,
+    [classificationId, run.channel_id, run.session_id, observationId, run.id],
+  );
+  await insertChatShadow(run, observationId);
+  const resultId = (
+    await admin.query('SELECT id FROM youtube_ai_shadow_results WHERE observation_id=$1', [
+      observationId,
+    ])
+  ).rows[0].id;
+  const audit = await aiChatTransaction((client) =>
+    new AiActionDecisionStore().save(client, {
+      channel_id: run.channel_id,
+      session_id: run.session_id,
+      run_id: run.id,
+      observation_id: observationId,
+      classification_id: classificationId,
+      model_result_id: resultId,
+    }),
+  );
+  return { run, observationId, siblingId, classificationId, audit, configuration };
+}
+
+async function aiChatTransaction(work) {
+  await admin.query('BEGIN');
+  try {
+    const value = await work(admin);
+    await admin.query('COMMIT');
+    return value;
+  } catch (error) {
+    await admin.query('ROLLBACK');
+    throw error;
+  }
+}
+
+test('chat exposes captured AI decisions separately from latest model output, baseline and provider outcomes', async () => {
+  const f = await aiChatFixture();
+  const read = async () => {
+    const response = await request(chatPath(f.run));
+    assert.equal(response.status, 200, await response.clone().text());
+    const page = chatPage.parse(await response.json());
+    assert.equal(page.items.find((item) => item.id === f.siblingId).ai_decision, null);
+    return page.items.find((item) => item.id === f.observationId);
+  };
+  const first = await read();
+  assert.equal(first.ai_decision.reason_code, 'THRESHOLD_MET');
+  assert.equal(first.ai_decision.selected_tier, 'DELETE');
+  assert.equal(first.ai_decision.selected_threshold, 0.4);
+  assert.equal(first.ai_decision.severity_score, 0.56);
+  assert.equal(first.ai_decision.settings_revision, 1);
+  assert.equal(first.ai_decision.planning_status, 'RUN_INACTIVE');
+  assert.equal(first.evaluation_status, 'ALLOW');
+  assert.equal(first.deletion, null);
+  assert.equal(first.author_action, null);
+  for (const key of [
+    'id',
+    'model_result_id',
+    'classification_id',
+    'context',
+    'configuration',
+    'plans',
+    'blacklist',
+    'credentials',
+    'payload',
+  ])
+    assert.equal(key in first.ai_decision, false, key);
+
+  await admin.query(
+    `UPDATE monitoring_runs SET status='RUNNING', started_at=clock_timestamp() WHERE id=$1`,
+    [f.run.id],
+  );
+  assert.equal((await read()).ai_decision.planning_status, 'AWAITING_PLANS');
+  await aiChatTransaction((client) => new AiActionPlanStore().save(client, f.audit.id, f.run.id));
+  const ready = await read();
+  assert.equal(ready.ai_decision.planning_status, 'PLANS_CREATED');
+  assert.deepEqual(ready.deletion, { action: 'DELETE', status: 'PENDING' });
+  assert.equal(ready.author_action, null);
+
+  await admin.query(
+    `INSERT INTO channel_ai_moderation_settings(id,channel_id,revision,configuration,created_by)
+    VALUES($1,$2,2,$3::jsonb,$4)`,
+    [
+      randomUUID(),
+      f.run.channel_id,
+      JSON.stringify({ ...f.configuration, automatic_actions_enabled: false }),
+      accountId,
+    ],
+  );
+  await insertChatShadow(f.run, f.observationId, {
+    revision: 'b'.repeat(40),
+    status: 'ERROR',
+    createdAt: '2026-10-03T00:00:01Z',
+  });
+  const latest = await read();
+  assert.equal(latest.ai_shadow.model_revision, 'b'.repeat(40));
+  assert.deepEqual(latest.ai_decision, ready.ai_decision);
+  assert.equal(latest.ai_decision.result_model.model_revision, 'a'.repeat(40));
+  const allowed = await request(`${chatPath(f.run)}?outcome=ALLOW`);
+  assert.equal(allowed.status, 200);
+  assert.equal(chatPage.parse(await allowed.json()).items.length, 1);
+  const review = await request(`${chatPath(f.run)}?outcome=REVIEW`);
+  assert.equal(review.status, 200);
+  assert.equal(chatPage.parse(await review.json()).items.length, 0);
+  await admin.query(
+    `UPDATE monitoring_runs SET status='STOPPED', stop_requested_at=clock_timestamp(),
+    finished_at=clock_timestamp() WHERE id=$1`,
+    [f.run.id],
+  );
+  assert.equal((await read()).ai_decision.planning_status, 'PLANS_CREATED');
+
+  await admin.query(
+    `INSERT INTO youtube_moderation_action_plans(id,channel_id,session_id,classification_id,policy_version,action,reason)
+    VALUES($1,$2,$3,$4,'explicit-rule','DELETE','Built-in priority')`,
+    [randomUUID(), f.run.channel_id, f.run.session_id, f.classificationId],
+  );
+  assert.equal((await read()).ai_decision.planning_status, 'BUILT_IN_PRIORITY');
+});
+
+test('AI decision summaries obey current chat authentication and channel access', async () => {
+  const f = await aiChatFixture();
+  assert.equal((await request(chatPath(f.run), { headers: { Cookie: '' } })).status, 401);
+  await admin.query(
+    "UPDATE channel_memberships SET role='MODERATOR' WHERE channel_id=$1 AND account_id=$2",
+    [f.run.channel_id, accountId],
+  );
+  const moderator = await request(chatPath(f.run));
+  assert.equal(moderator.status, 200);
+  assert.ok(
+    chatPage.parse(await moderator.json()).items.find((item) => item.id === f.observationId)
+      .ai_decision,
+  );
+  const foreign = await startRun();
+  assert.equal(
+    (await request(`/v1/channels/${foreign.channel_id}/sessions/${f.run.session_id}/chat`)).status,
+    404,
+  );
+  const otherChat = await insertChatObservation(foreign);
+  const other = await request(chatPath(foreign));
+  assert.equal(other.status, 200);
+  assert.equal(
+    chatPage.parse(await other.json()).items.find((item) => item.id === otherChat).ai_decision,
+    null,
+  );
+  for (const role of ['OPERATOR', null]) {
+    if (role)
+      await admin.query(
+        'UPDATE channel_memberships SET role=$3 WHERE channel_id=$1 AND account_id=$2',
+        [f.run.channel_id, accountId, role],
+      );
+    else
+      await admin.query('DELETE FROM channel_memberships WHERE channel_id=$1 AND account_id=$2', [
+        f.run.channel_id,
+        accountId,
+      ]);
+    assert.equal((await request(chatPath(f.run))).status, 403);
   }
 });
 

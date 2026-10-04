@@ -1,9 +1,14 @@
 import { chatCursor, chatPage, chatQuery, uuid } from '@moderator/contracts';
-import { BAN_DISPATCH_BLOCK_REASON_SQL, transaction } from '@moderator/persistence';
+import {
+  AI_UNOPPOSED_SQL,
+  BAN_DISPATCH_BLOCK_REASON_SQL,
+  transaction,
+} from '@moderator/persistence';
 import { Controller, Get, Module, Param, Query, Req } from '@nestjs/common';
 
 import { DatabaseService } from '../database.module';
 import { failure, type ApiRequest } from '../http';
+import { summarizeChatAiDecision } from './chat-ai-decision';
 import { summarizeChatBlacklist } from './chat-blacklist';
 
 @Controller('v1/channels/:channel_id/sessions/:session_id/chat')
@@ -105,6 +110,11 @@ class ChatController {
         author_action_block_reason: string | null;
         author_action_has_evidence: boolean | null;
         ai_shadow: unknown;
+        first_observed_run_id: string;
+        ai_record: unknown;
+        ai_built_in_priority: boolean;
+        ai_plans_created: boolean;
+        ai_run_active: boolean;
       }>(
         `
           SELECT
@@ -145,8 +155,39 @@ class ChatController {
             author_action.author_action_duration,
             author_action.author_action_block_reason,
             author_action.author_action_has_evidence,
-            shadow.summary AS ai_shadow
+            shadow.summary AS ai_shadow,
+            first_observed_run_id,
+            ai.record AS ai_record,
+            ai.built_in_priority AS ai_built_in_priority,
+            ai.plans_created AS ai_plans_created,
+            ai.run_active AS ai_run_active
           FROM youtube_chat_observations
+          LEFT JOIN LATERAL (
+            SELECT to_jsonb(d)-'channel_id'-'session_id'-'run_id'-'observation_id'-'classification_id' AS record,
+              NOT (${AI_UNOPPOSED_SQL}) AS built_in_priority,
+              (r.status='RUNNING' AND r.stop_requested_at IS NULL AND r.finished_at IS NULL) AS run_active,
+              NOT EXISTS (
+                SELECT 1 FROM jsonb_array_elements(d.decision->'plans') planned
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM youtube_moderation_action_plans p
+                  WHERE p.classification_id=d.classification_id AND p.channel_id=d.channel_id
+                    AND p.session_id=d.session_id AND p.policy_version=planned->>'policy_version'
+                    AND p.action=planned->>'action' AND p.reason=planned->>'reason'
+                    AND p.duration_seconds IS NOT DISTINCT FROM (planned->>'duration_seconds')::bigint
+                )
+              ) AS plans_created
+            FROM youtube_ai_action_decisions d
+            JOIN monitoring_runs r ON r.id=d.run_id AND r.channel_id=d.channel_id AND r.session_id=d.session_id
+            JOIN youtube_chat_observations o ON o.id=d.observation_id AND o.channel_id=d.channel_id
+              AND o.session_id=d.session_id AND o.first_observed_run_id=d.run_id
+            JOIN youtube_chat_classifications c ON c.id=d.classification_id AND c.run_id=d.run_id
+              AND c.observation_id=o.id AND c.channel_id=d.channel_id AND c.session_id=d.session_id
+            WHERE d.channel_id=youtube_chat_observations.channel_id
+              AND d.session_id=youtube_chat_observations.session_id
+              AND d.observation_id=youtube_chat_observations.id
+              AND d.run_id=youtube_chat_observations.first_observed_run_id
+            LIMIT 1
+          ) ai ON true
           LEFT JOIN LATERAL (
             SELECT jsonb_build_object(
               'model_id', s.model_id,
@@ -315,6 +356,22 @@ FROM youtube_ban_executions e
           author_display_name: row.author_display_name,
           evaluation_status: row.evaluation_outcome ?? 'NOT_EVALUATED',
           ai_shadow: row.ai_shadow ?? null,
+          ai_decision: summarizeChatAiDecision(
+            row.ai_record,
+            {
+              channelId,
+              sessionId,
+              observationId: row.id,
+              runId: row.first_observed_run_id,
+              externalMessageId: row.external_message_id,
+              authorChannelId: row.author_channel_id,
+            },
+            {
+              builtInPriority: row.ai_built_in_priority,
+              plansCreated: row.ai_plans_created,
+              runActive: row.ai_run_active,
+            },
+          ),
           blacklist: summarizeChatBlacklist(row.blacklist_bundle, row.blacklist_snapshot, {
             channelId,
             sessionId,

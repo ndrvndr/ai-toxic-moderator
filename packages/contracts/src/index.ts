@@ -7,6 +7,7 @@ export * from './ai-moderation-settings';
 export * from './ai-shadow';
 export * from './blacklist-action-plan';
 export * from './chat';
+export * from './chat-ai-decision';
 export * from './custom-blacklist';
 export * from './history-action-statistics';
 export * from './history-statistics';
