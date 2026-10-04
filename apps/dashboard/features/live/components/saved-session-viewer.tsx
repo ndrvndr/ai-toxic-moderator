@@ -8,6 +8,7 @@ import { getErrorMessage } from '@/lib/api-client';
 import { useLiveEvents } from '../hooks/use-live-events';
 import { useMonitoring } from '../hooks/use-monitoring';
 import { LiveChatPanel } from './live-chat-panel';
+import { MonitoringRunStatus } from './monitoring-run-status';
 
 type SavedSessionViewerProps = {
   accountId: string;
@@ -61,7 +62,7 @@ export function SavedSessionViewer({ accountId, session }: SavedSessionViewerPro
 
   return (
     <div className="space-y-3">
-      <p className="text-sm">Monitoring: {run.status}</p>
+      <MonitoringRunStatus run={run} />
 
       <LiveChatPanel accountId={accountId} run={run} connectionStatus={connectionStatus} />
     </div>

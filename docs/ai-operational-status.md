@@ -87,16 +87,23 @@ The panel describes disabled worker configuration, captured disabled settings, w
 
 `useAiOperationalStatus` polls the local authenticated endpoint every five seconds while mounted in the foreground; this adds no YouTube requests or model work. Freshness still comes from the API's database clock. The panel checks again on mount/window focus and shows a checking state while refreshing stale query data. Successful updates appear without a page reload. Cache keys include account and channel, request cancellation is forwarded, and unmount stops polling. Access errors (`401`, `403`, `404`) clear the cached report and stop interval polling; `401` also refreshes the dashboard session. Manual retry can check restored access. Other failures retain automatic polling but hide the old report until a successful response.
 
-Monitoring lifecycle and WebSocket connection status remain separate. Clearer monitoring-end reasons are the next implementation step.
+Monitoring lifecycle and WebSocket connection status remain separate.
+
+## Step 6: monitoring lifecycle explanations
+
+Live monitoring controls and the saved-session viewer shared by Live/History use `MonitoringRunStatus`. It translates terminal quota, credential, permission, disabled/missing chat, checkpoint, provider-response, retry-delay, availability, and rate-limit errors into actionable messages. Unknown or absent failure codes use a generic explanation; arbitrary error text is not echoed into the page.
+
+`YOUTUBE_QUOTA_EXCEEDED` explains that chat collection stopped and the failed run does not retry automatically. The user can start monitoring again after quota becomes available if the broadcast is still active. No reset time is predicted and no automatic restart is added. A running run with a stored transient provider failure is described as retrying; it is distinguished from a terminal run that exhausted retries. Successful polling clears the existing error code through the unchanged ingestion pipeline.
+
+Starting and stopping labels do not claim chat ingestion is active. A stopped run with `stop_requested_at` describes the recorded stop request. Without that timestamp, the UI explains that collection ended but the saved run does not identify its exact end reason; it does not infer that the livestream ended. Stored chat remains readable after failure or stopping. A connected WebSocket can continue serving saved updates while YouTube collection has ended, and the UI preserves that separate connection indicator. Lifecycle explanations also remain separate from current channel AI health and provider execution outcomes.
 
 ## Remaining implementation
 
-1. Add clearer separate monitoring-end reasons, including quota exhaustion.
-2. Verify status transitions with a running worker in the final browser end-to-end flow.
+1. Verify status transitions with a running worker in the final browser end-to-end flow.
 
 ## Validation
 
-`npm run test:live-hooks` includes `ai-operational-status.test.mts`, covering all displayed states, loading and live refresh, stale/error suppression of cached active status, empty/failed broadcast lists, operator omission, response scope validation, polling, unmount cancellation, access denial cache clearing, session refresh, and account/channel cache separation. These browser-component tests simulate the API; they do not establish a live worker connection.
+`npm run test:live-hooks` includes `ai-operational-status.test.mts`, covering all displayed states, loading and live refresh, stale/error suppression of cached active status, empty/failed broadcast lists, operator omission, response scope validation, polling, unmount cancellation, access denial cache clearing, session refresh, and account/channel cache separation. `monitoring-run-status.test.mts` covers lifecycle states, known terminal codes, safe unknown-code fallback, recorded stop requests, transient retry recovery, quota transitions in Live/History without refresh, preserved stored chat and connection status, no automatic restart, failed monitoring reads, and starting/stopping chat summaries. These browser-component tests simulate the API; they do not establish a live worker connection or exhaust real YouTube quota.
 
 `npm run test:monitoring-http` verifies the status endpoint through real HTTP and the restricted API role in an isolated PostgreSQL schema. It covers all public states, unknown reports, stale active reports, channel isolation, current owner/moderator access, operator and missing-membership denial, UUID validation, session expiry/revocation, private-field omission, no-store responses, and denied API writes. Stale timestamps are simulated only in the isolated test schema.
 

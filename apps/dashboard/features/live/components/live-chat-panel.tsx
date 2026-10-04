@@ -72,7 +72,14 @@ function LiveChatPanelContent({ accountId, run, connectionStatus }: LiveChatPane
         <div>
           <h3 className="font-semibold">Chat</h3>
           <p className="text-xs text-muted-foreground">
-            Newest first · {active ? 'Monitoring active' : 'Monitoring ended'}
+            Newest first ·{' '}
+            {run.status === 'STARTING'
+              ? 'Monitoring starting'
+              : run.status === 'STOPPING'
+                ? 'Monitoring stopping'
+                : active
+                  ? 'Monitoring running'
+                  : 'Monitoring ended'}
           </p>
 
           <p role="status" className="text-xs text-muted-foreground">

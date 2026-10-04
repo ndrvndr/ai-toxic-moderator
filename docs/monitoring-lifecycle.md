@@ -88,3 +88,22 @@ Chat completion is persisted with the final batch so a replacement worker can
 finish the run without fetching that chat again.
 
 See [YouTube ingestion](youtube-ingestion.md) for setup and verification.
+
+## Dashboard explanations
+
+Live and saved-session chat display the same monitoring lifecycle explanations.
+Quota exhaustion, Google reconnection, YouTube permission, unavailable chat,
+checkpoint errors, and exhausted retries have distinct messages. Unknown error
+codes receive a generic explanation instead of exposing arbitrary error text.
+Quota failures do not retry or restart automatically; wait until quota is
+available before starting another run for an active broadcast.
+
+`STOPPED` with a recorded stop request is shown separately from a run that ended
+without one. The latter does not imply a known livestream end reason: the
+current saved run has no dedicated normal-end reason field. `RUNNING` with a
+stored transient error is shown as retrying; starting/stopping labels do not
+claim active ingestion. Stored chat remains available after collection ends,
+and a connected WebSocket does not mean YouTube ingestion or AI is active.
+
+See [AI operational status](ai-operational-status.md) for the separate channel AI
+indicator and validation scope.

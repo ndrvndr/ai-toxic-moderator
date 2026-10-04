@@ -7,6 +7,7 @@ import { getErrorMessage } from '@/lib/api-client';
 import { useLiveEvents } from '../hooks/use-live-events';
 import { useMonitoring } from '../hooks/use-monitoring';
 import { LiveChatPanel } from './live-chat-panel';
+import { MonitoringRunStatus } from './monitoring-run-status';
 
 type MonitoringControlsProps = {
   broadcastId: string;
@@ -42,22 +43,20 @@ export function MonitoringControls({ broadcastId, liveChatAvailable }: Monitorin
 
   return (
     <div className="space-y-3">
-      <p role="status" className="text-sm">
-        {monitoring.isPending
-          ? 'Loading monitoring status…'
-          : monitoring.isError
-            ? 'Monitoring status is unavailable.'
-            : `Monitoring: ${run?.status ?? 'NOT STARTED'}`}
-      </p>
+      {monitoring.isPending || monitoring.isError ? (
+        <p role="status" className="text-sm">
+          {monitoring.isPending
+            ? 'Loading monitoring status…'
+            : 'Monitoring status is unavailable.'}
+        </p>
+      ) : (
+        <MonitoringRunStatus run={run ?? null} />
+      )}
 
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {getErrorMessage(error)}
         </p>
-      )}
-
-      {run?.status === 'FAILED' && run.last_error_code && (
-        <p className="text-sm text-destructive">Monitoring ended: {run.last_error_code}</p>
       )}
 
       <div className="flex flex-wrap gap-2">
