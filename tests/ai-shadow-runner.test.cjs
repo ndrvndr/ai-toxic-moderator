@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { source } = require('./helpers/source.cjs');
 const { AiShadowRunner } = source('apps/worker/src/ingestion/ai-shadow-runner.ts');
+const { AiShadowCoordinator } = source('apps/worker/src/ingestion/ai-shadow-coordinator.ts');
 
 const observation = {
   channel_id: '10000000-0000-4000-8000-000000000001',
@@ -108,20 +109,83 @@ test('timeout kills the child, rejects late output, and restarts only for a new 
   }
 });
 
-test('native crash becomes an error and three consecutive failures stop restart attempts', async () => {
+test('native crashes open a cooldown and a failed recovery probe starts another cooldown', async () => {
   let spawned = 0;
-  const runner = new AiShadowRunner(options, () => {
-    spawned++;
-    return new FakeChild('crash');
-  });
+  let now = 0;
+  const runner = new AiShadowRunner(
+    options,
+    () => {
+      spawned++;
+      return new FakeChild('crash');
+    },
+    () => now,
+  );
   try {
     for (let i = 0; i < 3; i++)
       assert.equal((await runner.predict(observation, 'hello')).error_code, 'INFERENCE_FAILED');
-    assert.equal((await runner.predict(observation, 'fourth')).error_code, 'MODEL_UNAVAILABLE');
+    await assert.rejects(runner.predict(observation, 'fourth'), /AI_ADAPTER_BUSY/);
     assert.equal(spawned, 3);
+    now = 29_999;
+    await assert.rejects(runner.predict(observation, 'still waiting'), /AI_ADAPTER_BUSY/);
+    now = 30_000;
+    assert.equal((await runner.predict(observation, 'probe')).error_code, 'INFERENCE_FAILED');
+    assert.equal(spawned, 4);
+    now = 59_999;
+    await assert.rejects(runner.predict(observation, 'wait again'), /AI_ADAPTER_BUSY/);
+    assert.equal(spawned, 4);
+    now = 60_000;
+    assert.equal((await runner.predict(observation, 'next probe')).error_code, 'INFERENCE_FAILED');
+    assert.equal(spawned, 5);
   } finally {
     await runner.dispose();
   }
+});
+
+test('one successful recovery probe resets the circuit and reuses its child', async () => {
+  const children = [];
+  let now = 0;
+  const runner = new AiShadowRunner(
+    options,
+    () => {
+      const child = new FakeChild(children.length < 3 ? 'crash' : 'success');
+      children.push(child);
+      return child;
+    },
+    () => now,
+  );
+  try {
+    for (let i = 0; i < 3; i++) await runner.predict(observation, 'crash');
+    now = 30_000;
+    const probe = runner.predict(observation, 'recovery');
+    await assert.rejects(runner.predict(observation, 'overlapping probe'), /AI_ADAPTER_BUSY/);
+    assert.equal((await probe).status, 'SUCCEEDED');
+    assert.equal((await runner.predict(observation, 'normal work')).status, 'SUCCEEDED');
+    assert.equal(children.length, 4);
+    assert.equal(children[3].requests.filter((request) => request.type === 'predict').length, 2);
+  } finally {
+    await runner.dispose();
+  }
+});
+
+test('disposal during cooldown prevents a recovery process from starting', async () => {
+  let spawned = 0;
+  let now = 0;
+  const runner = new AiShadowRunner(
+    options,
+    () => {
+      spawned++;
+      return new FakeChild('crash');
+    },
+    () => now,
+  );
+  for (let i = 0; i < 3; i++) await runner.predict(observation, 'crash');
+  await runner.dispose();
+  now = 30_000;
+  assert.equal(
+    (await runner.predict(observation, 'after shutdown')).error_code,
+    'MODEL_UNAVAILABLE',
+  );
+  assert.equal(spawned, 3);
 });
 
 test('startup deadline returns model unavailable without sending a prediction', async () => {
@@ -166,4 +230,82 @@ test('oversized input does not create an inference process', async () => {
   });
   assert.equal((await runner.predict(observation, 'x'.repeat(10001))).error_code, 'INPUT_TOO_LONG');
   await runner.dispose();
+});
+
+test('cooldown defers a coordinator candidate without saving an error and later saves its probe', async () => {
+  let now = 0;
+  let spawned = 0;
+  const saved = [];
+  const runner = new AiShadowRunner(
+    options,
+    () => new FakeChild(spawned++ < 3 ? 'crash' : 'success'),
+    () => now,
+  );
+  const signal = new AbortController().signal;
+  const coordinator = new AiShadowCoordinator(
+    {
+      async next() {
+        return {
+          identity: runner.identity({
+            ...observation,
+            observation_id: `30000000-0000-4000-8000-${String(saved.length + 1).padStart(12, '0')}`,
+          }),
+          text: 'hello',
+        };
+      },
+    },
+    runner,
+    {
+      async save(result) {
+        saved.push(result);
+        return { inserted: true, result };
+      },
+    },
+  );
+  try {
+    for (let i = 0; i < 3; i++)
+      assert.equal((await coordinator.tick(observation.run_id, signal)).status, 'ERROR');
+    for (let i = 0; i < 5; i++)
+      assert.equal((await coordinator.tick(observation.run_id, signal)).kind, 'BUSY');
+    assert.equal(saved.length, 3);
+    assert.equal(spawned, 3);
+    now = 30_000;
+    assert.equal((await coordinator.tick(observation.run_id, signal)).status, 'SUCCEEDED');
+    assert.equal(saved.length, 4);
+    assert.equal(saved[3].observation_id, '30000000-0000-4000-8000-000000000004');
+    assert.equal(
+      saved.slice(0, 3).every((result) => result.status === 'ERROR'),
+      true,
+    );
+  } finally {
+    await runner.dispose();
+  }
+});
+
+test('failure to terminate a child permanently blocks replacement despite elapsed cooldown', async () => {
+  let now = 0;
+  let spawned = 0;
+  const child = new FakeChild('hang');
+  child.kill = () => {
+    throw new Error('cannot terminate');
+  };
+  const runner = new AiShadowRunner(
+    options,
+    () => {
+      spawned++;
+      return child;
+    },
+    () => now,
+  );
+  try {
+    assert.equal((await runner.predict(observation, 'hang')).error_code, 'INFERENCE_TIMEOUT');
+    now = 300_000;
+    assert.equal(
+      (await runner.predict(observation, 'replacement')).error_code,
+      'MODEL_UNAVAILABLE',
+    );
+    assert.equal(spawned, 1);
+  } finally {
+    await runner.dispose();
+  }
 });

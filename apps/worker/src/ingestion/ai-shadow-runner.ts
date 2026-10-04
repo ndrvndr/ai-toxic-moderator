@@ -8,6 +8,7 @@ import {
 import { fork, type ChildProcess, type ForkOptions, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 import {
   LASKAR_ADAPTER_VERSION,
@@ -21,6 +22,7 @@ type RunnerOptions = {
   revision: string;
   startupMs?: number;
   inferenceMs?: number;
+  recoveryCooldownMs?: number;
 };
 
 function failure(identity: AiShadowIdentity, error_code: AiShadowErrorCode): AiShadowResult {
@@ -40,20 +42,24 @@ export class AiShadowRunner {
   private active: Promise<AiShadowResult> | null = null;
   private closed = false;
   private failures = 0;
+  private retryAt = 0;
   private disposal: Promise<void> | null = null;
   private readonly spawn: Spawn;
   private readonly startupMs: number;
   private readonly inferenceMs: number;
+  private readonly recoveryCooldownMs: number;
 
   constructor(
     private readonly options: RunnerOptions,
     spawn?: Spawn,
+    private readonly now: () => number = () => performance.now(),
   ) {
     if (!/^[a-f0-9]{40}$/.test(options.revision)) throw new Error('Invalid AI revision.');
     this.startupMs = options.startupMs ?? 30_000;
     this.inferenceMs = options.inferenceMs ?? 5_000;
+    this.recoveryCooldownMs = options.recoveryCooldownMs ?? 30_000;
     if (
-      ![this.startupMs, this.inferenceMs].every(
+      ![this.startupMs, this.inferenceMs, this.recoveryCooldownMs].every(
         (value) => Number.isInteger(value) && value > 0 && value <= 300_000,
       )
     ) {
@@ -103,6 +109,10 @@ export class AiShadowRunner {
   predict(observation: ShadowObservationIdentity, text: string): Promise<AiShadowResult> {
     const identity = this.identity(observation);
     if (this.active) return Promise.reject(new Error('AI_ADAPTER_BUSY'));
+    // Defer the candidate without saving a terminal result while the circuit is open.
+    // The active guard permits only one recovery probe after the monotonic deadline.
+    if (!this.closed && this.failures >= 3 && this.now() < this.retryAt)
+      return Promise.reject(new Error('AI_ADAPTER_BUSY'));
     const work = this.predictOne(identity, text).finally(() => {
       this.active = null;
     });
@@ -111,13 +121,13 @@ export class AiShadowRunner {
   }
 
   private async predictOne(identity: AiShadowIdentity, text: string): Promise<AiShadowResult> {
-    if (this.closed || this.failures >= 3) return failure(identity, 'MODEL_UNAVAILABLE');
+    if (this.closed) return failure(identity, 'MODEL_UNAVAILABLE');
     if (typeof text !== 'string' || !text.trim()) return failure(identity, 'INFERENCE_FAILED');
     if (text.length > 10_000) return failure(identity, 'INPUT_TOO_LONG');
     try {
       await this.ensureReady();
     } catch {
-      this.failures++;
+      this.recordFailure();
       await this.stopChild();
       return failure(identity, 'MODEL_UNAVAILABLE');
     }
@@ -138,14 +148,15 @@ export class AiShadowRunner {
           ([key, value]) => parsed.data[key as keyof AiShadowResult] !== value,
         )
       ) {
-        this.failures++;
+        this.recordFailure();
         await this.stopChild();
         return failure(identity, 'INVALID_OUTPUT');
       }
       this.failures = 0;
+      this.retryAt = 0;
       return parsed.data;
     } catch (error) {
-      this.failures++;
+      this.recordFailure();
       await this.stopChild();
       return failure(
         identity,
@@ -154,6 +165,11 @@ export class AiShadowRunner {
           : 'INFERENCE_FAILED',
       );
     }
+  }
+
+  private recordFailure(): void {
+    this.failures++;
+    if (this.failures >= 3) this.retryAt = this.now() + this.recoveryCooldownMs;
   }
 
   private async ensureReady(): Promise<void> {
