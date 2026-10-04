@@ -37,7 +37,8 @@ export function AiModerationSettingsForm({
   const mutation = useSaveAiModerationSettings(accountId, channelId);
   const busy = mutation.isPending || reloading;
   const blocked = mutation.isError;
-  const dirty = !saved || JSON.stringify(draft) !== JSON.stringify(toAiModerationDraft(saved.configuration));
+  const dirty =
+    !saved || JSON.stringify(draft) !== JSON.stringify(toAiModerationDraft(saved.configuration));
   const editable = canEdit && !busy && !blocked;
 
   useEffect(() => {
@@ -193,7 +194,11 @@ export function AiModerationSettingsForm({
           Your draft has been retained.
         </p>
       )}
-      {notice && <p role="status" className="text-sm">{notice}</p>}
+      {notice && (
+        <p role="status" className="text-sm">
+          {notice}
+        </p>
+      )}
       <div className="flex flex-wrap gap-3">
         {canEdit && (
           <Button type="submit" disabled={!editable || !dirty}>

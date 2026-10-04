@@ -21,6 +21,10 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  AI_AUTOMATIC_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
   AI_SHADOW_RUN_ID: z.union([z.literal(''), z.uuid()]).default(''),
   AI_SHADOW_MODEL_REVISION: z
     .union([z.literal(''), z.string().regex(/^[a-f0-9]{40}$/)])
@@ -89,6 +93,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         result.error.issues.map((i) => i.path.join('.')).join(', '),
     );
   const host = new URL(result.data.DATABASE_URL).hostname;
+  if (result.data.AI_AUTOMATIC_ENABLED) {
+    if (result.data.AI_SHADOW_ENABLED || result.data.AI_SHADOW_RUN_ID) {
+      throw new Error('Automatic AI and manually scoped AI cannot run simultaneously.');
+    }
+    if (
+      !result.data.WORKER_ENABLED ||
+      !result.data.GOOGLE_AUTH_ENABLED ||
+      !result.data.AI_SHADOW_MODEL_REVISION
+    ) {
+      throw new Error(
+        'Automatic AI requires the worker, Google authentication, and a pinned model revision.',
+      );
+    }
+  }
   if (
     result.data.AI_SHADOW_ENABLED &&
     (!result.data.WORKER_ENABLED ||

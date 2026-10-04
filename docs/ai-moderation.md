@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Steps 1–9 define shared settings contracts, immutable revisions and run snapshots, authorized settings controls, the threshold planner, decision audits, executor integration, and public decision summaries in Live and History chat. The explicitly configured AI run can materialize persisted action slots and dispatch them through existing executors when its captured settings and worker action switches enable enforcement. Inference is still scoped to one configured run; saving channel settings does not automatically enable processing for every livestream.
+Steps 1–9 define shared settings contracts, immutable revisions and run snapshots, authorized settings controls, the threshold planner, decision audits, executor integration, and public decision summaries in Live and History chat. The selected AI run can materialize persisted action slots and dispatch them through existing executors when its captured settings and worker action switches enable enforcement. Manual mode uses one configured run ID. The new [automatic monitoring mode](automatic-ai-monitoring.md) discovers one eligible active run from captured enabled Settings and follows subsequent runs without run-ID edits; database and browser verification of that integration remain pending.
 
 Step 10 real-provider DELETE, TIMEOUT, and BAN scenarios were reported successful by the developer on October 4, 2026 (Asia/Jakarta). See [real-provider verification](#real-provider-verification) for evidence and limitations. The assistant did not independently execute these scenarios.
 
@@ -26,7 +26,7 @@ The update contract requires `expected_revision`: zero for the first write, or t
 
 ## Decision flow
 
-The worker persists threshold decisions before materializing action slots for the configured AI run:
+The worker persists threshold decisions before materializing action slots for the selected AI run:
 
 1. Check the captured custom blacklist first. A match uses the blacklist's action bundle and skips AI.
 2. For other messages, evaluate AI using the exact model identity and settings captured when the monitoring run starts.
@@ -184,7 +184,7 @@ Apply the new migration before reprovisioning runtime permissions. Tests create 
 
 ## Worker audit pipeline
 
-`AiActionDecisionCycle` runs alongside ingestion and shadow inference. It is enabled through the existing `AI_SHADOW_ENABLED` opt-in and processes only `AI_SHADOW_RUN_ID`, using the same pinned runtime model revision and adapter identity as the shadow cycle. No new environment variable or model process is required. Changing a channel's settings does not automatically enable inference for all its broadcasts. Selecting and loading models for general enforcement remains separate from this scoped audit integration.
+In manual mode, `AiActionDecisionCycle` runs alongside ingestion and shadow inference through `AI_SHADOW_ENABLED`, processing only `AI_SHADOW_RUN_ID`. In automatic mode, `AutomaticAiCycle` invokes a run-scoped decision cycle after inference for the discovered eligible run. Both modes use the same pinned runtime model revision and adapter identity. Automatic mode supports one eligible stream and a matching local model, not arbitrary model loading or multi-stream scheduling.
 
 `AiActionDecisionCandidateReader` reads text observations from the selected run that have an original baseline classification and no saved AI decision. If several classifications exist for the observation, it selects the earliest by creation time and ID. It validates captured AI and blacklist snapshots, recomputes blacklist matching, and looks for a committed terminal shadow result with the exact configured runtime model identity. Both successful and error results are terminal.
 
@@ -194,7 +194,7 @@ Selection occurs outside the persistence transaction. The cycle then uses `AiAct
 
 The audit cycle uses the runtime's existing shutdown signal and failure isolation. Cancellation before persistence prevents the save; writes already in progress are drained before the pool closes. A failed audit cycle logs a safe error and can retry on a later tick without stopping ingestion. Shadow inference retains its own cancellation and disposal lifecycle.
 
-Startup checks for enabled AI mode verify the decision table and captured AI snapshot table. The enabled log now reads **AI inference and action planning are enabled for the configured run. Dispatch requires captured enabled settings and executor switches.** Apply migration 025 and provision worker permissions before starting this mode. Audit backlog processing can include a stopped run; materialization and dispatch require a running original run.
+Startup checks for enabled AI mode verify the decision table and captured AI snapshot table. Manual mode logs **AI inference and action planning are enabled for the configured run. Dispatch requires captured enabled settings and executor switches.** Automatic mode logs its single-stream discovery status separately. Apply migration 025 and provision worker permissions before starting AI processing. Manual audit backlog processing can include a stopped run; automatic discovery, materialization, and dispatch require a running original run.
 
 Run the checks manually:
 
@@ -214,13 +214,13 @@ Cycle tests exercise pending inference, policy skips, snapshot scope checks, cur
 
 ## Executor integration
 
-`AiActionPlanCycle` runs independently alongside the audit loop, only for `AI_SHADOW_RUN_ID` when `AI_SHADOW_ENABLED` is enabled. It selects committed `THRESHOLD_MET` decisions on a `RUNNING` original run whose action slots are missing. It recovers a crash between audit persistence and materialization without rerunning inference. A selected decision without an available author can still materialize deletion alone.
+In manual mode, `AiActionPlanCycle` runs independently alongside the audit loop for `AI_SHADOW_RUN_ID` when `AI_SHADOW_ENABLED` is enabled. Automatic mode invokes the same scoped cycle serially after audit processing for the discovered run. It selects committed `THRESHOLD_MET` decisions on a `RUNNING` original run whose action slots are missing. It recovers a crash between audit persistence and materialization without rerunning inference. A selected decision without an available author can still materialize deletion alone.
 
 `AiActionPlanStore` re-reads authoritative observations, captured AI and blacklist snapshots, and the referenced stored model result. It recomputes both planners and compares the complete decision with the immutable audit. A short caller-owned transaction, an audit advisory lock, deterministic policy slots, and the existing action-plan uniqueness constraint serialize competing workers. Message and author slots commit together. If either fails, a savepoint removes all new slots even when the caller catches the failure. Replay returns existing plan IDs; it does not replan using current settings.
 
 All `ai-` policy names are reserved. Candidate discovery and executor eligibility require a linked scoped audit and captured enabled policy, successful untruncated inference, matching action metadata, and no competing built-in/blacklist action for the observation. `AiDispatchProvenance` additionally reconstructs the full evidence and compares the exact selected plan before dispatch. A policy name, a high score, or an inserted plan alone cannot authorize an AI request. Foreign runs/sessions, malformed evidence, forged action reasons, and missing model references fail closed.
 
-Existing authorization checks still apply: active original run, open YouTube session and chat, current owner/moderator memberships, credential scope, and the corresponding `YOUTUBE_DELETE_ENABLED` or `YOUTUBE_BAN_ENABLED` switch. AI dispatch additionally requires that AI initialization succeeded and the plan belongs to the explicitly configured run. Existing controlled test policy restrictions still apply. Removing AI opt-in blocks pending AI dispatch without preventing built-in actions.
+Existing authorization checks still apply: active original run, open YouTube session and chat, current owner/moderator memberships, credential scope, and the corresponding `YOUTUBE_DELETE_ENABLED` or `YOUTUBE_BAN_ENABLED` switch. AI dispatch additionally requires an initialized AI pipeline and that the plan belongs to the manually configured or automatically selected run. Existing controlled test policy restrictions still apply. Disabling the applicable AI mode and restarting the worker blocks pending AI dispatch without preventing built-in actions.
 
 The existing executors continue to commit a dispatch claim before contacting YouTube and recheck eligibility after credential refresh and claim creation. Per-message deletion deduplication, per-observation author execution, timeout spacing, and conservative `UNKNOWN` handling are reused. No automatic author retry is added. Plans are not replaced or escalated after another execution has started. Execution events update chat over WebSocket; step 9 also displays the saved AI decision and planning state.
 
@@ -294,11 +294,11 @@ The procedure isolated AI decisions by disabling custom blacklist matches and bu
 
 Each settings change used a new run snapshot. Inference and planning were enabled for that run through `AI_SHADOW_ENABLED` and `AI_SHADOW_RUN_ID`.
 
-| Scenario | Captured enabled thresholds | Reported result |
-| --- | --- | --- |
-| DELETE | Delete 0.10; timeout and ban disabled | AI selected DELETE; YouTube deletion was confirmed. |
-| TIMEOUT | Delete 0.05; timeout 0.10 for 30 seconds; ban disabled | AI selected TIMEOUT with a deletion plan; the developer confirmed that the viewer could be timed out after enabling the author executor. |
-| BAN | Delete 0.05; timeout 0.10 for 30 seconds; ban 0.15 | The developer reported the BAN scenario and its owner-side restriction checks passed. |
+| Scenario | Captured enabled thresholds                            | Reported result                                                                                                                          |
+| -------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| DELETE   | Delete 0.10; timeout and ban disabled                  | AI selected DELETE; YouTube deletion was confirmed.                                                                                      |
+| TIMEOUT  | Delete 0.05; timeout 0.10 for 30 seconds; ban disabled | AI selected TIMEOUT with a deletion plan; the developer confirmed that the viewer could be timed out after enabling the author executor. |
+| BAN      | Delete 0.05; timeout 0.10 for 30 seconds; ban 0.15     | The developer reported the BAN scenario and its owner-side restriction checks passed.                                                    |
 
 The DELETE output supplied for `Halo, terima kasih sudah streaming!` showed baseline `ALLOW`, model rating `Safe` (0/4), expected severity `0.1685`, selected tier DELETE with captured threshold `0.1000`, stored plans, and a separate `Deleted` provider result. This demonstrates that threshold selection uses expected severity rather than the baseline rule outcome or discrete model label.
 
@@ -310,6 +310,6 @@ The developer reported the prescribed Live and History checks passed, including 
 
 The thresholds above were deliberately low test values, not recommended defaults or calibrated production thresholds. Restricting a safe greeting verifies the enforcement path; it does not demonstrate accurate toxicity detection. The prototype evaluation already shows overlapping scores for safe and abusive examples.
 
-Processing remains scoped to one explicitly configured run. This verification does not establish automatic AI processing for every livestream, behavior under high chat volume, or production readiness. Conservative `UNKNOWN` handling, repeated-timeout scheduling, and the external-unban limitation still apply.
+The reported verification used one explicitly configured run at a time. It does not establish the newer automatic discovery flow, behavior under high chat volume, or production readiness. Conservative `UNKNOWN` handling, repeated-timeout scheduling, and the external-unban limitation still apply.
 
 After the test, stop monitoring and the worker, disable automatic AI actions before starting unrelated streams, and remove the test viewer from Hidden users if needed. These cleanup steps were instructed; their final completion was not separately confirmed in the report. Editing channel settings affects future snapshots; stop the existing run or disable executor switches to prevent further dispatch under its captured settings.

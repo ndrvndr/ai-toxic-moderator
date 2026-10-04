@@ -147,7 +147,9 @@ it('starts without implicit thresholds or enabled AI actions and saves an explic
 
 it('explains an incomplete first save near the save button and focuses the error without sending HTTP', async () => {
   render(editor(), { wrapper });
-  await screen.findByText('No AI policy saved. Enter your model identity and thresholds before saving.');
+  await screen.findByText(
+    'No AI policy saved. Enter your model identity and thresholds before saving.',
+  );
   const button = screen.getByRole('button', { name: 'Save AI settings' }) as HTMLButtonElement;
   expect(button.disabled).toBe(false);
   save();

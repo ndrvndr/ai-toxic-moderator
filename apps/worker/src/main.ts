@@ -21,6 +21,7 @@ import {
 } from './ingestion/ai-action-decision-cycle';
 import { createAiActionPlanCycle, type AiActionPlanCycle } from './ingestion/ai-action-plan-cycle';
 import { createAiShadowCycle, type AiShadowCycle } from './ingestion/ai-shadow-cycle';
+import { createAutomaticAiCycle, type AutomaticAiCycle } from './ingestion/automatic-ai-cycle';
 import { BanCandidateStore } from './ingestion/ban-candidate-store';
 import { BanCoordinator } from './ingestion/ban-coordinator';
 import { BanEligibilityStore } from './ingestion/ban-eligibility-store';
@@ -66,9 +67,11 @@ async function bootstrap() {
   const pool = createPool(config.DATABASE_URL);
   let runtime: WorkerRuntime | undefined;
   let shadow: AiShadowCycle | undefined;
+  let automaticAi: AutomaticAiCycle | undefined;
   let aiDecisions: AiActionDecisionCycle | undefined;
   let aiPlans: AiActionPlanCycle | undefined;
-  const allowedAiRunId = () => (aiPlans ? config.AI_SHADOW_RUN_ID : null);
+  const allowedAiRunId = () =>
+    automaticAi ? automaticAi.allowedRunId() : aiPlans ? config.AI_SHADOW_RUN_ID : null;
 
   try {
     const role = await pool.query<{
@@ -211,7 +214,7 @@ async function bootstrap() {
       bans = new BanCoordinator(new BanCandidateStore(pool), banExecutor, enabled);
     }
 
-    if (config.AI_SHADOW_ENABLED) {
+    if (config.AI_SHADOW_ENABLED || config.AI_AUTOMATIC_ENABLED) {
       try {
         await pool.query(`SELECT id, observation_id, model_revision, status
           FROM youtube_ai_shadow_results LIMIT 0`);
@@ -219,19 +222,26 @@ async function bootstrap() {
           FROM youtube_ai_action_decisions LIMIT 0`);
         await pool.query(`SELECT run_id, channel_id, source, configuration
           FROM monitoring_ai_settings_snapshots LIMIT 0`);
-        const selectedRun = await pool.query('SELECT id FROM monitoring_runs WHERE id=$1', [
-          config.AI_SHADOW_RUN_ID,
-        ]);
-        if (!selectedRun.rows[0]) throw new Error('AI shadow run does not exist.');
-        shadow = createAiShadowCycle(config, pool);
-        aiDecisions = createAiActionDecisionCycle(config, pool);
-        aiPlans = createAiActionPlanCycle(config, pool);
-        console.log(
-          'AI inference and action planning are enabled for the configured run. Dispatch requires captured enabled settings and executor switches.',
-        );
+        if (config.AI_AUTOMATIC_ENABLED) {
+          automaticAi = createAutomaticAiCycle(config, pool);
+          console.log(
+            'Automatic AI is enabled for one eligible livestream. Dispatch requires captured enabled settings and executor switches.',
+          );
+        } else {
+          const selectedRun = await pool.query('SELECT id FROM monitoring_runs WHERE id=$1', [
+            config.AI_SHADOW_RUN_ID,
+          ]);
+          if (!selectedRun.rows[0]) throw new Error('AI shadow run does not exist.');
+          shadow = createAiShadowCycle(config, pool);
+          aiDecisions = createAiActionDecisionCycle(config, pool);
+          aiPlans = createAiActionPlanCycle(config, pool);
+          console.log(
+            'AI inference and action planning are enabled for the configured run. Dispatch requires captured enabled settings and executor switches.',
+          );
+        }
       } catch {
         console.error(
-          'AI shadow initialization failed. Check its run, migrations, and worker permissions. Ingestion continues.',
+          'AI initialization failed. Check model configuration, run scope, migrations, and worker permissions. Ingestion continues.',
         );
       }
     }
@@ -249,7 +259,7 @@ async function bootstrap() {
           new BanEvidenceStore(pool),
         ),
       },
-      shadow,
+      automaticAi ?? shadow,
       aiDecisions,
       aiPlans,
     );
@@ -272,7 +282,7 @@ async function bootstrap() {
     if (runtime) await runtime.onApplicationShutdown();
     else {
       try {
-        await shadow?.dispose();
+        await (automaticAi ?? shadow)?.dispose();
       } finally {
         await pool.end();
       }

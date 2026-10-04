@@ -3,6 +3,68 @@ const assert = require('node:assert/strict');
 const { source } = require('./helpers/source.cjs');
 
 const { WorkerRuntime } = source('apps/worker/src/ingestion/worker-runtime.ts');
+const { AutomaticAiCycle } = source('apps/worker/src/ingestion/automatic-ai-cycle.ts');
+
+test('automatic AI shutdown drains its plan write and disposes the runner before pool closure', async () => {
+  const runId = 'a0000000-0000-4000-8000-000000000001';
+  const events = [];
+  let release;
+  let started;
+  const planStarted = new Promise((resolve) => {
+    started = resolve;
+  });
+  const automatic = new AutomaticAiCycle(
+    {
+      async next() {
+        return { kind: 'SELECTED', run_id: runId };
+      },
+    },
+    () => ({
+      inference: { async tick() {} },
+      decisions: { async tick() {} },
+      plans: {
+        async tick() {
+          events.push('plan-started');
+          started();
+          await new Promise((resolve) => {
+            release = resolve;
+          });
+          events.push('plan-finished');
+        },
+      },
+    }),
+    {
+      async dispose() {
+        events.push('runner-disposed');
+      },
+    },
+  );
+  const runtime = new WorkerRuntime(
+    { async tick() {} },
+    {
+      async end() {
+        events.push('pool-closed');
+      },
+    },
+    undefined,
+    undefined,
+    undefined,
+    automatic,
+  );
+  runtime.start();
+  await planStarted;
+  assert.equal(automatic.allowedRunId(), runId);
+  const stopping = runtime.onApplicationShutdown();
+  await Promise.resolve();
+  assert.equal(automatic.allowedRunId(), null);
+  assert.ok(!events.includes('pool-closed'));
+  release();
+  await stopping;
+  await runtime.onApplicationShutdown();
+  assert.equal(events.filter((event) => event === 'runner-disposed').length, 1);
+  assert.equal(events.at(-1), 'pool-closed');
+  assert.ok(events.indexOf('plan-finished') < events.indexOf('pool-closed'));
+});
 
 test('shutdown drains AI plan materialization before closing the pool', async () => {
   let release;
