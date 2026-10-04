@@ -4,6 +4,7 @@ export interface DetectionEngine {
   detect(message: MessageInput): Promise<readonly Signal[]>;
 }
 export * from './action-planner';
+export * from './ai-action-planner';
 export * from './blacklist-action-planner';
 export * from './custom-blacklist-matcher';
 export * from './policy-evaluator';

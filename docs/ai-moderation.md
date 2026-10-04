@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-Steps 1–4 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, authorized settings endpoints, and dashboard controls. AI action planning and dispatch are not implemented yet. Existing AI output remains shadow output and does not change moderation decisions.
+Steps 1–5 define shared settings contracts, validation, immutable database revisions, atomic run snapshots, role permissions, authorized settings endpoints, dashboard controls, and a pure AI threshold planner. The planner is not connected to the worker or executors yet. Existing AI output remains shadow output and does not change moderation decisions.
 
 The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
 
@@ -24,7 +24,7 @@ The update contract requires `expected_revision`: zero for the first write, or t
 
 ## Planned decision flow
 
-The following behavior is planned; settings persistence and endpoints do not implement AI action planning or dispatch:
+The pure planner implements threshold selection below. Persistence and runtime dispatch of its decisions remain planned:
 
 1. Check the captured custom blacklist first. A match uses the blacklist's action bundle and skips AI.
 2. For other messages, evaluate AI using the exact model identity and settings captured when the monitoring run starts.
@@ -125,4 +125,25 @@ Component tests cover initial disabled state, validation, revision handling, pen
 
 For manual browser verification, keep the worker stopped and check that settings can be saved, survive page reload, reject equal thresholds, and display the updated revision. This step requires no active broadcast or YouTube quota.
 
-The next step implements the AI decision planner using captured settings and persisted model output.
+## Pure threshold planner
+
+`AiActionPlanner` in `packages/moderation-core/src/ai-action-planner.ts` accepts an immutable run settings snapshot. Its `plan(input, output, blacklist)` method requires message scope (including observation and classification IDs), a full scoped AI result or missing output, and the blacklist action bundle already computed for that message. A missing or invalid blacklist decision is rejected; AI cannot bypass that prerequisite. A blacklist match produces `BLACKLIST_MATCH` with no AI plans, leaving the independent blacklist bundle in control.
+
+Snapshot run/channel, blacklist run/channel/session/classification, and valid model output run/channel/session/observation must match the message scope. Substitution throws before generating plans. UUID comparisons normalize casing while opaque message and author targets retain their exact values. Matched blacklist plans must also target the same message and author.
+
+The planner compares `severity_score`, not `rating`, against the captured thresholds. Selection includes equality and ignores disabled tiers. Missing policy, disabled enforcement, missing/malformed output, mismatched identity, inference errors, and truncation produce explicit no-action reason codes. If a selected author action has no valid YouTube channel target, deletion remains planned and `author_action_status` is `TARGET_UNAVAILABLE`.
+
+The returned in-memory decision carries a separate copy of captured settings, validated model output when considered, planner version, selected tier/threshold, reason code, and independent message/author plans. It is not an execution outcome or dispatch authorization. Policy slots are deterministic per run; replaying identical inputs produces identical decisions. The planner performs no database, network, model inference, or provider calls.
+
+Run these additional checks manually:
+
+```powershell
+npm run format
+npm run check
+npm run build:core
+npm run test:ai-action-planner
+npm run test:blacklist-action-planner
+npm run test:ai-moderation-contracts
+```
+
+Planner tests cover boundaries, every tier switch combination, blacklist priority, scope and identity substitution, unavailable output/targets, independent action slots, and immutable replay. These checks require no database or YouTube quota. Step 6 will add validated persistence and replay of AI decisions. Worker consumption, executor integration, and arbitration with built-in rule actions remain later steps.
