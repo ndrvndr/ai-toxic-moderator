@@ -39,9 +39,50 @@ Restart the worker once to activate this mode. Save enabled AI Settings before s
 
 Manual mode remains available with `AI_AUTOMATIC_ENABLED=false`, `AI_SHADOW_ENABLED=true`, and an explicit run ID. Configuration rejects enabling both modes or retaining a manual run ID in automatic mode. No migration, role change, or new model download is required for this integration.
 
-## Remaining integration
+## Step 3: database integration coverage
 
-1. Verify discovery SQL and the complete automatic pipeline against a real local database with isolated fixtures, including current membership changes and captured settings.
+`tests/automatic-ai-integration.test.cjs` runs the actual discovery SQL, inference-result writer, decision audit, plan materialization, live-event replay, and executor eligibility against PostgreSQL. It creates a random isolated schema, applies the existing migrations there, and provisions a temporary restricted worker role. Fixture setup uses the local test administrator; pipeline operations use the restricted role. Application tables and existing runtime roles are not cleared or rewritten.
+
+The native runner and provider adapters are simulated. No model download, native inference, OAuth refresh, or YouTube request occurs. Covered scenarios include:
+
+- Lifecycle filters, missing/disabled policies, exact model identity, current requester/credential memberships, closed sessions, and ended chat.
+- Captured settings surviving channel edits; subsequent runs capturing disabled or changed policies while one runner remains alive.
+- Persisted inference, audit, plans, and three ordered `chat.updated` events; repeated ticks and worker restart append no duplicate results, plans, or events.
+- Late baseline classification, below-threshold scores, truncated inputs, terminal inference failures, blacklist priority, and explicit built-in priority.
+- Loss of access during inference, two-stream capacity conflicts, and revocation of actual deletion/author eligibility.
+- Rollback of an incomplete action bundle followed by recovery from committed inference/audit, and simulated executor dispatch through a committed claim with no retry of an uncertain author outcome.
+
+These tests have been added but have not been executed by the assistant. A passing operator run is required before marking database verification complete. Even a passing integration suite does not prove real model accuracy or successful requests to YouTube.
+
+Run the new suite manually after the preceding unit/build checks:
+
+```powershell
+npm run format
+npm run check
+npm run build:core
+npm run test:automatic-ai-integration
+```
+
+`TEST_DATABASE_URL` must point to a local admin-capable test database that allows schema and role creation. The suite removes its own schema and role when it finishes. It does not require clearing your application database, enabling a worker, or starting a livestream.
+
+## Browser verification procedure
+
+After database tests pass, use a test livestream and viewer account to verify the real pipeline:
+
+1. Stop any current monitoring run. Configure automatic mode as shown above, with the cached model revision matching Settings. Start API, dashboard, and worker. Keep the same worker process running through the remaining steps.
+2. Save enabled AI Settings before clicking Start monitoring. Use the existing threshold configuration; proving discovery does not require lowering thresholds or sending a ban marker.
+3. Start run A. Confirm `RUNNING` and the worker's automatic selection log. Send a unique message from the test viewer. Confirm model output and an AI decision appear in Live without refreshing. A below-threshold decision is a valid result; successful discovery does not require a moderation action.
+4. Disable automatic AI in Settings while A is active. Send another unique message. A must retain its captured enabled settings and still produce AI output/decisions.
+5. Stop A, then start run B without changing `.env` or restarting the worker. Send a new message. B captured disabled AI settings, so that new message must have no AI output/decision. Baseline classification and blacklist behavior remain independent. Historical results from A can still appear in the same session.
+6. Stop B, save enabled AI Settings, and start run C. Send a new unique message. AI output/decisions must resume automatically, again without a run-ID edit or worker restart.
+7. Open History and compare each message's original captured revision and result. In Network → WS, verify that `chat.updated` events advance the cursor and drive updates without a manual refresh.
+8. Stop monitoring after verification. Record the run IDs, captured revisions, and the result of each check. Do not describe a selected AI tier or stored plans as confirmed provider execution.
+
+If AI Settings or the worker model do not match, no run is selected. Verify the complete model identity before diagnosing the pipeline. If two eligible runs exist, stop the extra run and confirm automatic selection resumes.
+
+## Remaining verification
+
+1. Run the new database suite manually and record the results.
 2. Verify real browser behavior across stop/start without run-ID edits or worker restarts.
 3. Expose model mismatch/capacity/failure status in the dashboard and evaluate the limited portfolio workload.
 
@@ -58,6 +99,7 @@ npm run build:core
 npm test
 npm run test:automatic-ai-run-reader
 npm run test:automatic-ai-cycle
+npm run test:automatic-ai-integration
 npm run test:ai-shadow-cycle
 npm run test:ai-action-decision-cycle
 npm run test:ai-action-plan-cycle
@@ -66,4 +108,4 @@ npm run test:delete-execution-store
 npm run build --workspace @moderator/worker
 ```
 
-The new reader/coordinator tests use simulated query results and runners and consume no YouTube quota or native inference. They cover configuration, run discovery, serial stage ordering, selection changes, capacity, snapshot/model rejection, cancellation, failure recovery, and shutdown. Existing execution-store tests additionally require `TEST_DATABASE_URL`. These checks do not establish that the discovery SQL works against a real database or that automatic native inference succeeds; those verifications remain pending.
+Reader/coordinator unit tests simulate database queries. The new integration suite and existing execution-store tests require `TEST_DATABASE_URL`; they use real PostgreSQL with simulated inference/provider responses. No listed test consumes YouTube quota or executes native inference. Database suite execution and automatic native/browser verification remain pending until the operator reports results.
