@@ -210,3 +210,18 @@ configured run. The low test thresholds are not recommended defaults, and the
 results do not establish toxicity accuracy, high-volume performance, processing
 for every livestream, or production readiness. Test cleanup was instructed and
 should be completed before unrelated streams.
+
+## AI Operational Status Verification
+
+On October 4, 2026 (Asia/Jakarta), the developer reported that the manual browser
+checks for the operational-status feature all passed: waiting with advancing
+heartbeats, stale heartbeat after stopping the worker, recovery after restart,
+active AI for the current eligible monitoring run, and return to waiting after
+monitoring stopped. Status transitions appeared without a manual refresh.
+
+These were developer-observed UI results with moderation executor switches
+disabled. The assistant separately observed the real worker's waiting report and
+advancing persisted heartbeats, but did not independently observe the final
+browser scenarios. See [AI operational status](ai-operational-status.md#step-7-reported-local-browser-verification)
+for the checklist results and limits. No real quota exhaustion or new moderation
+execution is claimed by this verification.

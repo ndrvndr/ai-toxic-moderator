@@ -97,9 +97,21 @@ Live monitoring controls and the saved-session viewer shared by Live/History use
 
 Starting and stopping labels do not claim chat ingestion is active. A stopped run with `stop_requested_at` describes the recorded stop request. Without that timestamp, the UI explains that collection ended but the saved run does not identify its exact end reason; it does not infer that the livestream ended. Stored chat remains readable after failure or stopping. A connected WebSocket can continue serving saved updates while YouTube collection has ended, and the UI preserves that separate connection indicator. Lifecycle explanations also remain separate from current channel AI health and provider execution outcomes.
 
-## Remaining implementation
+## Step 7: reported local browser verification
 
-1. Verify status transitions with a running worker in the final browser end-to-end flow.
+On October 4, 2026 (Asia/Jakarta), the developer reported that all scenarios in the manual operational-status E2E checklist passed:
+
+| Scenario                                                                          | Reported result                                                                                               |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Worker running without eligible monitoring                                        | Live displayed **AI waiting for a run** and the heartbeat advanced approximately every 10 seconds.            |
+| Worker stopped while API/dashboard remained running                               | After approximately 30–40 seconds, Live displayed **AI worker not reporting** without a manual refresh.       |
+| Worker restarted                                                                  | Live returned to **AI waiting for a run** and heartbeat updates resumed.                                      |
+| Active livestream monitoring with captured enabled AI settings and matching model | Live displayed **Monitoring running** and **AI processing active**; the reported run matched the current run. |
+| Monitoring stopped                                                                | Live returned to **AI waiting for a run** without a manual refresh.                                           |
+
+The checklist kept delete/ban executor switches disabled to verify operational status separately from provider actions. The assistant independently observed startup of the real worker, no active runs, a persisted `WAITING` report, and advancing database heartbeats before handing browser testing to the developer. The browser scenarios above are developer-reported; the assistant did not independently observe their final UI outcomes.
+
+This completes the local operational-status feature scope. It does not establish classifier accuracy, production deployment readiness, or high-volume performance. Quota exhaustion was not deliberately triggered in this manual run. Quota explanations, model mismatch, capacity limits, and fault/access scenarios retain their automated coverage described below. No moderation execution success is inferred from the AI health indicator.
 
 ## Validation
 
