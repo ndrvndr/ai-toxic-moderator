@@ -16,11 +16,13 @@ Unban is part of the portfolio MVP. It has two manual intents:
 | 3    | Authorized API workflow, token resolution and separate Studio confirmation path                               | Implemented and covered by local HTTP tests   |
 | 4    | Dispatch eligibility after removal; keep historical ban outcomes unchanged and suppress stale queued messages | Implemented and covered by local tests        |
 | 5    | Dashboard controls, confirmation dialogs, outcome display and Live/History refresh                            | Implemented and covered by local UI tests     |
-| 6    | Database/HTTP/UI integration tests and controlled livestream E2E verification                                 | Pending                                       |
+| 6    | Database/HTTP/UI integration tests and controlled livestream E2E verification                                 | Local tests covered; livestream check pending |
 
 The adapter is wired to the authorized API and worker dispatch eligibility.
 Dashboard controls are implemented. Controlled livestream verification remains
 pending in step 6; local tests do not establish real YouTube removal behavior.
+Follow the [controlled unban verification procedure](unban-verification.md) and
+record the observed results before completing this step.
 
 Migration `028_youtube_unban_requests.sql` adds scoped removal history with
 request identity, requester and credential-account identity, deadlines, and
