@@ -32,6 +32,7 @@ portfolio prototype rather than a validated replacement for human moderators.
 - Authenticated WebSocket delivery with event replay and frontend reconnect handling.
 - Blacklist-first checks and independently recorded AI decisions.
 - Automatic deletion, repeated timeouts, permanent bans, and uncertain-outcome evidence.
+- Owner-authorized unban with separate removal records, explicit YouTube Studio confirmation, and fresh-message moderation after removal.
 - Saved livestream history with numbered pages (10 streams per page by default), chat filters, message statistics, and action statistics.
 - Versioned moderation Settings and immutable configuration snapshots per run.
 - Custom blocked words, phrases, and domains with independent action choices.
@@ -529,8 +530,9 @@ outcomes. Successful execution does not prove that a model's decision was correc
 Toxicity scores do not establish spam, scam, or gambling-promotion detection.
 
 Use the [portfolio demo guide](docs/portfolio-demo.md) to prepare a repeatable
-demonstration. Final demo policy selection remains separate from the completed
-technical evaluation. Integration/connection settings and production
+demonstration. Final demo policy selection and end-to-end AI quality evaluation
+have not been completed; the authored-example exploration above remains the
+available model-quality evidence. Additional platform integrations and production
 security/deployment verification remain separate work. The application currently
 enforces local development boundaries; this README does not describe a public
 production deployment procedure.
@@ -542,24 +544,30 @@ the reported outcomes and evidence limits. The assistant did not run those check
 
 Built-in rule enforcement is retired. The authored-example AI measurements above
 do not establish independent accuracy, production throughput, or production
-readiness. Final demo threshold selection and verification remain pending.
+readiness. The implemented portfolio feature scope is complete, but final demo
+threshold selection and AI policy verification have not been completed.
 
-## Remaining MVP phases
+## MVP completion and evaluation status
 
-Two feature and evaluation phases remain before closing the portfolio MVP.
-Unban is part of the MVP scope and is not deferred to future work.
+The portfolio MVP feature scope is implemented, including unban, History pagination,
+English dashboard/API messages, and theme switching. Final AI evaluation remains
+an optional outstanding quality-validation step if the portfolio is closed now;
+skipping it does not establish model accuracy or validate the chosen action thresholds.
 
-| Phase               | Scope                                                                                                                                                                                                                                                                         | Completion evidence                                                                                                                                                                             |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Unban               | Let an authorized streamer manually remove an application-created ban from the dashboard using its stored YouTube ban ID. Record the removal separately from the original ban, show confirmed or uncertain outcomes, and update dispatch eligibility after confirmed removal. | Tests for authorization, concurrent requests, provider failures and uncertain responses; live verification that the viewer can chat again and a subsequent qualifying message can be moderated. |
-| Final AI evaluation | Choose and document demo thresholds, review false positives and missed abusive messages, and verify the final policy through the complete monitoring-to-report workflow. Keep model severity distinct from violation probability.                                             | A reproducible evaluation report with example provenance, model revision, thresholds, observed errors, limitations and final E2E results.                                                       |
+| Area                  | Status                             | Evidence and limits                                                                                                                                                                                                                                                                                                                     |
+| --------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unban                 | Implemented                        | Authorization, concurrent requests, provider failures, uncertain outcomes, and renewed moderation eligibility have automated coverage. The developer reported successful controlled live ban/removal checks. The [verification checklist](docs/unban-verification.md) still distinguishes individual checks awaiting recorded evidence. |
+| Dashboard refinements | Implemented and developer-reviewed | History defaults to page 1 with 10 sessions per page; shared controls use shadcn/ui; theme choice persists; dashboard and generated API copy use English. Automated checks cover pagination, access, forms, and theme switching.                                                                                                        |
+| Final AI evaluation   | Not completed                      | Existing results cover 40 authored examples only. Final demo thresholds and the complete policy's false positives/missed messages have not received a final evaluation. No independently validated accuracy or production-safe threshold is claimed.                                                                                    |
 
-The proposed MVP unban flow covers bans with a recorded provider ban ID.
+The implemented MVP unban flow covers bans with a recorded provider ban ID.
 An unknown ban outcome without an ID cannot be removed through that flow.
 Removing a ban does not promise restoration of deleted messages. The original
 ban record remains historical evidence, rather than being rewritten as a failed
 action. Unban does not exempt later messages from the captured moderation policy.
-The implementation is still pending.
+The dashboard also supports explicitly recording that the owner removed a viewer
+in YouTube Studio. That records the owner's confirmation, not automatic provider
+synchronization. See [Unban implementation](docs/unban.md).
 
 YouTube supports this operation through
 [liveChatBans.delete](https://developers.google.com/youtube/v3/live/docs/liveChatBans/delete),
