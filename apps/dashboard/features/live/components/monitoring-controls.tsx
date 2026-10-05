@@ -42,55 +42,60 @@ export function MonitoringControls({ broadcastId, liveChatAvailable }: Monitorin
   }
 
   return (
-    <div className="space-y-3">
-      {monitoring.isPending || monitoring.isError ? (
-        <p role="status" className="text-sm">
-          {monitoring.isPending
-            ? 'Loading monitoring status…'
-            : 'Monitoring status is unavailable.'}
-        </p>
-      ) : (
-        <MonitoringRunStatus run={run ?? null} />
-      )}
+    <div className="space-y-4">
+      <div className="flex flex-col gap-4 rounded-xl bg-muted/30 p-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
+          {monitoring.isPending || monitoring.isError ? (
+            <p role="status" className="text-sm">
+              {monitoring.isPending
+                ? 'Loading monitoring status…'
+                : 'Monitoring status is unavailable.'}
+            </p>
+          ) : (
+            <MonitoringRunStatus run={run ?? null} />
+          )}
 
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {getErrorMessage(error)}
-        </p>
-      )}
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {getErrorMessage(error)}
+            </p>
+          )}
+        </div>
 
-      <div className="flex flex-wrap gap-2">
-        {active ? (
-          <Button
-            variant="outline"
-            disabled={busy || !monitoring.isSuccess || run.status === 'STOPPING'}
-            onClick={handleStop}
-          >
-            {stop.isPending || run.status === 'STOPPING' ? 'Stopping…' : 'Stop Monitoring'}
-          </Button>
-        ) : (
-          <Button
-            disabled={busy || !monitoring.isSuccess || !session.data || !liveChatAvailable}
-            onClick={handleStart}
-          >
-            {start.isPending ? 'Starting…' : 'Start Monitoring'}
-          </Button>
-        )}
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {active ? (
+            <Button
+              variant="outline"
+              disabled={busy || !monitoring.isSuccess || run.status === 'STOPPING'}
+              onClick={handleStop}
+            >
+              {stop.isPending || run.status === 'STOPPING' ? 'Stopping…' : 'Stop Monitoring'}
+            </Button>
+          ) : (
+            <Button
+              disabled={busy || !monitoring.isSuccess || !session.data || !liveChatAvailable}
+              onClick={handleStart}
+            >
+              {start.isPending ? 'Starting…' : 'Start Monitoring'}
+            </Button>
+          )}
 
-        {monitoring.isError && (
-          <Button
-            variant="outline"
-            disabled={monitoring.isFetching || busy}
-            onClick={() => void monitoring.refetch()}
-          >
-            Refresh status
-          </Button>
-        )}
+          {monitoring.isError && (
+            <Button
+              variant="outline"
+              disabled={monitoring.isFetching || busy}
+              onClick={() => void monitoring.refetch()}
+            >
+              Refresh status
+            </Button>
+          )}
+        </div>
       </div>
 
       <p className="text-xs leading-5 text-muted-foreground">
-        Monitoring collects chat messages. AI processing follows the settings captured for each run;
-        moderation execution outcomes appear on individual messages.
+        Monitoring saves your chat and uses the moderation settings saved when this session starts.
+        Later settings changes apply to your next session. Stopping monitoring does not end your
+        YouTube livestream.
       </p>
 
       {run && session.data && (

@@ -1,6 +1,7 @@
 'use client';
 
 import type { AiOperationalStatusResponse } from '@moderator/contracts';
+import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
 
@@ -8,42 +9,48 @@ import { useAiOperationalStatus } from '../hooks/use-ai-operational-status';
 
 function describe(data: AiOperationalStatusResponse): [string, string] {
   if (data.availability === 'UNKNOWN')
-    return ['AI status unknown', 'No worker report has been received for this channel.'];
+    return ['AI status unknown', 'We haven’t received an AI status update for this channel yet.'];
   if (data.availability === 'STALE')
     return [
-      'AI worker not reporting',
-      'The last heartbeat has expired. Current AI processing cannot be confirmed.',
+      'AI status out of date',
+      'The latest AI update is too old to confirm that AI is checking chat. Check again shortly.',
     ];
   const report = data.report;
   switch (report.status) {
     case 'ACTIVE':
       return [
         'AI processing active',
-        'The worker has selected an eligible run. Moderation execution outcomes appear separately on messages.',
+        'AI processing is enabled for a selected stream. Check each message to see whether an action was confirmed by YouTube.',
       ];
     case 'DISABLED':
       return report.reason === 'RUN_AI_DISABLED'
         ? [
-            'AI disabled for this run',
-            'This run captured disabled AI settings. Changes in Settings apply to a new run.',
+            'AI off for this session',
+            'AI was off when monitoring started. Save your AI settings, then start a new monitoring session to use them.',
           ]
-        : ['Automatic AI disabled', 'Automatic AI is disabled in worker configuration.'];
+        : [
+            'Automatic AI disabled',
+            'AI is switched off in the app’s service configuration. Chat monitoring can still run.',
+          ];
     case 'WAITING':
-      return ['AI waiting for a run', 'No eligible active monitoring run is selected.'];
+      return [
+        'AI waiting for a stream',
+        'AI has not selected a stream to check. Start monitoring with AI enabled in your settings.',
+      ];
     case 'MODEL_MISMATCH':
       return [
-        'AI model mismatch',
-        'The model captured for this run differs from the worker model. AI processing is paused for this run.',
+        'AI setup needs attention',
+        'This session’s AI settings use a different model from the app. AI cannot check this session until the setup matches.',
       ];
     case 'CAPACITY_EXCEEDED':
       return [
-        'AI capacity exceeded',
-        'More than one eligible run is active. This worker supports one eligible livestream at a time.',
+        'Too many streams for AI',
+        'AI can check one eligible stream at a time. Stop monitoring the other streams to continue.',
       ];
     case 'ERROR':
       return [
-        'AI processing error',
-        `The worker reported ${report.error_code}. Check worker configuration and logs.`,
+        'AI needs attention',
+        'AI encountered a problem. New AI results may be unavailable. Check again shortly; the results already saved on messages remain available.',
       ];
   }
 }
@@ -62,18 +69,27 @@ export function AiOperationalStatusPanel({
   const [label, explanation] = unavailable
     ? [
         'AI status unavailable',
-        'The status request failed or channel access changed. Current AI processing cannot be confirmed.',
+        'We couldn’t check AI right now. Try again to get its latest status.',
       ]
     : checking || !data
-      ? ['Checking AI status…', 'Reading the latest worker report.']
+      ? ['Checking AI status…', 'Getting the latest AI update.']
       : describe(data);
 
   return (
-    <section aria-label="Automatic AI status" className="space-y-2 rounded-lg border p-4">
+    <section
+      aria-label="Automatic AI status"
+      className="space-y-3 rounded-xl border bg-muted/20 p-4 sm:p-5"
+    >
       <p className="text-sm font-medium" role="status">
         {label}
       </p>
       <p className="text-xs leading-5 text-muted-foreground">{explanation}</p>
+      <Link
+        href="/settings/moderation"
+        className="inline-block text-xs font-medium underline underline-offset-4"
+      >
+        Review moderation settings
+      </Link>
       {unavailable && (
         <Button
           variant="outline"
@@ -86,7 +102,7 @@ export function AiOperationalStatusPanel({
       )}
       {!unavailable && !checking && data && (
         <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">Worker report details</summary>
+          <summary className="cursor-pointer">Technical details</summary>
           <dl className="mt-2 space-y-1 wrap-break-word">
             <div>
               <dt className="inline font-medium">Channel: </dt>
@@ -104,6 +120,12 @@ export function AiOperationalStatusPanel({
                   <dt className="inline font-medium">Last reported state: </dt>
                   <dd className="inline">{data.report.status}</dd>
                 </div>
+                {data.report.error_code && (
+                  <div>
+                    <dt className="inline font-medium">Error code: </dt>
+                    <dd className="inline">{data.report.error_code}</dd>
+                  </div>
+                )}
                 <div>
                   <dt className="inline font-medium">Heartbeat: </dt>
                   <dd className="inline">

@@ -104,13 +104,13 @@ afterEach(() => {
 
 it.each([
   ['ACTIVE', 'RUN_SELECTED', 'ONLINE', 'AI processing active'],
-  ['WAITING', 'NO_ELIGIBLE_RUN', 'ONLINE', 'AI waiting for a run'],
+  ['WAITING', 'NO_ELIGIBLE_RUN', 'ONLINE', 'AI waiting for a stream'],
   ['DISABLED', 'WORKER_AI_DISABLED', 'ONLINE', 'Automatic AI disabled'],
-  ['DISABLED', 'RUN_AI_DISABLED', 'ONLINE', 'AI disabled for this run'],
-  ['MODEL_MISMATCH', 'CAPTURED_MODEL_MISMATCH', 'ONLINE', 'AI model mismatch'],
-  ['CAPACITY_EXCEEDED', 'MULTIPLE_ELIGIBLE_RUNS', 'ONLINE', 'AI capacity exceeded'],
-  ['ERROR', 'PROCESSING_FAILED', 'ONLINE', 'AI processing error'],
-  ['ACTIVE', 'RUN_SELECTED', 'STALE', 'AI worker not reporting'],
+  ['DISABLED', 'RUN_AI_DISABLED', 'ONLINE', 'AI off for this session'],
+  ['MODEL_MISMATCH', 'CAPTURED_MODEL_MISMATCH', 'ONLINE', 'AI setup needs attention'],
+  ['CAPACITY_EXCEEDED', 'MULTIPLE_ELIGIBLE_RUNS', 'ONLINE', 'Too many streams for AI'],
+  ['ERROR', 'PROCESSING_FAILED', 'ONLINE', 'AI needs attention'],
+  ['ACTIVE', 'RUN_SELECTED', 'STALE', 'AI status out of date'],
   ['ACTIVE', 'RUN_SELECTED', 'UNKNOWN', 'AI status unknown'],
 ])('renders %s / %s / %s as %s', async (status, reason, availability, label) => {
   mocks.request.mockResolvedValue(response(status, reason, availability));
@@ -118,7 +118,7 @@ it.each([
   await screen.findByText(label);
   if (availability !== 'ONLINE') expect(screen.queryByText('AI processing active')).toBeNull();
   if (status === 'ACTIVE' && availability === 'ONLINE')
-    expect(screen.getByText(/execution outcomes appear separately/)).toBeTruthy();
+    expect(screen.getByText(/confirmed by YouTube/)).toBeTruthy();
 });
 
 it('shows loading and updates status without reloading the page', async () => {
@@ -137,7 +137,19 @@ it('shows loading and updates status without reloading the page', async () => {
   act(() => {
     client.setQueryData(key, response('ACTIVE', 'RUN_SELECTED', 'STALE'));
   });
-  await screen.findByText('AI worker not reporting');
+  await screen.findByText('AI status out of date');
+  expect(screen.queryByText('AI processing active')).toBeNull();
+});
+
+it('keeps diagnostic codes in closed technical details and links to moderation settings', async () => {
+  mocks.request.mockResolvedValue(response('ERROR', 'PROCESSING_FAILED'));
+  panel();
+  await screen.findByText('AI needs attention');
+  expect(screen.getByText('INFERENCE_TIMEOUT').closest('details')?.open).toBe(false);
+  expect(screen.getByText(/New AI results may be unavailable/)).toBeTruthy();
+  expect(
+    screen.getByRole('link', { name: 'Review moderation settings' }).getAttribute('href'),
+  ).toBe('/settings/moderation');
   expect(screen.queryByText('AI processing active')).toBeNull();
 });
 
@@ -150,7 +162,7 @@ it('hides cached ACTIVE after a request failure and allows a manual retry', asyn
   });
   await screen.findByText('AI status unavailable');
   expect(screen.queryByText('AI processing active')).toBeNull();
-  expect(screen.queryByText('Worker report details')).toBeNull();
+  expect(screen.queryByText('Technical details')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Retry AI status' }));
   await screen.findByText('AI processing active');
 });

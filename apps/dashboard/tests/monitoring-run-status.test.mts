@@ -1,5 +1,5 @@
 import type { ChatObservation, MonitoringRun, SavedSession } from '@moderator/contracts';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -105,10 +105,10 @@ it.each([
   ['YOUTUBE_FORBIDDEN', 'Monitoring stopped: YouTube access denied'],
   ['LIVE_CHAT_DISABLED', 'Monitoring stopped: live chat disabled'],
   ['LIVE_CHAT_NOT_FOUND', 'Monitoring stopped: live chat unavailable'],
-  ['INVALID_PAGE_TOKEN', 'Monitoring stopped: chat checkpoint rejected'],
+  ['INVALID_PAGE_TOKEN', 'Monitoring stopped: chat could not resume'],
   ['INVALID_PROVIDER_RESPONSE', 'Monitoring stopped: unexpected YouTube response'],
   ['INVALID_REQUEST', 'Monitoring stopped: chat request rejected'],
-  ['RETRY_DELAY_UNSUPPORTED', 'Monitoring stopped: unsupported retry delay'],
+  ['RETRY_DELAY_UNSUPPORTED', 'Monitoring stopped: retry unavailable'],
   ['GOOGLE_UNAVAILABLE', 'Monitoring stopped: Google unavailable'],
   ['YOUTUBE_UNAVAILABLE', 'Monitoring stopped: YouTube unavailable'],
   ['YOUTUBE_RATE_LIMITED', 'Monitoring stopped: YouTube rate limit'],
@@ -207,6 +207,41 @@ it('hides cached lifecycle explanations when the monitoring read fails', () => {
   );
   expect(screen.getByText('Monitoring status is unavailable.')).toBeTruthy();
   expect(screen.queryByText('Monitoring stopped: YouTube quota exhausted')).toBeNull();
+  expect(
+    (screen.getByRole('button', { name: 'Start Monitoring' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Start Monitoring' }));
+  expect(mocks.start).not.toHaveBeenCalled();
+});
+
+it('stops only on a user click and explains that the YouTube stream keeps running', () => {
+  render(
+    createElement(MonitoringControls, {
+      broadcastId: run.youtube_broadcast_id,
+      liveChatAvailable: true,
+    }),
+  );
+  expect(screen.getByText(/Stopping monitoring does not end your YouTube livestream/)).toBeTruthy();
+  expect(screen.getByText(/Later settings changes apply to your next session/)).toBeTruthy();
+  expect(mocks.stop).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Stop Monitoring' }));
+  expect(mocks.stop).toHaveBeenCalledTimes(1);
+  expect(mocks.start).not.toHaveBeenCalled();
+});
+
+it('does not repeat a stop while the session is stopping', () => {
+  current = { ...run, status: 'STOPPING' };
+  render(
+    createElement(MonitoringControls, {
+      broadcastId: run.youtube_broadcast_id,
+      liveChatAvailable: true,
+    }),
+  );
+  expect((screen.getByRole('button', { name: 'Stopping…' }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Stopping…' }));
+  expect(mocks.stop).not.toHaveBeenCalled();
 });
 
 it.each(['STARTING', 'STOPPING'] as const)(

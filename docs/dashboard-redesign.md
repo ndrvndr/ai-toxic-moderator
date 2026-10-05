@@ -36,7 +36,9 @@ Tests cover collapsed details, access to expanded results, changing execution ou
 
 ## Remaining design work
 
-1. Live: simplify page-level monitoring controls and operational status explanations, then review the complete layout.
+Live monitoring controls now sit next to the session status. The copy explains that stopping monitoring does not end the YouTube livestream and that settings changes apply to the next session. AI status descriptions use streamer-facing language; diagnostic codes remain inside closed technical details. AI availability continues to be separate from successful moderation outcomes.
+
+1. Review the Live layout with an authenticated account on desktop and mobile.
 2. History: simplify report hierarchy, filters, and action summaries.
 3. Moderation: simplify settings labels and explain when saved changes take effect.
 4. Review responsive layouts and the complete streamer workflow before final AI-quality evaluation.

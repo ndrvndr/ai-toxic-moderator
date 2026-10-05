@@ -3,15 +3,15 @@ import type { MonitoringRun } from '@moderator/contracts';
 const failures: Record<string, [string, string]> = {
   YOUTUBE_QUOTA_EXCEEDED: [
     'Monitoring stopped: YouTube quota exhausted',
-    'YouTube rejected chat collection because the project quota is exhausted. This run will not retry automatically. Wait until quota is available, then start monitoring again if the broadcast is still active.',
+    'The app has reached its YouTube usage limit. This session will not retry automatically. When usage is available again, start monitoring if your stream is still live.',
   ],
   RECONNECT_REQUIRED: [
     'Monitoring stopped: reconnect Google',
-    'The Google connection is no longer usable. Reconnect your Google account, then start a new monitoring run.',
+    'Reconnect your Google account, then start a new monitoring session.',
   ],
   YOUTUBE_FORBIDDEN: [
     'Monitoring stopped: YouTube access denied',
-    'YouTube denied chat access. Check the connected account and channel permissions before starting monitoring again.',
+    'The connected Google account cannot access this chat. Check that you’re using the right account before trying again.',
   ],
   LIVE_CHAT_DISABLED: [
     'Monitoring stopped: live chat disabled',
@@ -22,59 +22,62 @@ const failures: Record<string, [string, string]> = {
     'YouTube could not find this live chat. Check whether the broadcast and its chat are still available.',
   ],
   INVALID_PAGE_TOKEN: [
-    'Monitoring stopped: chat checkpoint rejected',
-    'YouTube rejected the saved chat checkpoint. This run has ended; check worker logs before starting monitoring again.',
+    'Monitoring stopped: chat could not resume',
+    'We couldn’t continue from the last saved chat position. Start a new monitoring session to try again.',
   ],
   INVALID_PROVIDER_RESPONSE: [
     'Monitoring stopped: unexpected YouTube response',
-    'The worker could not validate the chat response. Check worker logs before starting monitoring again.',
+    'YouTube returned chat data the app couldn’t read. Try again later.',
   ],
   INVALID_REQUEST: [
     'Monitoring stopped: chat request rejected',
-    'The chat request could not be sent successfully. Check worker configuration and logs before starting monitoring again.',
+    'The app couldn’t request this chat. Check your Google connection before trying again.',
   ],
   RETRY_DELAY_UNSUPPORTED: [
-    'Monitoring stopped: unsupported retry delay',
-    'The provider requested a retry delay the worker cannot safely schedule. Check worker logs before starting monitoring again.',
+    'Monitoring stopped: retry unavailable',
+    'YouTube asked the app to wait longer than this session can handle. Try starting monitoring again later.',
   ],
   GOOGLE_UNAVAILABLE: [
     'Monitoring stopped: Google unavailable',
-    'The worker exhausted its automatic retries after Google requests failed. Check connectivity before starting monitoring again.',
+    'The app tried reconnecting to Google but couldn’t continue. Check your connection, then start monitoring again.',
   ],
   YOUTUBE_UNAVAILABLE: [
     'Monitoring stopped: YouTube unavailable',
-    'The worker exhausted its automatic retries after YouTube requests failed. Check connectivity before starting monitoring again.',
+    'The app tried reconnecting to YouTube but couldn’t continue. Try starting monitoring again later.',
   ],
   YOUTUBE_RATE_LIMITED: [
     'Monitoring stopped: YouTube rate limit',
-    'The worker exhausted its automatic retries after YouTube rate limits. Wait before starting monitoring again.',
+    'YouTube is limiting requests. Wait a little before starting monitoring again.',
   ],
 };
 const retryable = ['GOOGLE_UNAVAILABLE', 'YOUTUBE_UNAVAILABLE', 'YOUTUBE_RATE_LIMITED'];
 
 function describe(run: MonitoringRun | null): [string, string] {
   if (!run)
-    return ['Monitoring not started', 'Start monitoring to collect chat for this broadcast.'];
+    return [
+      'Monitoring not started',
+      'Start monitoring to save chat and apply your moderation settings.',
+    ];
   switch (run.status) {
     case 'STARTING':
       return [
         'Monitoring starting',
-        'The run is queued for the worker. Chat collection has not been confirmed yet.',
+        'Preparing this session. Chat collection has not been confirmed yet.',
       ];
     case 'RUNNING':
       return run.last_error_code && retryable.includes(run.last_error_code)
         ? [
             'Monitoring retrying',
-            'The last provider request failed. The worker schedules retries automatically; this status does not confirm that new chat has been collected.',
+            'The app is trying to reconnect to YouTube. New messages may be delayed; this status does not confirm that new chat has been collected.',
           ]
         : [
             'Monitoring running',
-            'The worker started this run. AI health and individual moderation outcomes are shown separately.',
+            'This monitoring session has started. Check AI status and each message for moderation results.',
           ];
     case 'STOPPING':
       return [
         'Monitoring stopping',
-        'A stop was requested. Waiting for the worker to finish this run.',
+        'Finishing this monitoring session. Your YouTube livestream will keep running.',
       ];
     case 'STOPPED':
       return run.stop_requested_at
@@ -84,14 +87,14 @@ function describe(run: MonitoringRun | null): [string, string] {
           ]
         : [
             'Monitoring ended',
-            'Chat collection has ended without a recorded stop request. The saved run does not identify the exact end reason. Stored results remain available.',
+            'Chat collection has ended. The saved session does not identify the exact end reason. You can still review its chat and moderation results.',
           ];
     case 'FAILED':
       return run.last_error_code && Object.hasOwn(failures, run.last_error_code)
         ? failures[run.last_error_code]!
         : [
             'Monitoring stopped after an error',
-            'This run failed. Check worker logs before starting monitoring again.',
+            'The app couldn’t continue monitoring. Your saved chat remains available. Try again later.',
           ];
   }
 }
