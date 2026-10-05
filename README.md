@@ -581,6 +581,7 @@ gate, even when the portfolio MVP feature scope is complete.
 
 ## Documentation
 
+- [Unban implementation](docs/unban.md)
 - [Environment variable reference](docs/environment.md)
 - [Portfolio demo guide](docs/portfolio-demo.md)
 - [Dashboard redesign](docs/dashboard-redesign.md)

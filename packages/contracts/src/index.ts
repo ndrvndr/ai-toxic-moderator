@@ -18,6 +18,7 @@ export * from './moderation-rule-catalog';
 export * from './moderation-settings';
 export * from './monitoring';
 export * from './saved-sessions';
+export * from './unban';
 export * from './youtube-ingestion';
 
 export const uuid = z.uuid();
