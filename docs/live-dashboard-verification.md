@@ -244,6 +244,8 @@ for automated coverage and the repeatable manual procedure.
 
 The dashboard retains an already verified session during network failures and HTTP 5xx responses. A notice marks displayed information as potentially out of date; session verification retries every five seconds while mounted. A failed initial verification does not grant access. An expired session still redirects to login and removes private cached queries. Other errors do not retain dashboard access.
 
+A full browser reload clears the in-memory verified session. If the API is still offline, **Unable to verify your session** is expected until verification succeeds. Restarting the API allows automatic recovery without another reload; having a login cookie alone does not establish current access. This behavior is independent of whether monitoring is running.
+
 Temporary broadcast-list failures retain the existing list so mounted chat connections can reconnect. Listing retries stop after a successful response; normal browsing does not poll YouTube broadcast lists. WebSocket recovery continues to use its existing bounded retry policy and last processed cursor.
 
 Automated component tests cover retained dashboard content, automatic session and listing recovery, expired-session cleanup, non-transient denial, and unmount cleanup. Browser verification for this change remains a separate check:
