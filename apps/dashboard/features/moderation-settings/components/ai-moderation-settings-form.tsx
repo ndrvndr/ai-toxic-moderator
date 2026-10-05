@@ -111,6 +111,13 @@ export function AiModerationSettingsForm({
           before saving.
         </p>
       )}
+      {!saved && (
+        <p className="text-sm text-muted-foreground">
+          AI, Delete, Timeout, and Ban start selected. They take effect only after you save valid
+          settings and start a new monitoring session with the required worker features enabled. You
+          can switch off any action before saving.
+        </p>
+      )}
       {!canEdit && <p role="status">Only the channel owner can change AI settings.</p>}
       <fieldset disabled={!editable} className="space-y-4">
         <legend className="sr-only">AI moderation configuration</legend>
@@ -129,6 +136,11 @@ export function AiModerationSettingsForm({
           violation. Lower limits let AI act on more messages. If several enabled limits are met,
           the strongest action is selected. Keep Delete below Timeout and Timeout below Ban,
           including actions you switch off.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          AI can misread context and act on harmless messages. A higher limit reduces how often an
+          action is selected, but can also miss harmful messages. A ban can hide a viewer until you
+          remove the restriction in YouTube.
         </p>
         <div className="grid gap-4 sm:grid-cols-3">
           <AiModerationTier

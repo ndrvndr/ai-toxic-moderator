@@ -101,7 +101,7 @@ function fill() {
   change('Ban threshold', '0.95');
 }
 
-it('starts without implicit thresholds or enabled AI actions and saves an explicit scoped configuration', async () => {
+it('selects all new AI actions without implicit thresholds and saves an explicit scoped configuration', async () => {
   render(editor(), { wrapper });
   await screen.findByText(
     'No AI settings saved yet. Complete the one-time model setup and choose your action limits before saving.',
@@ -120,11 +120,9 @@ it('starts without implicit thresholds or enabled AI actions and saves an explic
     'Allow AI timeout',
     'Allow AI ban',
   ]) {
-    expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(true);
   }
   fill();
-  fireEvent.click(screen.getByLabelText('Allow AI to take action in new sessions'));
-  fireEvent.click(screen.getByLabelText('Allow AI timeout'));
   change('AI timeout seconds', '60');
   save();
   await screen.findByText('AI settings revision 1 saved.');
@@ -133,9 +131,9 @@ it('starts without implicit thresholds or enabled AI actions and saves an explic
   expect(input.configuration).toMatchObject({
     automatic_actions_enabled: true,
     model: configuration.model,
-    delete: { enabled: false, threshold: 0.6 },
+    delete: { enabled: true, threshold: 0.6 },
     timeout: { enabled: true, threshold: 0.8, duration_seconds: 60 },
-    ban: { enabled: false, threshold: 0.95 },
+    ban: { enabled: true, threshold: 0.95 },
   });
   expect(posts()[0]![0]).toBe(`/v1/channels/${channelId}/ai-moderation-settings`);
   expect(
@@ -143,6 +141,30 @@ it('starts without implicit thresholds or enabled AI actions and saves an explic
       ?.revision,
   ).toBe(1);
   expect(client.getQueryData(aiModerationSettingsKey(accountId, otherChannel))).toBeUndefined();
+});
+
+it('preserves disabled saved actions instead of applying new-channel defaults', async () => {
+  records.set(
+    channelId,
+    record(channelId, 3, {
+      ...configuration,
+      automatic_actions_enabled: false,
+      delete: { ...configuration.delete, enabled: false },
+      timeout: { ...configuration.timeout, enabled: false },
+      ban: { ...configuration.ban, enabled: false },
+    }),
+  );
+  render(editor(), { wrapper });
+  await screen.findByText('Saved AI revision: 3.');
+  for (const label of [
+    'Allow AI to take action in new sessions',
+    'Allow AI delete',
+    'Allow AI timeout',
+    'Allow AI ban',
+  ])
+    expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByLabelText('Ban threshold') as HTMLInputElement).value).toBe('0.95');
+  expect(posts()).toHaveLength(0);
 });
 
 it('explains an incomplete first save near the save button and focuses the error without sending HTTP', async () => {

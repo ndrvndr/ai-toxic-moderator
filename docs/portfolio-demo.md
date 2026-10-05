@@ -5,6 +5,12 @@ and Ban enabled. All three tiers are part of the intended demo configuration;
 they are not promises of accurate detection. This document does not change saved
 settings or enable any worker action switches.
 
+For channels without saved AI settings, the editor preselects the AI master
+switch and all three action tiers. Model fields and thresholds remain empty and
+must pass validation before Save. Saved configurations, including disabled
+actions, remain unchanged. This is a form default, not automatic activation of a
+channel or worker.
+
 ## Prepare
 
 1. Use a development channel and a separate viewer account that you control.

@@ -16,7 +16,7 @@ export function toAiModerationDraft(
   configuration?: AiModerationSettingsConfiguration,
 ): AiModerationDraft {
   return {
-    automatic_actions_enabled: configuration?.automatic_actions_enabled ?? false,
+    automatic_actions_enabled: configuration?.automatic_actions_enabled ?? true,
     model: configuration
       ? { ...configuration.model }
       : {
@@ -26,16 +26,16 @@ export function toAiModerationDraft(
           adapter_version: '',
         },
     delete: {
-      enabled: configuration?.delete.enabled ?? false,
+      enabled: configuration?.delete.enabled ?? true,
       threshold: configuration ? String(configuration.delete.threshold) : '',
     },
     timeout: {
-      enabled: configuration?.timeout.enabled ?? false,
+      enabled: configuration?.timeout.enabled ?? true,
       threshold: configuration ? String(configuration.timeout.threshold) : '',
       duration_seconds: configuration ? String(configuration.timeout.duration_seconds) : '30',
     },
     ban: {
-      enabled: configuration?.ban.enabled ?? false,
+      enabled: configuration?.ban.enabled ?? true,
       threshold: configuration ? String(configuration.ban.threshold) : '',
     },
   };
