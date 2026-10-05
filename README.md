@@ -543,6 +543,42 @@ Built-in rule enforcement is retired. The authored-example AI measurements above
 do not establish independent accuracy, production throughput, or production
 readiness. Final demo threshold selection and verification remain pending.
 
+## Remaining MVP phases
+
+Two feature and evaluation phases remain before closing the portfolio MVP.
+Unban is part of the MVP scope and is not deferred to future work.
+
+| Phase               | Scope                                                                                                                                                                                                                                                                         | Completion evidence                                                                                                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unban               | Let an authorized streamer manually remove an application-created ban from the dashboard using its stored YouTube ban ID. Record the removal separately from the original ban, show confirmed or uncertain outcomes, and update dispatch eligibility after confirmed removal. | Tests for authorization, concurrent requests, provider failures and uncertain responses; live verification that the viewer can chat again and a subsequent qualifying message can be moderated. |
+| Final AI evaluation | Choose and document demo thresholds, review false positives and missed abusive messages, and verify the final policy through the complete monitoring-to-report workflow. Keep model severity distinct from violation probability.                                             | A reproducible evaluation report with example provenance, model revision, thresholds, observed errors, limitations and final E2E results.                                                       |
+
+The proposed MVP unban flow covers bans with a recorded provider ban ID.
+An unknown ban outcome without an ID cannot be removed through that flow.
+Removing a ban does not promise restoration of deleted messages. The original
+ban record remains historical evidence, rather than being rewritten as a failed
+action. Unban does not exempt later messages from the captured moderation policy.
+The implementation is still pending.
+
+YouTube supports this operation through
+[liveChatBans.delete](https://developers.google.com/youtube/v3/live/docs/liveChatBans/delete),
+which requires the ban ID and suitable channel-owner or moderator authorization.
+A successful removal returns `204 No Content`.
+
+## After MVP / future work
+
+These are follow-up directions, not additional portfolio MVP feature phases.
+Public deployment still requires completion of the applicable security release
+gate, even when the portfolio MVP feature scope is complete.
+
+| Area                          | Follow-up work                                                                                                                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Production security           | Resolve credential exposure and dependency findings; verify HTTPS/WSS, Secure cookies, CSP, proxy configuration, restricted service access and distributed rate limits. See the security checklist and local audit. |
+| Operations and data lifecycle | Define retention and deletion, secure logging, backups and restoration, incident response, monitoring and capacity limits. Review YouTube API data requirements before deployment.                                  |
+| YouTube integration           | Improve quota visibility and reconnect guidance; reconcile moderation changes made outside the application, including removals through YouTube Studio.                                                              |
+| Model quality                 | Evaluate on a larger independent Indonesian chat sample, improve handling of context and slang, and assess spam/scam/gambling detection separately from toxicity.                                                   |
+| Product expansion             | Consider additional integrations, collaboration features and commercial account management only after the existing workflow is validated.                                                                           |
+
 ## Documentation
 
 - [Environment variable reference](docs/environment.md)
