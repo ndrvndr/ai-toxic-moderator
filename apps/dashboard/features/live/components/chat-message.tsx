@@ -33,7 +33,13 @@ export function ChatMessage({
 }) {
   const label = eventLabels[message.event_type] ?? 'Chat event';
   const details = (
-    <div className="space-y-2">
+    <div
+      className={
+        compact
+          ? 'space-y-4 [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent [&>div]:p-0'
+          : 'space-y-2'
+      }
+    >
       <ChatEvaluation evaluation={message.evaluation} />
       <ChatBlacklist decision={message.blacklist} />
       <ChatAiShadow result={message.ai_shadow} />
@@ -79,11 +85,11 @@ export function ChatMessage({
         <>
           <ChatMessageSummary message={message} />
           {hasDetails && (
-            <details className="group rounded-lg border border-transparent open:border-border open:bg-muted/20">
+            <details className="group">
               <summary className="cursor-pointer px-1 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
                 Moderation details
               </summary>
-              <div className="p-3 pt-0">{details}</div>
+              <div className="border-l-2 pl-4 py-2">{details}</div>
             </details>
           )}
         </>

@@ -34,28 +34,28 @@ export function ChatMessageSummary({ message }: { message: ChatObservation }) {
   const uncertain = deletion?.status === 'UNKNOWN' || author?.status === 'UNKNOWN';
   return (
     <div className="space-y-2">
-      <div role="group" aria-label="Moderation summary" className="flex flex-wrap gap-1.5 text-xs">
+      <div
+        role="group"
+        aria-label="Moderation summary"
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+      >
         {evaluation && (
           <span
             className={
-              attention
-                ? 'rounded-md bg-amber-50 px-2 py-1 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
-                : 'rounded-md bg-muted px-2 py-1 text-muted-foreground'
+              attention ? 'font-medium text-amber-800 dark:text-amber-200' : 'text-muted-foreground'
             }
           >
             Rule check: {ruleLabels[evaluation.outcome]}
           </span>
         )}
-        {message.blacklist && (
-          <span className="rounded-md bg-muted px-2 py-1">Blocked word matched</span>
-        )}
+        {message.blacklist && <span className="font-medium">Blocked word matched</span>}
         {ai && (
-          <span className="rounded-md bg-muted px-2 py-1 text-muted-foreground">
+          <span className="text-muted-foreground">
             {ai.status === 'SUCCEEDED' ? 'AI checked' : 'AI check unavailable'}
           </span>
         )}
         {decision && (
-          <span className="rounded-md bg-muted px-2 py-1">
+          <span className="font-medium">
             AI: {planningLabels[decision.planning_status]}
             {decision.selected_tier
               ? ` · ${decision.selected_tier === 'DELETE' ? 'Delete' : decision.selected_tier === 'TIMEOUT' ? 'Timeout' : 'Ban'}`
@@ -63,14 +63,14 @@ export function ChatMessageSummary({ message }: { message: ChatObservation }) {
           </span>
         )}
         {deletion && (
-          <span className="rounded-md border px-2 py-1">
+          <span className="font-medium text-foreground">
             {deletion.status === 'SUCCEEDED'
               ? 'Message deleted'
               : `Deletion ${actionLabels[deletion.status]}`}
           </span>
         )}
         {author && (
-          <span className="rounded-md border px-2 py-1">
+          <span className="font-medium text-foreground">
             {author.action === 'TIMEOUT' ? 'Timeout' : 'Ban'} request {actionLabels[author.status]}
           </span>
         )}

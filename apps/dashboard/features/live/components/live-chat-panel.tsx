@@ -150,7 +150,7 @@ function LiveChatPanelContent({ accountId, run, connectionStatus }: LiveChatPane
             role="region"
             aria-label="Chat messages, newest first"
             tabIndex={0}
-            className="max-h-[65vh] min-h-64 overflow-y-auto rounded-xl border bg-background"
+            className="max-h-[65vh] min-h-64 overflow-y-auto border-y bg-background"
           >
             <ol>
               {messages.map((message) => (

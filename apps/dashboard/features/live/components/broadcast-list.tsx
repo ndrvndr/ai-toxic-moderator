@@ -31,7 +31,7 @@ export function BroadcastList({ broadcasts, truncated }: BroadcastListProps) {
           </CardHeader>
         </Card>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="space-y-4">
           {broadcasts.map((broadcast) => (
             <BroadcastCard key={broadcast.youtube_broadcast_id} broadcast={broadcast} />
           ))}

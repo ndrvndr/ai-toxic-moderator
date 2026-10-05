@@ -153,8 +153,9 @@ function ChannelSettings({
         </summary>
         <div className="mt-5 space-y-4">
           <p className="text-sm text-muted-foreground">
-            Choose actions for the app’s existing rule checks. These are separate from your blocked
-            words and AI limits.
+            Built-in checks look for a small set of patterns, such as direct insults. They are
+            provided by the app, so you do not need to add these patterns to your blocked words.
+            Choose which actions these checks can take. Their action plans take priority over AI.
           </p>
           <ModerationSettingsEditor
             accountId={accountId}

@@ -26,6 +26,11 @@ export function CustomBlacklistForm({
   const [notice, setNotice] = useState('');
   const [validation, setValidation] = useState('');
   const [reloading, setReloading] = useState(false);
+  const [search, setSearch] = useState('');
+  const searchTerm = search.trim().toLowerCase();
+  const visibleCount = draft.rules.filter((entry) =>
+    entry.pattern.toLowerCase().includes(searchTerm),
+  ).length;
   const submitting = useRef(false);
   const mutation = useSaveCustomBlacklist(accountId, channelId);
   const busy = mutation.isPending || reloading;
@@ -118,24 +123,59 @@ export function CustomBlacklistForm({
           />
           Enable blocked words
         </label>
-        {draft.rules.map((entry, index) => (
-          <CustomBlacklistRow
-            key={entry.id}
-            entry={entry}
-            index={index}
-            onChange={(updated) => {
-              if (editable)
-                setDraft({
-                  ...draft,
-                  rules: draft.rules.map((rule) => (rule.id === entry.id ? updated : rule)),
-                });
-            }}
-            onRemove={() => {
-              if (editable)
-                setDraft({ ...draft, rules: draft.rules.filter((rule) => rule.id !== entry.id) });
-            }}
-          />
-        ))}
+        {draft.rules.length > 0 && (
+          <div className="space-y-2">
+            <label htmlFor={`blacklist-search-${channelId}`} className="text-sm font-medium">
+              Search blocked words
+            </label>
+            <input
+              id={`blacklist-search-${channelId}`}
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Find a word, phrase, or domain"
+              className="h-10 w-full rounded-md border bg-background px-3"
+            />
+            <p className="text-xs text-muted-foreground">
+              Showing {visibleCount} of {draft.rules.length} entries. Word matches a single word;
+              Phrase matches text; Domain matches a website address.
+            </p>
+            {visibleCount === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No matching entries. Try another search or clear it.
+              </p>
+            )}
+            {search && (
+              <Button type="button" variant="ghost" onClick={() => setSearch('')}>
+                Clear search
+              </Button>
+            )}
+          </div>
+        )}
+        <div className="max-h-[28rem] overflow-y-auto">
+          {draft.rules.map((entry, index) => (
+            <div key={entry.id} hidden={!entry.pattern.toLowerCase().includes(searchTerm)}>
+              <CustomBlacklistRow
+                entry={entry}
+                index={index}
+                onChange={(updated) => {
+                  if (editable)
+                    setDraft({
+                      ...draft,
+                      rules: draft.rules.map((rule) => (rule.id === entry.id ? updated : rule)),
+                    });
+                }}
+                onRemove={() => {
+                  if (editable)
+                    setDraft({
+                      ...draft,
+                      rules: draft.rules.filter((rule) => rule.id !== entry.id),
+                    });
+                }}
+              />
+            </div>
+          ))}
+        </div>
         {draft.rules.length === 0 && (
           <p className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">
             Your list is empty. Add a word, phrase, or website domain to get started.
@@ -147,6 +187,7 @@ export function CustomBlacklistForm({
             variant="outline"
             disabled={draft.rules.length >= 100}
             onClick={() => {
+              setSearch('');
               if (editable && draft.rules.length < 100)
                 setDraft({
                   ...draft,

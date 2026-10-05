@@ -1,6 +1,7 @@
 'use client';
 
 import { useQueryClient } from '@tanstack/react-query';
+import { LoaderCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
 
@@ -40,10 +41,12 @@ export function SessionGuard({ children }: { children: ReactNode }) {
 
   if (!session.data) {
     return (
-      <main className="px-6 py-16">
-        <p role="status" className="text-sm text-muted-foreground">
-          Checking your session…
-        </p>
+      <main className="flex min-h-screen items-center justify-center px-6 py-16">
+        <div role="status" className="flex max-w-sm flex-col items-center gap-3 text-center">
+          <LoaderCircle aria-hidden="true" className="size-6 animate-spin text-muted-foreground" />
+          <p className="font-medium">Checking your session…</p>
+          <p className="text-sm text-muted-foreground">Getting your dashboard ready.</p>
+        </div>
       </main>
     );
   }

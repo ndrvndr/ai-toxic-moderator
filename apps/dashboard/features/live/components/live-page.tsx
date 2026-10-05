@@ -8,7 +8,6 @@ import { useBroadcasts } from '../hooks/use-broadcasts';
 import { AiOperationalStatusPanel } from './ai-operational-status-panel';
 import { BroadcastList } from './broadcast-list';
 import { LiveHeader } from './live-header';
-import { SavedSessions } from './saved-sessions';
 
 export function LivePage() {
   const session = useSession();
@@ -59,10 +58,6 @@ export function LivePage() {
 
       {broadcasts.isSuccess && (
         <BroadcastList broadcasts={broadcasts.data.items} truncated={broadcasts.data.truncated} />
-      )}
-
-      {session.data && (
-        <SavedSessions key={session.data.account.id} accountId={session.data.account.id} />
       )}
     </div>
   );

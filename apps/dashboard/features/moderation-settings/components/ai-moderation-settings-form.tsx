@@ -163,6 +163,10 @@ export function AiModerationSettingsForm({
             onChange={(value) => setDraft({ ...draft, ban: value })}
           />
         </div>
+        <p className="text-sm text-muted-foreground">
+          Model variant: <span className="font-medium text-foreground">INT8</span>. This is the
+          version supported by the app; there is no variant to select.
+        </p>
         <details open={!saved} className="space-y-3 rounded-lg border p-4">
           <summary className="cursor-pointer text-sm font-medium">
             AI model setup · Advanced
@@ -193,9 +197,7 @@ export function AiModerationSettingsForm({
               />
             </label>
           ))}
-          <p className="text-xs text-muted-foreground">
-            Model variant: INT8 · Score: expected severity
-          </p>
+          <p className="text-xs text-muted-foreground">Score: expected severity</p>
         </details>
       </fieldset>
       {validation && (

@@ -71,6 +71,36 @@ function editor(canEdit = true, channel = channelId, account = accountId) {
 }
 const posts = () =>
   vi.mocked(apiRequest).mock.calls.filter(([, options]) => options?.method === 'POST');
+
+it('searches locally and saves entries hidden by the search', async () => {
+  records.set(
+    channelId,
+    record(channelId, 1, {
+      ...configuration,
+      rules: [
+        ...configuration.rules,
+        { ...configuration.rules[0]!, id: '30000000-0000-4000-8000-000000000002', pattern: 'def' },
+      ],
+    }),
+  );
+  render(editor(), { wrapper });
+  await screen.findByLabelText('Blocked text for entry 2');
+  const requestCount = vi.mocked(apiRequest).mock.calls.length;
+  fireEvent.change(screen.getByLabelText('Search blocked words'), { target: { value: 'ABC' } });
+  expect(screen.getByText('Showing 1 of 2 entries.', { exact: false })).toBeTruthy();
+  expect(vi.mocked(apiRequest).mock.calls.length).toBe(requestCount);
+  expect(screen.queryByRole('button', { name: 'Remove entry 2' })).toBeNull();
+  fireEvent.change(screen.getByLabelText('Blocked text for entry 1'), {
+    target: { value: 'abcd' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save blocked words' }));
+  await screen.findByText('Blacklist revision 2 saved.');
+  expect(
+    JSON.parse(posts()[0]![1]!.body as string).configuration.rules.map(
+      (rule: { pattern: string }) => rule.pattern,
+    ),
+  ).toEqual(['abcd', 'def']);
+});
 function add(pattern: string) {
   fireEvent.click(screen.getByRole('button', { name: 'Add blocked word' }));
   fireEvent.change(screen.getByLabelText('Blocked text for entry 1'), {
