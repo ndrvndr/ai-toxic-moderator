@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { SESSION_QUERY_KEY } from '@/features/auth/hooks/use-session';
-import { ApiError } from '@/lib/api-client';
+import { ApiError, isTemporaryApiError } from '@/lib/api-client';
 
 import { getBroadcasts } from '../api/broadcasts-api';
 
@@ -27,6 +27,7 @@ export function useBroadcasts(accountId: string | undefined) {
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    refetchInterval: (query) => (isTemporaryApiError(query.state.error) ? 5000 : false),
     retry: false,
   });
 }

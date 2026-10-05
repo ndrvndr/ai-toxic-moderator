@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { getErrorMessage } from '@/lib/api-client';
+import { getErrorMessage, isTemporaryApiError } from '@/lib/api-client';
 
 import { useSession } from '../hooks/use-session';
 
@@ -25,7 +25,9 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     }
   }, [session.isSuccess, session.data, queryClient, router]);
 
-  if (session.isError) {
+  const recovering = session.isError && isTemporaryApiError(session.error);
+
+  if (session.isError && !(recovering && session.data)) {
     return (
       <main className="mx-auto max-w-lg space-y-4 px-6 py-16">
         <h1 className="text-xl font-semibold">Unable to verify your session</h1>
@@ -51,5 +53,28 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     );
   }
 
-  return children;
+  return (
+    <>
+      {recovering && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-center gap-3 border-b bg-muted px-4 py-3 text-sm"
+        >
+          <p>
+            Connection interrupted. Reconnecting automatically. Displayed information may be out of
+            date.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={session.isFetching}
+            onClick={() => void session.refetch()}
+          >
+            {session.isFetching ? 'Reconnecting…' : 'Retry connection'}
+          </Button>
+        </div>
+      )}
+      {children}
+    </>
+  );
 }

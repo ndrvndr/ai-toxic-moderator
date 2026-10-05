@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { useSession } from '@/features/auth/hooks/use-session';
-import { ApiError, getErrorMessage, GOOGLE_LOGIN_URL } from '@/lib/api-client';
+import { ApiError, getErrorMessage, GOOGLE_LOGIN_URL, isTemporaryApiError } from '@/lib/api-client';
 
 import { useBroadcasts } from '../hooks/use-broadcasts';
 import { AiOperationalStatusPanel } from './ai-operational-status-panel';
@@ -57,7 +57,7 @@ export function LivePage() {
         </div>
       )}
 
-      {broadcasts.isSuccess && (
+      {broadcasts.data && (broadcasts.isSuccess || isTemporaryApiError(broadcasts.error)) && (
         <BroadcastList broadcasts={broadcasts.data.items} truncated={broadcasts.data.truncated} />
       )}
     </div>

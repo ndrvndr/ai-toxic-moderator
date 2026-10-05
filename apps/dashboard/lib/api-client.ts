@@ -23,6 +23,10 @@ export class ApiError extends Error {
   }
 }
 
+export function isTemporaryApiError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 0 || error.status >= 500);
+}
+
 export async function apiRequest(path: string, options: RequestInit = {}): Promise<unknown> {
   const headers = new Headers(options.headers);
 

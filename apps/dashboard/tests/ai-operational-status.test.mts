@@ -243,6 +243,21 @@ it('Live does not request AI status for an operator membership', async () => {
   expect(mocks.request).not.toHaveBeenCalled();
 });
 
+it('keeps the saved broadcast list mounted during a temporary listing failure', async () => {
+  const view = render(createElement(LivePage), { wrapper: Wrapper });
+  await screen.findByText('AI processing active');
+  const emptyList = screen.getByText('No active broadcasts');
+  mocks.broadcasts.mockReturnValue({
+    isError: true,
+    data: { items: [], truncated: false },
+    error: new ApiError(0, 'NETWORK_ERROR'),
+    refetch: vi.fn(),
+  });
+  view.rerender(createElement(LivePage));
+  expect(screen.getByText('No active broadcasts')).toBe(emptyList);
+  expect(screen.getByText(/server could not be reached/)).toBeTruthy();
+});
+
 it('validates response scope and passes cancellation to the API', async () => {
   const abort = new AbortController();
   await getAiOperationalStatus(channelId, abort.signal);

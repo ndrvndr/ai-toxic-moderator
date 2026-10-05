@@ -239,3 +239,17 @@ The procedure used disabled moderation executor switches. It does not establish
 real-provider duplicate-action prevention, recovery from hard termination or a
 real ONNX crash, or high-volume throughput. See the [worker resilience report](worker-resilience.md)
 for automated coverage and the repeatable manual procedure.
+
+## API outage recovery
+
+The dashboard retains an already verified session during network failures and HTTP 5xx responses. A notice marks displayed information as potentially out of date; session verification retries every five seconds while mounted. A failed initial verification does not grant access. An expired session still redirects to login and removes private cached queries. Other errors do not retain dashboard access.
+
+Temporary broadcast-list failures retain the existing list so mounted chat connections can reconnect. Listing retries stop after a successful response; normal browsing does not poll YouTube broadcast lists. WebSocket recovery continues to use its existing bounded retry policy and last processed cursor.
+
+Automated component tests cover retained dashboard content, automatic session and listing recovery, expired-session cleanup, non-transient denial, and unmount cleanup. Browser verification for this change remains a separate check:
+
+1. Open Live with monitoring running and confirm **Live updates connected**.
+2. Stop only the API. Keep the page open; confirm the dashboard stays visible and chat reports reconnecting. If session verification fails, confirm the connection notice appears.
+3. Restart the API promptly, within the WebSocket retry window. Confirm chat reconnects without a reload and the new connection resumes with the last processed `after` cursor.
+4. Confirm chat and monitoring status refresh, and any session connection notice disappears after successful verification.
+5. Navigate away and confirm the previous WebSocket closes. An actually expired session must still return to login.
