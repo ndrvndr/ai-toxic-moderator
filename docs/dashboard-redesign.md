@@ -22,7 +22,7 @@ A `RUNNING` session is displayed as “Monitoring started.” This does not clai
 
 - Dashboard tests cover empty sessions, independent lookup of monitoring sessions, confirmed outcome totals, unavailable statistics, and list failures.
 - Dashboard production build includes `/overview`.
-- Manual authenticated desktop and mobile review is pending. The preview reached the session guard, but the API was unavailable during browser inspection.
+- Manual review: developer-reported passed on 2026-10-05 following the supplied desktop and 390 × 844 responsive checklist for Overview, Live, History, and Moderation. The developer's standing convention treats “continue” as confirmation that the preceding checks passed. No screenshots or per-page observations were supplied; this is not assistant-observed browser verification.
 
 ## Compact chat
 
@@ -32,7 +32,7 @@ Each message shows short, separate summaries for rule checks, blocked-word match
 
 “Moderation details” expands the existing classification, blacklist, model, planning, and execution explanations. The original message remains available after a confirmed deletion for reviewing the saved record. Live chat has a taller scroll area, and broadcast cards no longer display internal channel identifiers.
 
-Tests cover collapsed details, access to expanded results, changing execution outcomes, uncertainty notices, and system events without fabricated moderation results. Authenticated browser and responsive visual review remains pending.
+Tests cover collapsed details, access to expanded results, changing execution outcomes, uncertainty notices, and system events without fabricated moderation results. Browser and responsive review has developer-reported confirmation as described above.
 
 ## History reports
 
@@ -54,11 +54,10 @@ A single channel's internal identifier appears in optional channel details. Acco
 
 Tests cover the settings hierarchy, access permissions, selected channel scope, and the existing save, validation, concurrency, and reload behavior. No backend or enforcement behavior was changed.
 
-## Remaining design work
+## Completion and next stage
 
 Live monitoring controls now sit next to the session status. The copy explains that stopping monitoring does not end the YouTube livestream and that settings changes apply to the next session. AI status descriptions use streamer-facing language; diagnostic codes remain inside closed technical details. AI availability continues to be separate from successful moderation outcomes.
 
-1. Review the Live layout with an authenticated account on desktop and mobile.
-2. Review History reports with real saved streams on desktop and mobile.
-3. Review Moderation settings with an authenticated owner and moderator account.
-4. Review responsive layouts and the complete streamer workflow before final AI-quality evaluation.
+The planned portfolio redesign is complete with automated checks and developer-reported manual review. The review checklist did not require saving settings, starting a new livestream, or signing in as a second moderator account. Those scenarios must not be inferred from this result. Existing automated permission and form tests remain the evidence for those behaviors.
+
+The next stage is [portfolio AI quality evaluation](ai-quality-evaluation.md). No model identity, enforcement threshold, saved channel settings, or moderation behavior was changed by the redesign.
