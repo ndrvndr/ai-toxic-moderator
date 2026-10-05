@@ -1,6 +1,6 @@
 # Portfolio AI quality evaluation
 
-Status: planned. The dashboard redesign is complete; final model quality evaluation starts from the existing local prototype. This stage does not require a YouTube livestream or send moderation requests.
+Status: initial local evaluation completed on 2026-10-05. Native inference ran on all 40 existing probes using the cached pinned revision. See [observed results](ai-quality-results.md). This stage does not require a YouTube livestream or send moderation requests.
 
 ## Steps
 
@@ -17,4 +17,16 @@ Use the existing 40 authored probes as an initial comparison; add targeted regre
 
 Earlier reports already show safe negation and anti-harassment text receiving abusive ratings, and a degrading insult receiving a safe rating. Threshold selection must account for these examples. Successful deletion, timeout, and ban integration tests establish execution behavior, not model accuracy.
 
-No threshold recommendation or new quality result has been established by this document.
+## Reproduce the comparison
+
+```powershell
+node scripts/ai-prototype.mjs run
+node scripts/ai-quality-report.mjs .cache/ai-prototype/results-1791187924218.json
+node --experimental-test-isolation=none --test tests/ai-quality-report.test.cjs
+```
+
+The second command names the report generated for this evaluation. On another run, replace its filename with the result path printed by the first command. Raw inference files and model artifacts remain in the ignored cache. The comparison rejects incomplete reports, duplicate identities, changed texts or interpretations, and invalid scores instead of silently changing its denominators.
+
+Thresholds were compared after inspecting existing scores. These are in-sample exploratory comparisons; no held-out generalization claim is justified. A cutoff of 0.50 selects one clear example and ten of eleven abusive examples. At 0.56 it selects no clear examples in this sample but only six of eleven abusive examples. At 0.60 it selects only one of eleven abusive examples. Thresholds alone do not resolve the overlap.
+
+No universal demo preset is endorsed. Permanent bans are not justified by this small quality sample. An explicit demonstration with a test viewer can still verify configurable Delete, Timeout, and Ban execution independently of toxicity quality. Saved channel settings and executor switches were not modified. Final demo settings remain a product decision, with the limitations above disclosed.
