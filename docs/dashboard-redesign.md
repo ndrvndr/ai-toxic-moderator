@@ -6,6 +6,8 @@ The dashboard uses English copy written for streamers. Technical model details a
 
 The protected `/overview` page is the workspace home. The public `/` landing page remains separate. The sidebar and workspace name link to Overview.
 
+The public homepage explains live AI checks, custom blocked words, and saved stream reports in streamer-facing English. It includes sign-in links, a responsive product preview explicitly labeled as illustrative, a three-part feature explanation, and a setup call to action. It does not request account data or display fabricated live statistics. The previous claim that monitoring was coming next has been removed. Visual browser review remains pending for this homepage update.
+
 Overview provides:
 
 - A shortcut to Live and the most recently saved session marked `RUNNING`, when available.
