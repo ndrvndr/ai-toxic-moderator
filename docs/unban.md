@@ -14,12 +14,12 @@ Unban is part of the portfolio MVP. It has two manual intents:
 | 1    | Strict request/result contracts and a single-attempt YouTube removal adapter                                  | Implemented and covered by local tests        |
 | 2    | New migration and scoped removal records, idempotency, audit identity and concurrent-request protection       | Schema implemented and covered by local tests |
 | 3    | Authorized API workflow, token resolution and separate Studio confirmation path                               | Implemented and covered by local HTTP tests   |
-| 4    | Dispatch eligibility after removal; keep historical ban outcomes unchanged and suppress stale queued messages | Pending                                       |
+| 4    | Dispatch eligibility after removal; keep historical ban outcomes unchanged and suppress stale queued messages | Implemented and covered by local tests        |
 | 5    | Dashboard controls, confirmation dialogs, outcome display and Live/History refresh                            | Pending                                       |
 | 6    | Database/HTTP/UI integration tests and controlled livestream E2E verification                                 | Pending                                       |
 
-The adapter is wired to the authorized API. Dashboard controls and updated
-dispatch eligibility are still pending; the complete feature is not ready for
+The adapter is wired to the authorized API and worker dispatch eligibility.
+Dashboard controls are still pending; the complete feature is not ready for
 live verification yet.
 
 Migration `028_youtube_unban_requests.sql` adds scoped removal history with
@@ -86,8 +86,20 @@ not-sent attempts allow a new intentional request with a new UUID.
 Expiry recovery runs when that resource is next read or requested. It is not a
 background scanner. Live events accompany record creation, completion and expiry
 recovery in the same transaction. No provider ID or credential is returned in
-the removal summary. These records do not yet change worker scheduling; step 4
-implements that behavior.
+the removal summary.
+
+## Scheduling after removal
+
+Only `SUCCEEDED` or `USER_CONFIRMED` removal records release their linked
+permanent ban's scheduling block, within the same channel and livestream session.
+The original ban outcome remains unchanged. Failed, pending or unknown removals
+do not release it; other unknown or in-progress author actions still block dispatch.
+
+Both publication and ingestion timestamps must be strictly later than the
+recorded removal completion. Older queued messages, late-ingested old messages
+and messages at the completion boundary are suppressed with `MESSAGE_BEFORE_UNBAN`.
+They cannot trigger a delayed timeout or re-ban. Fresh qualifying messages can
+create another action; a new confirmed ban requires its own removal record.
 
 ## Outcome rules
 
@@ -102,7 +114,7 @@ implements that behavior.
   IDs, target identifiers or claimed provider outcomes. The server must resolve
   scope and target from the stored execution and recheck authorization.
 - Removal records do not overwrite the original ban or its attempt history.
-- Later implementation must release only the relevant ban's scheduling block;
+- Scheduling releases only the relevant ban's block;
   other unknown/in-progress actions remain protected. Messages queued before
   removal must not cause an immediate delayed re-ban.
 - A subsequent qualifying message can trigger moderation again. Unban is not
@@ -122,6 +134,9 @@ OAuth scope. It returns `204 No Content` on success.
 npm run test:unban
 npm run test:unban-http
 npm run test:classification-schema
+npm run test:delete-execution-store
+npm run test:monitoring-http
+npm run test:live-hooks
 npm run check
 ```
 

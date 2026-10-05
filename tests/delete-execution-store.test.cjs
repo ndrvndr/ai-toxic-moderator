@@ -1336,6 +1336,188 @@ async function authorBlockReason(observationId) {
   return result.rows[0].reason;
 }
 
+async function seedRemoval(f, status = 'USER_CONFIRMED') {
+  const id = randomUUID();
+  const method = status === 'USER_CONFIRMED' ? 'STUDIO_CONFIRMATION' : 'YOUTUBE';
+  await admin.query(
+    `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+     INSERT INTO youtube_unban_requests(id,request_id,ban_attempt_id,execution_id,
+       channel_id,session_id,requested_by_account_id,credential_account_id,method,
+       status,requested_at,deadline_at,finished_at)
+     SELECT $1,$2,a.id,e.id,e.channel_id,e.session_id,$3,
+       CASE WHEN $4='YOUTUBE' THEN $3::uuid ELSE NULL END,$4,
+       CASE WHEN $4='YOUTUBE' THEN 'DISPATCHED' ELSE 'USER_CONFIRMED' END,
+       at,CASE WHEN $4='YOUTUBE' THEN at+interval '30 seconds' ELSE NULL END,
+       CASE WHEN $4='STUDIO_CONFIRMATION' THEN at ELSE NULL END
+     FROM youtube_ban_executions e JOIN youtube_ban_attempts a ON a.execution_id=e.id
+     CROSS JOIN moment WHERE e.id=$5`,
+    [id, randomUUID(), f.accountId, method, f.execution.id],
+  );
+  if (method === 'YOUTUBE' && status !== 'DISPATCHED') {
+    await admin.query(
+      `UPDATE youtube_unban_requests SET status=$2,finished_at=clock_timestamp(),
+         http_status=CASE WHEN $2='SUCCEEDED' THEN 204 WHEN $2='REJECTED' THEN 404 ELSE NULL END,
+         error_code=CASE WHEN $2='SUCCEEDED' THEN NULL WHEN $2='NOT_SENT' THEN 'REQUEST_CANCELLED' ELSE 'TRANSPORT_ERROR' END
+       WHERE id=$1`,
+      [id, status],
+    );
+  }
+  const result = await admin.query(
+    `SELECT to_char(finished_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff,
+       to_char((finished_at+interval '1 millisecond') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS after
+     FROM youtube_unban_requests WHERE id=$1`,
+    [id],
+  );
+  return { id, ...result.rows[0] };
+}
+
+test('provider and Studio removals permit fresh timeout or ban but suppress pre-removal plans', async () => {
+  for (const status of ['SUCCEEDED', 'USER_CONFIRMED'])
+    for (const action of ['TIMEOUT', 'BAN']) {
+      const f = await eligibleFixture('BAN');
+      await seedHistoricalBanAttempt(f.execution.id);
+      const bans = new BanExecutionStore(pool);
+      const pending = await nextAuthorPlan(f, { action });
+      const pendingExecution = await bans.ensure(
+        pending.planId,
+        pending.channelId,
+        pending.sessionId,
+      );
+      assert.equal(await findBanCandidate(pending.planId), false);
+      assert.equal(await bans.claim(pendingExecution.id, randomUUID()), null);
+      const removal = await seedRemoval(f, status);
+      assert.equal(await authorBlockReason(pending.observationId), 'MESSAGE_BEFORE_UNBAN');
+      assert.equal(await findBanCandidate(pending.planId), false);
+      assert.equal(await bans.claim(pendingExecution.id, randomUUID()), null);
+      const fresh = await nextAuthorPlan(f, { publishedAt: removal.after, action });
+      assert.equal(await authorBlockReason(fresh.observationId), null);
+      assert.equal(await findBanCandidate(fresh.planId), true);
+      const row = await bans.ensure(fresh.planId, fresh.channelId, fresh.sessionId);
+      assert.deepEqual(await new BanEligibilityStore(pool, () => true).resolve(row), {
+        accountId: f.accountId,
+      });
+      const claim = await bans.claim(row.id, randomUUID());
+      assert.ok(claim);
+      await bans.complete(claim, { status: 'NOT_SENT', code: 'REQUEST_CANCELLED' });
+      // The original action stays historical and can never be attempted again.
+      assert.equal(await bans.claim(f.execution.id, randomUUID()), null);
+      assert.equal(
+        (
+          await admin.query('SELECT status FROM youtube_ban_attempts WHERE execution_id=$1', [
+            f.execution.id,
+          ])
+        ).rows[0].status,
+        'SUCCEEDED',
+      );
+    }
+});
+
+test('late-ingested old messages, exact-cutoff messages and prequeued future timestamps remain suppressed', async () => {
+  const f = await eligibleFixture('BAN');
+  await seedHistoricalBanAttempt(f.execution.id);
+  const queued = await nextAuthorPlan(f, { publishedAt: '2099-01-01T00:00:00Z' });
+  const removal = await seedRemoval(f);
+  const boundary = await nextAuthorPlan(f, { publishedAt: removal.cutoff });
+  const late = await nextAuthorPlan(f, { publishedAt: '2020-01-01T00:00:02Z' });
+  const bans = new BanExecutionStore(pool);
+  for (const old of [queued, boundary, late]) {
+    assert.equal(await authorBlockReason(old.observationId), 'MESSAGE_BEFORE_UNBAN');
+    assert.equal(await findBanCandidate(old.planId), false);
+    const execution = await bans.ensure(old.planId, old.channelId, old.sessionId);
+    assert.equal(await bans.claim(execution.id, randomUUID()), null);
+  }
+});
+
+test('pending, rejected, not-sent and unknown removals do not release a permanent ban', async () => {
+  for (const status of ['DISPATCHED', 'REJECTED', 'NOT_SENT', 'UNKNOWN']) {
+    const f = await eligibleFixture('BAN');
+    await seedHistoricalBanAttempt(f.execution.id);
+    await seedRemoval(f, status);
+    const next = await nextAuthorPlan(f);
+    assert.equal(await authorBlockReason(next.observationId), 'AUTHOR_ALREADY_BANNED');
+    assert.equal(await findBanCandidate(next.planId), false);
+    const bans = new BanExecutionStore(pool);
+    const execution = await bans.ensure(next.planId, next.channelId, next.sessionId);
+    assert.equal(await bans.claim(execution.id, randomUUID()), null);
+  }
+});
+
+test('a later confirmed ban needs its own removal and concurrent fresh claims still send once', async () => {
+  const f = await eligibleFixture('BAN');
+  await seedHistoricalBanAttempt(f.execution.id);
+  const firstRemoval = await seedRemoval(f);
+  const next = await nextAuthorPlan(f, { publishedAt: firstRemoval.after, action: 'BAN' });
+  const bans = new BanExecutionStore(pool);
+  const row = await bans.ensure(next.planId, next.channelId, next.sessionId);
+  const claim = await bans.claim(row.id, randomUUID());
+  assert.ok(claim);
+  await bans.complete(claim, {
+    status: 'SUCCEEDED',
+    http_status: 200,
+    ban_id: 'second-confirmed-ban',
+  });
+  const later = await nextAuthorPlan(f, { action: 'BAN' });
+  assert.equal(await authorBlockReason(later.observationId), 'AUTHOR_ALREADY_BANNED');
+  const secondRemoval = await seedRemoval({ ...f, execution: row }, 'SUCCEEDED');
+  assert.equal(await authorBlockReason(later.observationId), 'MESSAGE_BEFORE_UNBAN');
+  const a = await nextAuthorPlan(f, { publishedAt: secondRemoval.after });
+  const b = await nextAuthorPlan(f, { publishedAt: secondRemoval.after });
+  const first = await bans.ensure(a.planId, a.channelId, a.sessionId);
+  const second = await bans.ensure(b.planId, b.channelId, b.sessionId);
+  const claims = await allResults([
+    bans.claim(first.id, randomUUID()),
+    bans.claim(second.id, randomUUID()),
+  ]);
+  assert.equal(claims.filter(Boolean).length, 1);
+  await bans.complete(claims.find(Boolean), { status: 'NOT_SENT', code: 'REQUEST_CANCELLED' });
+});
+
+test('removing one ban never clears another unknown or in-progress author action', async () => {
+  for (const status of ['UNKNOWN', 'DISPATCHED']) {
+    const f = await eligibleFixture('BAN');
+    await seedHistoricalBanAttempt(f.execution.id);
+    const pending = await nextAuthorPlan(f);
+    const bans = new BanExecutionStore(pool);
+    const row = await bans.ensure(pending.planId, pending.channelId, pending.sessionId);
+    if (status === 'UNKNOWN') await seedHistoricalBanAttempt(row.id, 'UNKNOWN');
+    else
+      await admin.query(
+        `INSERT INTO youtube_ban_attempts(id,execution_id,owner_id,deadline_at)
+      VALUES($1,$2,$3,clock_timestamp()+interval '30 seconds')`,
+        [randomUUID(), row.id, randomUUID()],
+      );
+    const removal = await seedRemoval(f);
+    const fresh = await nextAuthorPlan(f, { publishedAt: removal.after });
+    assert.equal(
+      await authorBlockReason(fresh.observationId),
+      status === 'UNKNOWN' ? 'PREVIOUS_OUTCOME_UNKNOWN' : 'AUTHOR_ACTION_IN_PROGRESS',
+    );
+    assert.equal(await findBanCandidate(fresh.planId), false);
+    const execution = await bans.ensure(fresh.planId, fresh.channelId, fresh.sessionId);
+    assert.equal(await bans.claim(execution.id, randomUUID()), null);
+  }
+});
+
+test('removal is isolated from other authors and other sessions', async () => {
+  const first = await eligibleFixture('BAN');
+  const second = await eligibleFixture('BAN');
+  await seedHistoricalBanAttempt(first.execution.id);
+  await seedHistoricalBanAttempt(second.execution.id);
+  const removal = await seedRemoval(first);
+  const otherSession = await nextAuthorPlan(second, { publishedAt: removal.after });
+  assert.equal(await authorBlockReason(otherSession.observationId), 'AUTHOR_ALREADY_BANNED');
+  const otherAuthor = await nextAuthorPlan(first, { publishedAt: '2020-01-01T00:00:00Z' });
+  // Seed another author's message before creating its execution. Historical observations stay immutable.
+  const id = randomUUID();
+  await admin.query(
+    `INSERT INTO youtube_chat_observations(id,channel_id,session_id,first_observed_run_id,external_message_id,event_type,published_at,payload,payload_hash)
+    VALUES($1,$2,$3,$4,$5,'textMessageEvent','2020-01-01T00:00:00Z','{"authorDetails":{"channelId":"different-viewer"}}'::jsonb,$6)`,
+    [id, first.channelId, first.sessionId, first.runId, `other-${id}`, 'b'.repeat(64)],
+  );
+  assert.equal(await authorBlockReason(id), null);
+  assert.equal(await authorBlockReason(otherAuthor.observationId), 'MESSAGE_BEFORE_UNBAN');
+});
+
 test('author dispatch reasons distinguish unresolved and permanent outcomes', async () => {
   for (const [action, status, expected] of [
     ['TIMEOUT', 'UNKNOWN', 'PREVIOUS_OUTCOME_UNKNOWN'],

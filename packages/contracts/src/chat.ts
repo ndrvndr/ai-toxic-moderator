@@ -57,6 +57,7 @@ export const authorActionBlockReason = z.enum([
   'PREVIOUS_OUTCOME_UNKNOWN',
   'AUTHOR_ALREADY_BANNED',
   'MESSAGE_BEFORE_TIMEOUT_END',
+  'MESSAGE_BEFORE_UNBAN',
   'AUTHOR_ACTION_IN_PROGRESS',
   'TIMEOUT_WINDOW_ACTIVE',
 ]);
@@ -88,9 +89,11 @@ export const chatAuthorAction = z
   .superRefine((value, context) => {
     const valid =
       value.status === 'SUPPRESSED'
-        ? value.block_reason === 'MESSAGE_BEFORE_TIMEOUT_END'
+        ? value.block_reason === 'MESSAGE_BEFORE_TIMEOUT_END' ||
+          value.block_reason === 'MESSAGE_BEFORE_UNBAN'
         : value.status === 'BLOCKED'
-          ? value.block_reason !== undefined && value.block_reason !== 'MESSAGE_BEFORE_TIMEOUT_END'
+          ? value.block_reason !== undefined &&
+            !['MESSAGE_BEFORE_TIMEOUT_END', 'MESSAGE_BEFORE_UNBAN'].includes(value.block_reason)
           : value.block_reason === undefined;
 
     if (!valid) {

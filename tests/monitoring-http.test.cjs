@@ -1475,6 +1475,56 @@ test('chat distinguishes blocked executions from their original attempt results'
   }
 });
 
+test('chat suppresses pre-unban messages, permits fresh plans and preserves the original ban', async () => {
+  const run = await startRun();
+  const originalId = await insertChatObservation(run);
+  const queuedId = await insertChatObservation(run);
+  const executionId = await createAuthorExecution(run, originalId, 'BAN');
+  await createAuthorExecution(run, queuedId);
+  const attemptId = randomUUID();
+  await admin.query(
+    `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+     INSERT INTO youtube_ban_attempts(id, execution_id, owner_id, started_at, deadline_at)
+     SELECT $1, $2, $3, at, at + interval '30 seconds' FROM moment`,
+    [attemptId, executionId, randomUUID()],
+  );
+  await admin.query(
+    `UPDATE youtube_ban_attempts SET status = 'SUCCEEDED',
+       finished_at = clock_timestamp(), http_status = 200, ban_id = 'test-unban-source'
+     WHERE id = $1`,
+    [attemptId],
+  );
+  const removal = await admin.query(
+    `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+     INSERT INTO youtube_unban_requests(
+       id, request_id, ban_attempt_id, execution_id, channel_id, session_id,
+       requested_by_account_id, method, status, requested_at, finished_at)
+     SELECT $1, $2, $3, $4, $5, $6, $7,
+       'STUDIO_CONFIRMATION', 'USER_CONFIRMED', at, at FROM moment
+     RETURNING to_char(finished_at + interval '1 millisecond',
+       'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS fresh_at`,
+    [randomUUID(), randomUUID(), attemptId, executionId, run.channel_id, run.session_id, accountId],
+  );
+  const freshId = await insertChatObservation(run, { receivedAt: removal.rows[0].fresh_at });
+  await createAuthorExecution(run, freshId);
+  const response = await request(chatPath(run));
+  assert.equal(response.status, 200, await response.clone().text());
+  const page = chatPage.parse(await response.json());
+  assert.equal(page.items.find((item) => item.id === originalId).author_action.status, 'SUCCEEDED');
+  assert.deepEqual(page.items.find((item) => item.id === queuedId).author_action, {
+    action: 'TIMEOUT',
+    status: 'SUPPRESSED',
+    duration_seconds: 30,
+    block_reason: 'MESSAGE_BEFORE_UNBAN',
+  });
+  assert.equal(page.items.find((item) => item.id === freshId).author_action.status, 'PENDING');
+  const attempts = await admin.query(
+    `SELECT status FROM youtube_ban_attempts WHERE execution_id = $1`,
+    [executionId],
+  );
+  assert.deepEqual(attempts.rows, [{ status: 'SUCCEEDED' }]);
+});
+
 test('chat exposes candidate evidence without confirming the request or affecting sibling messages', async () => {
   const run = await startRun();
   const messageId = await insertChatObservation(run);

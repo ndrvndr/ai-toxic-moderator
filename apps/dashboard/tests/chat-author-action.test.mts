@@ -122,6 +122,12 @@ describe('author dispatch blocking', () => {
     ['PREVIOUS_OUTCOME_UNKNOWN', 'BLOCKED', 'blocked', /uncertain outcome/],
     ['AUTHOR_ALREADY_BANNED', 'BLOCKED', 'blocked', /permanent ban was previously confirmed/],
     ['MESSAGE_BEFORE_TIMEOUT_END', 'SUPPRESSED', 'suppressed', /will not trigger a delayed action/],
+    [
+      'MESSAGE_BEFORE_UNBAN',
+      'SUPPRESSED',
+      'suppressed',
+      /will not trigger a delayed timeout or ban/,
+    ],
     ['AUTHOR_ACTION_IN_PROGRESS', 'BLOCKED', 'blocked', /awaiting a result/],
     ['TIMEOUT_WINDOW_ACTIVE', 'BLOCKED', 'blocked', /scheduling window has not ended/],
   ] as const;
@@ -149,6 +155,7 @@ describe('author dispatch blocking', () => {
       { status: 'SUPPRESSED' },
       { status: 'SUCCEEDED', block_reason: 'AUTHOR_ALREADY_BANNED' },
       { status: 'BLOCKED', block_reason: 'MESSAGE_BEFORE_TIMEOUT_END' },
+      { status: 'BLOCKED', block_reason: 'MESSAGE_BEFORE_UNBAN' },
       { status: 'SUPPRESSED', block_reason: 'PREVIOUS_OUTCOME_UNKNOWN' },
     ]) {
       expect(

@@ -18,6 +18,8 @@ const blockDescriptions: Record<NonNullable<AuthorAction['block_reason']>, strin
     'A permanent ban was previously confirmed for this author in this session. Another action will not be sent.',
   MESSAGE_BEFORE_TIMEOUT_END:
     'This message was published before the previous timeout scheduling window ended. It will not trigger a delayed action.',
+  MESSAGE_BEFORE_UNBAN:
+    'This message was published or received before the recorded unban. It will not trigger a delayed timeout or ban.',
   AUTHOR_ACTION_IN_PROGRESS:
     'Another action for this author is awaiting a result. This execution has not been sent.',
   TIMEOUT_WINDOW_ACTIVE:

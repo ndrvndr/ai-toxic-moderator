@@ -267,7 +267,7 @@ class ChatController {
     e.action AS author_action_type,
     CASE
       WHEN a.id IS NOT NULL THEN a.status
-      WHEN decision.reason = 'MESSAGE_BEFORE_TIMEOUT_END' THEN 'SUPPRESSED'
+      WHEN decision.reason IN ('MESSAGE_BEFORE_TIMEOUT_END', 'MESSAGE_BEFORE_UNBAN') THEN 'SUPPRESSED'
       WHEN decision.reason IS NOT NULL THEN 'BLOCKED'
       ELSE 'PENDING'
     END AS author_action_status,
