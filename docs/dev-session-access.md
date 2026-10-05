@@ -74,7 +74,7 @@ The original development session role receives SELECT on account/channel/members
 ```powershell
 npm run build
 npm test
-$env:TEST_DATABASE_URL = 'postgresql://moderator:local_demo_only@127.0.0.1:55432/moderator'
+$env:TEST_DATABASE_URL = 'postgresql://moderator:local_demo_only@127.0.0.1:15432/moderator'
 npm run test:db
 npm run test:auth
 ```

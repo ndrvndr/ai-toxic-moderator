@@ -74,7 +74,7 @@ Resolved dependency versions are recorded in `package-lock.json`.
 - Available local ports:
   - `3000`: dashboard.
   - `3001`: API.
-  - `55432`: PostgreSQL.
+  - `15432`: PostgreSQL.
   - `16379`: Redis.
 
 Local development has been exercised with Node.js 22.20.0 and npm 10.9.3.

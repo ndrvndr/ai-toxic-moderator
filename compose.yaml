@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: moderator
       POSTGRES_PASSWORD: local_demo_only
       POSTGRES_DB: moderator
-    ports: ['127.0.0.1:55432:5432']
+    ports: ['127.0.0.1:15432:5432']
     volumes: ['postgres_data:/var/lib/postgresql']
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U moderator -d moderator']
