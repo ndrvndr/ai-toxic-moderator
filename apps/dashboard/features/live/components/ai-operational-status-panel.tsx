@@ -2,6 +2,7 @@
 
 import type { AiOperationalStatusResponse } from '@moderator/contracts';
 import Link from 'next/link';
+import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
@@ -55,17 +56,18 @@ function describe(data: AiOperationalStatusResponse): [string, string] {
   }
 }
 
-export function AiOperationalStatusPanel({
-  accountId,
-  channelId,
-}: {
-  accountId: string;
-  channelId: string;
-}) {
+type Props = { accountId: string; channelId: string; channelName?: string };
+
+export function AiOperationalStatusPanel(props: Props) {
+  return <StatusContent key={`${props.accountId}:${props.channelId}`} {...props} />;
+}
+
+function StatusContent({ accountId, channelId, channelName }: Props) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const query = useAiOperationalStatus(accountId, channelId);
   const data = query.data;
   const unavailable = query.isError;
-  const checking = query.isPending || (query.isFetching && query.isStale);
+  const checking = query.isPending || !data;
   const [label, explanation] = unavailable
     ? [
         'AI status unavailable',
@@ -101,15 +103,19 @@ export function AiOperationalStatusPanel({
         </Button>
       )}
       {!unavailable && !checking && data && (
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">Technical details</summary>
+        <details
+          open={detailsOpen}
+          onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+          className="text-xs text-muted-foreground"
+        >
+          <summary className="cursor-pointer">Status details</summary>
           <dl className="mt-2 space-y-1 wrap-break-word">
             <div>
               <dt className="inline font-medium">Channel: </dt>
-              <dd className="inline">{channelId}</dd>
+              <dd className="inline">{channelName ?? 'Your connected channel'}</dd>
             </div>
             <div>
-              <dt className="inline font-medium">Checked: </dt>
+              <dt className="inline font-medium">Last checked: </dt>
               <dd className="inline">
                 <time dateTime={data.checked_at}>{new Date(data.checked_at).toLocaleString()}</time>
               </dd>
@@ -117,27 +123,56 @@ export function AiOperationalStatusPanel({
             {data.report && (
               <>
                 <div>
-                  <dt className="inline font-medium">Last reported state: </dt>
-                  <dd className="inline">{data.report.status}</dd>
+                  <dt className="inline font-medium">Last reported status: </dt>
+                  <dd className="inline">
+                    {
+                      {
+                        ACTIVE: 'Checking chat',
+                        WAITING: 'Waiting for a stream',
+                        DISABLED: 'AI switched off',
+                        MODEL_MISMATCH: 'AI setup needs attention',
+                        CAPACITY_EXCEEDED: 'Too many streams for AI',
+                        ERROR: 'AI encountered a problem',
+                      }[data.report.status]
+                    }
+                  </dd>
                 </div>
                 {data.report.error_code && (
                   <div>
-                    <dt className="inline font-medium">Error code: </dt>
-                    <dd className="inline">{data.report.error_code}</dd>
+                    <dt className="inline font-medium">Issue: </dt>
+                    <dd className="inline">
+                      {
+                        {
+                          MODEL_UNAVAILABLE: 'The AI model is unavailable.',
+                          INFERENCE_FAILED: 'AI could not check a message.',
+                          INFERENCE_TIMEOUT: 'AI took too long to check a message.',
+                          INVALID_OUTPUT: 'AI returned an unusable result.',
+                          DATABASE_UNAVAILABLE: 'Chat storage is temporarily unavailable.',
+                          PIPELINE_FAILED: 'AI processing could not complete.',
+                        }[data.report.error_code]
+                      }
+                    </dd>
                   </div>
                 )}
                 <div>
-                  <dt className="inline font-medium">Heartbeat: </dt>
+                  <dt className="inline font-medium">Last update from AI: </dt>
                   <dd className="inline">
                     <time dateTime={data.report.heartbeat_at}>
                       {new Date(data.report.heartbeat_at).toLocaleString()}
                     </time>
                   </dd>
                 </div>
-                {data.report.run_id && (
+                {data.report.session_id && (
                   <div>
-                    <dt className="inline font-medium">Reported run: </dt>
-                    <dd className="inline">{data.report.run_id}</dd>
+                    <dt className="inline font-medium">Monitored stream: </dt>
+                    <dd className="inline">
+                      <Link
+                        href={`/history/${data.report.session_id}`}
+                        className="underline underline-offset-4"
+                      >
+                        View stream in History
+                      </Link>
+                    </dd>
                   </div>
                 )}
               </>

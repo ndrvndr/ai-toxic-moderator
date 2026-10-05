@@ -29,6 +29,7 @@ export function LivePage() {
               key={`${accountId}:${membership.channel_id}`}
               accountId={accountId}
               channelId={membership.channel_id}
+              channelName={membership.channel_name}
             />
           ))}
 

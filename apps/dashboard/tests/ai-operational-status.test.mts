@@ -88,7 +88,10 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   mocks.request.mockResolvedValue(response());
   mocks.session.mockReturnValue({
-    data: { account: { id: accountId }, memberships: [{ channel_id: channelId, role: 'OWNER' }] },
+    data: {
+      account: { id: accountId },
+      memberships: [{ channel_id: channelId, channel_name: 'Andre Live', role: 'OWNER' }],
+    },
   });
   mocks.broadcasts.mockReturnValue({
     isSuccess: true,
@@ -115,7 +118,7 @@ it.each([
 ])('renders %s / %s / %s as %s', async (status, reason, availability, label) => {
   mocks.request.mockResolvedValue(response(status, reason, availability));
   panel();
-  await screen.findByText(label);
+  expect((await screen.findAllByText(label)).length).toBeGreaterThan(0);
   if (availability !== 'ONLINE') expect(screen.queryByText('AI processing active')).toBeNull();
   if (status === 'ACTIVE' && availability === 'ONLINE')
     expect(screen.getByText(/confirmed by YouTube/)).toBeTruthy();
@@ -141,11 +144,54 @@ it('shows loading and updates status without reloading the page', async () => {
   expect(screen.queryByText('AI processing active')).toBeNull();
 });
 
-it('keeps diagnostic codes in closed technical details and links to moderation settings', async () => {
+it('keeps expanded details and the current status visible during a background poll', async () => {
+  vi.useFakeTimers();
+  panel();
+  await flush();
+  const details = screen.getByText('Status details').closest('details')!;
+  act(() => {
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+  });
+  let resolve!: (value: AiOperationalStatusResponse) => void;
+  mocks.request.mockReturnValueOnce(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  await flush(5_000);
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  expect(screen.getByText('AI processing active')).toBeTruthy();
+  expect(screen.queryByText('Checking AI status…')).toBeNull();
+  expect(screen.getByText('Status details').closest('details')).toBe(details);
+  expect(details.open).toBe(true);
+  await act(async () => {
+    resolve(response('WAITING', 'NO_ELIGIBLE_RUN'));
+  });
+  await flush();
+  expect(screen.getByText('AI waiting for a stream')).toBeTruthy();
+  expect(screen.getByText('Status details').closest('details')).toBe(details);
+  expect(details.open).toBe(true);
+});
+
+it('shows the channel name and a stream link without displaying internal identifiers', async () => {
+  render(createElement(LivePage), { wrapper: Wrapper });
+  await screen.findByText('AI processing active');
+  expect(screen.getByText('Andre Live')).toBeTruthy();
+  expect(screen.queryByText(channelId, { exact: false })).toBeNull();
+  expect(screen.queryByText(runId, { exact: false })).toBeNull();
+  expect(screen.getByRole('link', { name: 'View stream in History' }).getAttribute('href')).toBe(
+    `/history/${sessionId}`,
+  );
+});
+
+it('explains problems in closed status details and links to moderation settings', async () => {
   mocks.request.mockResolvedValue(response('ERROR', 'PROCESSING_FAILED'));
   panel();
   await screen.findByText('AI needs attention');
-  expect(screen.getByText('INFERENCE_TIMEOUT').closest('details')?.open).toBe(false);
+  expect(screen.getByText('AI took too long to check a message.').closest('details')?.open).toBe(
+    false,
+  );
   expect(screen.getByText(/New AI results may be unavailable/)).toBeTruthy();
   expect(
     screen.getByRole('link', { name: 'Review moderation settings' }).getAttribute('href'),
@@ -162,7 +208,7 @@ it('hides cached ACTIVE after a request failure and allows a manual retry', asyn
   });
   await screen.findByText('AI status unavailable');
   expect(screen.queryByText('AI processing active')).toBeNull();
-  expect(screen.queryByText('Technical details')).toBeNull();
+  expect(screen.queryByText('Status details')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Retry AI status' }));
   await screen.findByText('AI processing active');
 });
