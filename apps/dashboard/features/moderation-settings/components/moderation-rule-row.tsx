@@ -18,9 +18,12 @@ export function ModerationRuleRow({ rule, configured, onChange }: Props) {
         <p className="text-sm text-muted-foreground">
           {rule.category.replaceAll('_', ' ')} · Severity {rule.severity}/4 · {rule.strength}
         </p>
-        <p className="break-all text-xs text-muted-foreground">
-          {rule.rule_id} · Version {rule.rule_version}
-        </p>
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">Rule details</summary>
+          <p className="mt-2 break-all">
+            {rule.rule_id} · Version {rule.rule_version}
+          </p>
+        </details>
       </div>
       {!editable ? (
         <p className="text-sm text-muted-foreground">

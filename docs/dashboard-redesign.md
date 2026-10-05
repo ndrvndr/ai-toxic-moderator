@@ -44,11 +44,21 @@ Action cards highlight successful deletions, timeout requests, and ban requests.
 
 Dashboard tests cover confirmed-only highlights, changing counts, uncertain result warnings, access failures with cached data, temporary failure retries, and stream report navigation.
 
+## Moderation settings
+
+Blocked words and AI action limits are the main settings sections. Built-in rules are in an expandable advanced section. Each section retains its own save operation, validation, revision conflict handling, and reload behavior.
+
+The page explains that saved changes apply to the next monitoring session. AI controls describe message deletion, viewer timeouts, and bans, with an explanation that severity scores are not violation probabilities. Model identity remains in advanced setup and expands initially when no AI settings have been saved; required model fields and threshold ordering are unchanged.
+
+A single channel's internal identifier appears in optional channel details. Accounts with multiple channels retain the channel selector because the current membership response does not include channel display names. Moderators remain read-only, and operator-only accounts do not open settings editors.
+
+Tests cover the settings hierarchy, access permissions, selected channel scope, and the existing save, validation, concurrency, and reload behavior. No backend or enforcement behavior was changed.
+
 ## Remaining design work
 
 Live monitoring controls now sit next to the session status. The copy explains that stopping monitoring does not end the YouTube livestream and that settings changes apply to the next session. AI status descriptions use streamer-facing language; diagnostic codes remain inside closed technical details. AI availability continues to be separate from successful moderation outcomes.
 
 1. Review the Live layout with an authenticated account on desktop and mobile.
 2. Review History reports with real saved streams on desktop and mobile.
-3. Moderation: simplify settings labels and explain when saved changes take effect.
+3. Review Moderation settings with an authenticated owner and moderator account.
 4. Review responsive layouts and the complete streamer workflow before final AI-quality evaluation.

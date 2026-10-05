@@ -72,18 +72,22 @@ function editor(canEdit = true, channel = channelId, account = accountId) {
 const posts = () =>
   vi.mocked(apiRequest).mock.calls.filter(([, options]) => options?.method === 'POST');
 function add(pattern: string) {
-  fireEvent.click(screen.getByRole('button', { name: 'Add blacklist entry' }));
-  fireEvent.change(screen.getByLabelText('Pattern for entry 1'), { target: { value: pattern } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add blocked word' }));
+  fireEvent.change(screen.getByLabelText('Blocked text for entry 1'), {
+    target: { value: pattern },
+  });
 }
 function save() {
-  fireEvent.click(screen.getByRole('button', { name: 'Save blacklist' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save blocked words' }));
 }
 
 it('creates a normalized owner configuration with a timeout and scoped revision', async () => {
   render(editor(), { wrapper });
-  await screen.findByText('No blacklist entries configured.');
+  await screen.findByText(
+    'Your list is empty. Add a word, phrase, or website domain to get started.',
+  );
   add(' ABC ');
-  fireEvent.click(screen.getByLabelText('Enable blacklist configuration'));
+  fireEvent.click(screen.getByLabelText('Enable blocked words'));
   fireEvent.change(screen.getByLabelText('Action for entry 1'), {
     target: { value: 'DELETE_TIMEOUT' },
   });
@@ -109,7 +113,7 @@ it('creates a normalized owner configuration with a timeout and scoped revision'
 it('disables and removes saved entries by appending configurations', async () => {
   records.set(channelId, record());
   render(editor(), { wrapper });
-  await screen.findByLabelText('Pattern for entry 1');
+  await screen.findByLabelText('Blocked text for entry 1');
   fireEvent.click(screen.getByLabelText('Entry 1 enabled'));
   save();
   await screen.findByText('Blacklist revision 2 saved.');
@@ -122,13 +126,17 @@ it('disables and removes saved entries by appending configurations', async () =>
 
 it('rejects blank patterns, duplicate normalized entries and invalid timeout durations before HTTP', async () => {
   render(editor(), { wrapper });
-  await screen.findByText('No blacklist entries configured.');
+  await screen.findByText(
+    'Your list is empty. Add a word, phrase, or website domain to get started.',
+  );
   add('');
   save();
   expect(screen.getByRole('alert')).toBeTruthy();
-  fireEvent.change(screen.getByLabelText('Pattern for entry 1'), { target: { value: 'abc' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Add blacklist entry' }));
-  fireEvent.change(screen.getByLabelText('Pattern for entry 2'), { target: { value: ' ABC ' } });
+  fireEvent.change(screen.getByLabelText('Blocked text for entry 1'), { target: { value: 'abc' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add blocked word' }));
+  fireEvent.change(screen.getByLabelText('Blocked text for entry 2'), {
+    target: { value: ' ABC ' },
+  });
   save();
   expect(screen.getByRole('alert').textContent).toContain('normalized pattern');
   fireEvent.click(screen.getByRole('button', { name: 'Remove entry 2' }));
@@ -153,18 +161,24 @@ it.each([409, 0])(
       return { blacklist: records.get(channelId) ?? null };
     });
     render(editor(), { wrapper });
-    await screen.findByText('No blacklist entries configured.');
+    await screen.findByText(
+      'Your list is empty. Add a word, phrase, or website domain to get started.',
+    );
     add('draft');
     save();
     await screen.findByRole('alert');
-    expect((screen.getByLabelText('Pattern for entry 1') as HTMLInputElement).value).toBe('draft');
+    expect((screen.getByLabelText('Blocked text for entry 1') as HTMLInputElement).value).toBe(
+      'draft',
+    );
     expect(
-      (screen.getByRole('button', { name: 'Save blacklist' }) as HTMLButtonElement).disabled,
+      (screen.getByRole('button', { name: 'Save blocked words' }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect(posts()).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Reload blacklist and discard changes' }));
     await screen.findByText('Latest blacklist loaded. Unsaved changes were discarded.');
-    expect((screen.getByLabelText('Pattern for entry 1') as HTMLInputElement).value).toBe('abc');
+    expect((screen.getByLabelText('Blocked text for entry 1') as HTMLInputElement).value).toBe(
+      'abc',
+    );
     expect(screen.getByText('Saved revision: 2. Up to 100 entries.')).toBeTruthy();
   },
 );
@@ -172,9 +186,9 @@ it.each([409, 0])(
 it('shows a read-only configuration to moderators without a save control', async () => {
   records.set(channelId, record());
   render(editor(false), { wrapper });
-  const pattern = await screen.findByLabelText('Pattern for entry 1');
+  const pattern = await screen.findByLabelText('Blocked text for entry 1');
   expect(pattern.closest('fieldset')?.parentElement?.closest('fieldset')?.disabled).toBe(true);
-  expect(screen.queryByRole('button', { name: 'Save blacklist' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Save blocked words' })).toBeNull();
   fireEvent.submit(pattern.closest('form')!);
   expect(posts()).toHaveLength(0);
 });
@@ -188,8 +202,8 @@ it.each([401, 403, 404])(
       return { blacklist: records.get(channelId) ?? null };
     });
     render(editor(), { wrapper });
-    await screen.findByLabelText('Pattern for entry 1');
-    fireEvent.change(screen.getByLabelText('Pattern for entry 1'), {
+    await screen.findByLabelText('Blocked text for entry 1');
+    fireEvent.change(screen.getByLabelText('Blocked text for entry 1'), {
       target: { value: 'private-draft' },
     });
     fireEvent.change(screen.getByLabelText('Match type for entry 1'), {
@@ -199,21 +213,25 @@ it.each([401, 403, 404])(
     await screen.findByText(
       'Blacklist access changed. Sign in and reload this page to verify your permissions.',
     );
-    expect(screen.queryByLabelText('Pattern for entry 1')).toBeNull();
+    expect(screen.queryByLabelText('Blocked text for entry 1')).toBeNull();
     expect(client.getQueryData(customBlacklistKey(accountId, channelId))).toBeNull();
   },
 );
 
 it('resets the draft on channel and account changes', async () => {
   const view = render(editor(), { wrapper });
-  await screen.findByText('No blacklist entries configured.');
+  await screen.findByText(
+    'Your list is empty. Add a word, phrase, or website domain to get started.',
+  );
   add('private');
   view.rerender(editor(true, otherChannel));
-  await waitFor(() => expect(screen.queryByLabelText('Pattern for entry 1')).toBeNull());
-  await screen.findByRole('button', { name: 'Add blacklist entry' });
+  await waitFor(() => expect(screen.queryByLabelText('Blocked text for entry 1')).toBeNull());
+  await screen.findByRole('button', { name: 'Add blocked word' });
   add('other');
   view.rerender(editor(true, otherChannel, '10000000-0000-4000-8000-000000000002'));
-  await screen.findByText('No blacklist entries configured.');
+  await screen.findByText(
+    'Your list is empty. Add a word, phrase, or website domain to get started.',
+  );
   expect(posts()).toHaveLength(0);
 });
 
@@ -226,7 +244,9 @@ it('rejects an API record for a different channel', async () => {
 
 it('saves a domain ban without a timeout field', async () => {
   render(editor(), { wrapper });
-  await screen.findByText('No blacklist entries configured.');
+  await screen.findByText(
+    'Your list is empty. Add a word, phrase, or website domain to get started.',
+  );
   add('EXAMPLE.COM');
   fireEvent.change(screen.getByLabelText('Match type for entry 1'), {
     target: { value: 'DOMAIN' },
@@ -252,9 +272,11 @@ it('submits only once when the form is submitted twice before the save completes
     return { blacklist: null };
   });
   render(editor(), { wrapper });
-  await screen.findByText('No blacklist entries configured.');
+  await screen.findByText(
+    'Your list is empty. Add a word, phrase, or website domain to get started.',
+  );
   add('abc');
-  const form = screen.getByLabelText('Pattern for entry 1').closest('form')!;
+  const form = screen.getByLabelText('Blocked text for entry 1').closest('form')!;
   fireEvent.submit(form);
   fireEvent.submit(form);
   await waitFor(() => expect(posts()).toHaveLength(1));
@@ -290,8 +312,8 @@ it('blocks requests exceeding the body limit before saving', () => {
     }),
     { wrapper },
   );
-  const pattern = screen.getByLabelText('Pattern for entry 1');
-  fireEvent.click(screen.getByLabelText('Enable blacklist configuration'));
+  const pattern = screen.getByLabelText('Blocked text for entry 1');
+  fireEvent.click(screen.getByLabelText('Enable blocked words'));
   // Submit the loaded form directly instead of computing accessible names for
   // every button in a large fixture. Other tests cover the Save button itself.
   fireEvent.submit(pattern.closest('form')!);

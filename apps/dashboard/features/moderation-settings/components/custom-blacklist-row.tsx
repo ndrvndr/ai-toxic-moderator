@@ -15,7 +15,7 @@ export function CustomBlacklistRow({
   const number = index + 1;
   const id = `blacklist-${entry.id}`;
   return (
-    <fieldset className="space-y-3 rounded-lg border p-4">
+    <fieldset className="space-y-3 rounded-xl border bg-muted/20 p-4">
       <legend className="px-1 text-sm font-medium">Blacklist entry {number}</legend>
       <label className="flex items-center gap-2 text-sm">
         <input
@@ -41,7 +41,7 @@ export function CustomBlacklistRow({
         <option value="DOMAIN">Domain</option>
       </select>
       <label htmlFor={`${id}-pattern`} className="block text-sm">
-        Pattern for entry {number}
+        Blocked text for entry {number}
       </label>
       <input
         id={`${id}-pattern`}
@@ -56,7 +56,7 @@ export function CustomBlacklistRow({
           ? 'Enter a domain such as example.com without a URL scheme, path, or wildcard.'
           : entry.match_type === 'WORD'
             ? 'Enter one word without spaces or punctuation.'
-            : 'Enter a literal phrase. Regular expression syntax is treated as text.'}
+            : 'Enter the phrase you want to block. Symbols are matched as ordinary text.'}
       </p>
       <label htmlFor={`${id}-action`} className="block text-sm">
         Action for entry {number}
@@ -70,8 +70,8 @@ export function CustomBlacklistRow({
         }
       >
         <option value="DELETE">Delete message</option>
-        <option value="DELETE_TIMEOUT">Delete and timeout author</option>
-        <option value="DELETE_BAN">Delete and ban author</option>
+        <option value="DELETE_TIMEOUT">Delete and time out viewer</option>
+        <option value="DELETE_BAN">Delete and ban viewer</option>
       </select>
       {entry.action === 'DELETE_TIMEOUT' && (
         <>

@@ -155,11 +155,11 @@ export function ModerationSettingsForm({
               setDraft((current) => ({ ...current, automatic_actions_enabled: enabled }));
             }}
           />
-          Enable automatic actions in this configuration
+          Allow built-in rules to take action
         </label>
         <p className="text-sm text-muted-foreground">
-          Rules remain saved when automatic actions are disabled. No automatic action means
-          classification only.
+          Switching this off keeps your rules saved but stops them from selecting automatic actions.
+          Rule checks still run. Blocked words and AI have their own switches.
         </p>
         {catalog.map((rule) => (
           <ModerationRuleRow

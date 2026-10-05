@@ -116,7 +116,7 @@ export function CustomBlacklistForm({
             checked={draft.enabled}
             onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
           />
-          Enable blacklist configuration
+          Enable blocked words
         </label>
         {draft.rules.map((entry, index) => (
           <CustomBlacklistRow
@@ -137,7 +137,9 @@ export function CustomBlacklistForm({
           />
         ))}
         {draft.rules.length === 0 && (
-          <p className="text-sm text-muted-foreground">No blacklist entries configured.</p>
+          <p className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">
+            Your list is empty. Add a word, phrase, or website domain to get started.
+          </p>
         )}
         {canEdit && (
           <Button
@@ -162,14 +164,14 @@ export function CustomBlacklistForm({
                 });
             }}
           >
-            Add blacklist entry
+            Add blocked word
           </Button>
         )}
       </fieldset>
       <div className="flex flex-wrap gap-3">
         {canEdit && (
           <Button type="submit" disabled={!editable || !dirty}>
-            Save blacklist
+            Save blocked words
           </Button>
         )}
         <Button type="button" variant="outline" disabled={busy} onClick={() => void reload()}>

@@ -107,7 +107,8 @@ export function AiModerationSettingsForm({
       </p>
       {!saved && (
         <p className="text-sm text-muted-foreground">
-          No AI policy saved. Enter your model identity and thresholds before saving.
+          No AI settings saved yet. Complete the one-time model setup and choose your action limits
+          before saving.
         </p>
       )}
       {!canEdit && <p role="status">Only the channel owner can change AI settings.</p>}
@@ -121,12 +122,13 @@ export function AiModerationSettingsForm({
               setDraft({ ...draft, automatic_actions_enabled: event.target.checked })
             }
           />
-          Enable automatic AI actions for new runs
+          Allow AI to take action in new sessions
         </label>
         <p className="text-sm text-muted-foreground">
-          Expected severity ranges from 0 to 1. It is not a probability of a policy violation. Keep
-          delete &lt; timeout &lt; ban, even for disabled tiers. The highest enabled threshold met
-          selects the action.
+          AI gives each message a severity score from 0 to 1. It is not a probability of a policy
+          violation. Lower limits let AI act on more messages. If several enabled limits are met,
+          the strongest action is selected. Keep Delete below Timeout and Timeout below Ban,
+          including actions you switch off.
         </p>
         <div className="grid gap-4 sm:grid-cols-3">
           <AiModerationTier
@@ -150,10 +152,13 @@ export function AiModerationSettingsForm({
           />
         </div>
         <details open={!saved} className="space-y-3 rounded-lg border p-4">
-          <summary className="cursor-pointer text-sm font-medium">Model identity</summary>
+          <summary className="cursor-pointer text-sm font-medium">
+            AI model setup · Advanced
+          </summary>
           <p className="text-xs text-muted-foreground">
-            Use the exact model revision and adapter used by your worker. Changing models requires
-            reviewing thresholds.
+            One-time setup: these values must match the model used by the app. The revision is a
+            40-character identifier, not a file path. Review your action limits whenever you change
+            the model.
           </p>
           {(
             [

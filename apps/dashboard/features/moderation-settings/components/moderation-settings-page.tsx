@@ -12,16 +12,17 @@ import { ModerationSettingsEditor } from './moderation-settings-editor';
 export function ModerationSettingsPage() {
   const session = useSession();
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <header className="space-y-2">
-        <h1 className="text-2xl font-semibold">Moderation settings</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Moderation settings</h1>
         <p className="text-sm text-muted-foreground">
-          Configure automatic action preferences for your channel.
+          Choose what gets blocked and when moderation should take action in your chat.
         </p>
       </header>
-      <p className="rounded-lg border p-4 text-sm">
-        Saved settings apply when a new monitoring run starts. Changes do not affect an existing
-        run. Automatic actions also require the corresponding worker action switches to be enabled.
+      <p className="rounded-xl border bg-muted/30 p-5 text-sm leading-6">
+        Save each section when you’re done. Your changes apply the next time you start monitoring,
+        not to a session already running. Check Live for AI availability and confirmed action
+        results.
       </p>
       {session.isPending ? (
         <p role="status">Loading account…</p>
@@ -55,46 +56,71 @@ function ChannelSettings({
   if (!active)
     return (
       <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-        No accessible channels yet. Start monitoring a broadcast from your connected account to
-        register its channel.
+        No channel is available yet. Start monitoring your stream from Live to set up its channel
+        here.
       </p>
     );
 
   return (
     <div className="space-y-6">
-      <div className="space-y-2">
-        <label htmlFor="settings-channel" className="text-sm font-medium">
-          Channel
-        </label>
-        <select
-          id="settings-channel"
-          value={active.channel_id}
-          onChange={(event) => setSelected(event.target.value)}
-          className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-        >
-          {channels.map((membership) => (
-            <option key={membership.channel_id} value={membership.channel_id}>
-              {membership.channel_id} · {membership.role}
-            </option>
-          ))}
-        </select>
+      <div className="space-y-2 rounded-xl border p-5">
+        {channels.length > 1 ? (
+          <>
+            <label htmlFor="settings-channel" className="text-sm font-medium">
+              Channel
+            </label>
+            <select
+              id="settings-channel"
+              value={active.channel_id}
+              onChange={(event) => setSelected(event.target.value)}
+              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+            >
+              {channels.map((membership) => (
+                <option key={membership.channel_id} value={membership.channel_id}>
+                  {membership.channel_id} · {membership.role}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : (
+          <p className="text-sm font-medium">Settings for your channel</p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          {active.role === 'OWNER'
+            ? 'You can edit and save these settings.'
+            : 'You can review these settings. Only the channel owner can save changes.'}
+        </p>
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">Channel details</summary>
+          <p className="mt-2 break-all">{active.channel_id}</p>
+        </details>
       </div>
-      <ModerationSettingsEditor
-        accountId={accountId}
-        channelId={active.channel_id}
-        canEdit={active.role === 'OWNER'}
-      />
+      <nav
+        aria-label="Moderation settings sections"
+        className="flex flex-wrap gap-4 text-sm font-medium"
+      >
+        <a href="#blocked-words" className="underline underline-offset-4">
+          Blocked words
+        </a>
+        <a href="#ai-action-limits" className="underline underline-offset-4">
+          AI action limits
+        </a>
+        <a href="#built-in-rules" className="underline underline-offset-4">
+          Built-in rules
+        </a>
+      </nav>
       <section
+        id="blocked-words"
         aria-labelledby="custom-blacklist-heading"
-        className="space-y-4 rounded-lg border p-5"
+        className="scroll-mt-6 space-y-5 rounded-2xl border bg-card p-5 sm:p-6"
       >
         <h2 id="custom-blacklist-heading" className="text-lg font-semibold">
-          Custom blacklist
+          Blocked words
         </h2>
         <p className="text-sm text-muted-foreground">
-          Configure words, phrases, and domains with separate actions for each entry. Enabled
-          entries apply to new monitoring runs. Deletion and author actions also require their
-          corresponding worker action switches to be enabled.
+          Add words, phrases, or website domains you don’t want in chat. Each match selects message
+          deletion, with an optional timeout or ban for the viewer. These rules take priority over
+          AI.
         </p>
         <CustomBlacklistEditor
           accountId={accountId}
@@ -102,14 +128,18 @@ function ChannelSettings({
           canEdit={active.role === 'OWNER'}
         />
       </section>
-      <section aria-labelledby="ai-settings-heading" className="space-y-4 rounded-lg border p-5">
+      <section
+        id="ai-action-limits"
+        aria-labelledby="ai-settings-heading"
+        className="scroll-mt-6 space-y-5 rounded-2xl border bg-card p-5 sm:p-6"
+      >
         <h2 id="ai-settings-heading" className="text-lg font-semibold">
-          AI moderation thresholds
+          AI action limits
         </h2>
         <p className="text-sm text-muted-foreground">
-          AI thresholds apply to new monitoring runs. Automatic actions require enabled AI settings,
-          AI processing for the run, and the corresponding worker action switches. Custom blacklist
-          matches and selected built-in rule actions take priority.
+          Choose when AI can delete a message, time out a viewer, or ban them. Blocked words and
+          built-in rule actions take priority. A selected action still needs a confirmed result from
+          YouTube.
         </p>
         <AiModerationSettingsEditor
           accountId={accountId}
@@ -117,6 +147,22 @@ function ChannelSettings({
           canEdit={active.role === 'OWNER'}
         />
       </section>
+      <details id="built-in-rules" className="scroll-mt-6 rounded-2xl border bg-card p-5 sm:p-6">
+        <summary className="cursor-pointer text-lg font-semibold">
+          Built-in rules · Advanced
+        </summary>
+        <div className="mt-5 space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Choose actions for the app’s existing rule checks. These are separate from your blocked
+            words and AI limits.
+          </p>
+          <ModerationSettingsEditor
+            accountId={accountId}
+            channelId={active.channel_id}
+            canEdit={active.role === 'OWNER'}
+          />
+        </div>
+      </details>
     </div>
   );
 }

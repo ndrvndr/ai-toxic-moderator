@@ -94,7 +94,7 @@ it('saves owner changes with the current revision and updates only the scoped ca
   fireEvent.change(screen.getByLabelText('Timeout seconds for Direct insult'), {
     target: { value: '60' },
   });
-  fireEvent.click(screen.getByLabelText('Enable automatic actions in this configuration'));
+  fireEvent.click(screen.getByLabelText('Allow built-in rules to take action'));
   fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
   await screen.findByText('Settings saved as revision 1.');
   expect(posts()).toHaveLength(1);

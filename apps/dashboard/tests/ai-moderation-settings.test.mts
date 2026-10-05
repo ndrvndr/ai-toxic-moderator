@@ -104,7 +104,7 @@ function fill() {
 it('starts without implicit thresholds or enabled AI actions and saves an explicit scoped configuration', async () => {
   render(editor(), { wrapper });
   await screen.findByText(
-    'No AI policy saved. Enter your model identity and thresholds before saving.',
+    'No AI settings saved yet. Complete the one-time model setup and choose your action limits before saving.',
   );
   for (const label of [
     'Delete threshold',
@@ -115,16 +115,16 @@ it('starts without implicit thresholds or enabled AI actions and saves an explic
     expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe('');
   }
   for (const label of [
-    'Enable automatic AI actions for new runs',
-    'Enable AI delete tier',
-    'Enable AI timeout tier',
-    'Enable AI ban tier',
+    'Allow AI to take action in new sessions',
+    'Allow AI delete',
+    'Allow AI timeout',
+    'Allow AI ban',
   ]) {
     expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(false);
   }
   fill();
-  fireEvent.click(screen.getByLabelText('Enable automatic AI actions for new runs'));
-  fireEvent.click(screen.getByLabelText('Enable AI timeout tier'));
+  fireEvent.click(screen.getByLabelText('Allow AI to take action in new sessions'));
+  fireEvent.click(screen.getByLabelText('Allow AI timeout'));
   change('AI timeout seconds', '60');
   save();
   await screen.findByText('AI settings revision 1 saved.');
@@ -148,7 +148,7 @@ it('starts without implicit thresholds or enabled AI actions and saves an explic
 it('explains an incomplete first save near the save button and focuses the error without sending HTTP', async () => {
   render(editor(), { wrapper });
   await screen.findByText(
-    'No AI policy saved. Enter your model identity and thresholds before saving.',
+    'No AI settings saved yet. Complete the one-time model setup and choose your action limits before saving.',
   );
   const button = screen.getByRole('button', { name: 'Save AI settings' }) as HTMLButtonElement;
   expect(button.disabled).toBe(false);
@@ -175,14 +175,14 @@ it('preserves model identity, disables saved AI policy, and uses each newly retu
   );
   render(editor(), { wrapper });
   await screen.findByText('Saved AI revision: 4.');
-  fireEvent.click(screen.getByLabelText('Enable automatic AI actions for new runs'));
+  fireEvent.click(screen.getByLabelText('Allow AI to take action in new sessions'));
   save();
   await screen.findByText('AI settings revision 5 saved.');
   const first = JSON.parse(posts()[0]![1]!.body as string);
   expect(first.expected_revision).toBe(4);
   expect(first.configuration.automatic_actions_enabled).toBe(false);
   expect(first.configuration.model).toEqual(configuration.model);
-  fireEvent.click(screen.getByLabelText('Enable AI ban tier'));
+  fireEvent.click(screen.getByLabelText('Allow AI ban'));
   save();
   await screen.findByText('AI settings revision 6 saved.');
   expect(JSON.parse(posts()[1]![1]!.body as string).expected_revision).toBe(5);
@@ -254,7 +254,7 @@ it('keeps a draft when reload fails transiently instead of replacing it with cac
 it('shows moderators read-only settings without a save control', async () => {
   records.set(channelId, record());
   render(editor(false), { wrapper });
-  const control = await screen.findByLabelText('Enable automatic AI actions for new runs');
+  const control = await screen.findByLabelText('Allow AI to take action in new sessions');
   expect(control.closest('fieldset')?.disabled).toBe(true);
   expect(screen.queryByRole('button', { name: 'Save AI settings' })).toBeNull();
   fireEvent.submit(control.closest('form')!);

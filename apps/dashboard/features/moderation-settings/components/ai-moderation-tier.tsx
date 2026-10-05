@@ -16,7 +16,7 @@ export function AiModerationTier({
   onDurationChange?: (value: string) => void;
 }) {
   return (
-    <fieldset className="space-y-3 rounded-lg border p-4">
+    <fieldset className="space-y-3 rounded-xl border bg-muted/20 p-4">
       <legend className="px-1 text-sm font-medium">{name}</legend>
       <label className="flex items-center gap-2 text-sm">
         <input
@@ -24,7 +24,7 @@ export function AiModerationTier({
           checked={value.enabled}
           onChange={(event) => onChange({ ...value, enabled: event.target.checked })}
         />
-        Enable AI {name.toLowerCase()} tier
+        Allow AI {name.toLowerCase()}
       </label>
       <label className="block space-y-1 text-sm">
         <span>{name} threshold</span>
@@ -54,8 +54,10 @@ export function AiModerationTier({
       )}
       <p className="text-xs text-muted-foreground">
         {name === 'Delete'
-          ? 'Delete the matching message.'
-          : `Delete the message and ${name.toLowerCase()} its author.`}
+          ? 'Remove the message from YouTube chat.'
+          : name === 'Timeout'
+            ? 'Delete the message and temporarily stop the viewer from sending chat.'
+            : 'Delete the message and hide the viewer from chat until you remove them from YouTube’s hidden users.'}
       </p>
     </fieldset>
   );
