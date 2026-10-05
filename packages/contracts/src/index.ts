@@ -207,7 +207,11 @@ export const sessionsPage = z.strictObject({
 export const meResponse = z.strictObject({
   account: z.strictObject({ id: uuid, display_name: text(100) }),
   memberships: z.array(
-    z.strictObject({ channel_id: uuid, role: z.enum(['OWNER', 'MODERATOR', 'OPERATOR']) }),
+    z.strictObject({
+      channel_id: uuid,
+      channel_name: text(200).optional(),
+      role: z.enum(['OWNER', 'MODERATOR', 'OPERATOR']),
+    }),
   ),
 });
 export const feedResource = z.strictObject({

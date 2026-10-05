@@ -6,6 +6,7 @@ import { useSession } from '@/features/auth/hooks/use-session';
 import { getErrorMessage } from '@/lib/api-client';
 
 import { AiModerationSettingsEditor } from './ai-moderation-settings-editor';
+import { ChannelSetup } from './channel-setup';
 import { CustomBlacklistEditor } from './custom-blacklist-editor';
 
 export function ModerationSettingsPage() {
@@ -45,20 +46,18 @@ function ChannelSettings({
   memberships,
 }: {
   accountId: string;
-  memberships: { channel_id: string; role: 'OWNER' | 'MODERATOR' | 'OPERATOR' }[];
+  memberships: {
+    channel_id: string;
+    channel_name?: string;
+    role: 'OWNER' | 'MODERATOR' | 'OPERATOR';
+  }[];
 }) {
   const [selected, setSelected] = useState('');
   const channels = memberships.filter((membership) =>
     ['OWNER', 'MODERATOR'].includes(membership.role),
   );
   const active = channels.find((membership) => membership.channel_id === selected) ?? channels[0];
-  if (!active)
-    return (
-      <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-        No channel is available yet. Start monitoring your stream from Live to set up its channel
-        here.
-      </p>
-    );
+  if (!active) return <ChannelSetup />;
 
   return (
     <div className="space-y-6">
@@ -76,23 +75,22 @@ function ChannelSettings({
             >
               {channels.map((membership) => (
                 <option key={membership.channel_id} value={membership.channel_id}>
-                  {membership.channel_id} · {membership.role}
+                  {membership.channel_name ?? 'Connected channel'} ·{' '}
+                  {membership.role === 'OWNER' ? 'Owner' : 'Moderator'}
                 </option>
               ))}
             </select>
           </>
         ) : (
-          <p className="text-sm font-medium">Settings for your channel</p>
+          <p className="text-sm font-medium">
+            Settings for {active.channel_name ?? 'your channel'}
+          </p>
         )}
         <p className="text-xs text-muted-foreground">
           {active.role === 'OWNER'
             ? 'You can edit and save these settings.'
             : 'You can review these settings. Only the channel owner can save changes.'}
         </p>
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">Channel details</summary>
-          <p className="mt-2 break-all">{active.channel_id}</p>
-        </details>
       </div>
       <nav
         aria-label="Moderation settings sections"

@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import type { AppConfig } from '@moderator/config';
 import { transaction } from '@moderator/persistence';
-import { GoogleTokenStore } from '@moderator/provider-adapters';
+import { GoogleTokenStore, type VerifiedYoutubeChannel } from '@moderator/provider-adapters';
 
 import { APP_CONFIG, DatabaseService } from '../database.module';
 import { failure } from '../http';
@@ -18,6 +18,7 @@ import {
   type VerifiedBroadcast,
 } from './google-provider';
 import { tokenHash } from './session.service';
+import { resolveYoutubeChannel } from './youtube-channel';
 
 export const OAUTH_COOKIE = 'atm_google_oauth';
 export function oauthCookie(token: string, maxAge = 600) {
@@ -169,6 +170,13 @@ export class GoogleService {
         'Izin profil dan pengelolaan YouTube diperlukan.',
       );
     const profile = await this.provider.profile(tokens.access_token);
+    let channels: VerifiedYoutubeChannel[] = [];
+    try {
+      channels = await this.provider.channels(tokens.access_token);
+    } catch (error) {
+      // Provider outages must not prevent sign-in. Settings offers an explicit retry.
+      if (!(error instanceof GoogleProviderError)) throw error;
+    }
     const token = randomBytes(32).toString('base64url');
     await transaction(this.database.pool, async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
@@ -240,6 +248,11 @@ export class GoogleService {
         'DELETE FROM dashboard_sessions WHERE account_id=$1 AND id IN (SELECT id FROM dashboard_sessions WHERE account_id=$1 ORDER BY created_at DESC,id DESC OFFSET 10)',
         [accountId],
       );
+      for (const channel of [...channels].sort((a, b) =>
+        a.youtube_channel_id.localeCompare(b.youtube_channel_id),
+      )) {
+        await resolveYoutubeChannel(client, accountId, channel);
+      }
     });
     return token;
   }
@@ -268,6 +281,20 @@ export class GoogleService {
 
   async broadcasts(accountId: string) {
     return this.withAccessToken(accountId, (accessToken) => this.provider.broadcasts(accessToken));
+  }
+
+  async syncChannels(accountId: string) {
+    const channels = await this.withAccessToken(accountId, (accessToken) =>
+      this.provider.channels(accessToken),
+    );
+    await transaction(this.database.pool, async (client) => {
+      for (const channel of [...channels].sort((a, b) =>
+        a.youtube_channel_id.localeCompare(b.youtube_channel_id),
+      )) {
+        await resolveYoutubeChannel(client, accountId, channel);
+      }
+    });
+    return { channel_count: channels.length };
   }
 
   async verifyBroadcast(accountId: string, broadcastId: string): Promise<VerifiedBroadcast> {

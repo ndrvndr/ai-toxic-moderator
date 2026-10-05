@@ -149,7 +149,9 @@ test('login stores only token hash and returns protected session cookie', async 
 
   const data = meResponse.parse(await me.json());
   assert.equal(data.account.id, ids.account);
-  assert.deepEqual(data.memberships, [{ channel_id: ids.channel, role: 'MODERATOR' }]);
+  assert.deepEqual(data.memberships, [
+    { channel_id: ids.channel, channel_name: 'Channel pilot sintetis', role: 'MODERATOR' },
+  ]);
 
   const sessionList = await request(channelPath(), { headers: { Cookie: cookie } });
   assert.equal(sessionList.status, 200);

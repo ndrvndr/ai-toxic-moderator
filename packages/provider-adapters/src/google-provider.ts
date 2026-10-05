@@ -60,6 +60,11 @@ export type VerifiedBroadcast = Readonly<{
   live_chat_id: string;
 }>;
 
+export type VerifiedYoutubeChannel = Readonly<{
+  youtube_channel_id: string;
+  channel_title: string;
+}>;
+
 const tokenResponse = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1).optional(),
@@ -110,6 +115,54 @@ export class GoogleProvider {
         headers: { Authorization: `Bearer ${accessToken}` },
       }),
     );
+  }
+
+  async channels(accessToken: string): Promise<VerifiedYoutubeChannel[]> {
+    const schema = z.object({
+      items: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(128),
+            snippet: z.object({ title: z.string().trim().min(1).max(200) }),
+          }),
+        )
+        .default([]),
+      nextPageToken: z.string().min(1).optional(),
+    });
+    const channels = new Map<string, VerifiedYoutubeChannel>();
+    const visited = new Set<string>();
+    let pageToken: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const url = new URL('https://www.googleapis.com/youtube/v3/channels');
+      url.search = new URLSearchParams({
+        part: 'id,snippet',
+        mine: 'true',
+        maxResults: '50',
+        ...(pageToken ? { pageToken } : {}),
+      }).toString();
+      const parsed = schema.safeParse(
+        await this.json(url.toString(), {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      );
+      if (!parsed.success) throw new GoogleProviderError('GOOGLE_UNAVAILABLE');
+      for (const item of parsed.data.items) {
+        channels.set(
+          item.id,
+          Object.freeze({
+            youtube_channel_id: item.id,
+            channel_title: item.snippet.title,
+          }),
+        );
+      }
+      const next = parsed.data.nextPageToken;
+      if (!next) return [...channels.values()];
+      if (visited.has(next)) throw new GoogleProviderError('YOUTUBE_LOOKUP_INCOMPLETE');
+      visited.add(next);
+      pageToken = next;
+    }
+    // Never provision a partial ownership list.
+    throw new GoogleProviderError('YOUTUBE_LOOKUP_INCOMPLETE');
   }
 
   async verifyBroadcast(accessToken: string, broadcastId: string): Promise<VerifiedBroadcast> {

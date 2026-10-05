@@ -227,3 +227,57 @@ test('broadcasts use authenticated ownership filter and expose no chat token or 
   assert.equal(data.items[0].live_chat_available, true);
   assert.equal(JSON.stringify(data).includes('private-access'), false);
 });
+
+test('channel setup verifies ownership across pages without requesting broadcasts', async () => {
+  let requests = 0;
+  const provider = new GoogleProvider(async (url, init) => {
+    const parsed = new URL(url);
+    assert.equal(parsed.pathname, '/youtube/v3/channels');
+    assert.equal(parsed.searchParams.get('mine'), 'true');
+    assert.equal(init.headers.Authorization, 'Bearer private-access');
+    requests++;
+    if (!parsed.searchParams.has('pageToken'))
+      return Response.json({
+        items: [{ id: 'channel-a', snippet: { title: 'Channel A' } }],
+        nextPageToken: 'next',
+      });
+    assert.equal(parsed.searchParams.get('pageToken'), 'next');
+    return Response.json({
+      items: [
+        { id: 'channel-a', snippet: { title: 'Channel A' } },
+        { id: 'channel-b', snippet: { title: 'Channel B' } },
+      ],
+    });
+  });
+  assert.deepEqual(await provider.channels('private-access'), [
+    { youtube_channel_id: 'channel-a', channel_title: 'Channel A' },
+    { youtube_channel_id: 'channel-b', channel_title: 'Channel B' },
+  ]);
+  assert.equal(requests, 2);
+});
+
+test('channel setup rejects malformed, looping and incomplete ownership lists', async () => {
+  for (const [body, code] of [
+    [{ items: [{ id: 'channel-a', snippet: { title: '' } }] }, 'GOOGLE_UNAVAILABLE'],
+    [{ items: [], nextPageToken: 'same' }, 'YOUTUBE_LOOKUP_INCOMPLETE'],
+  ]) {
+    const provider = new GoogleProvider(async () => Response.json(body));
+    await assert.rejects(provider.channels('private-access'), (error) => error.code === code);
+  }
+  let calls = 0;
+  const endless = new GoogleProvider(async () =>
+    Response.json({
+      items: [],
+      nextPageToken: `page-${++calls}`,
+    }),
+  );
+  await assert.rejects(
+    endless.channels('private-access'),
+    (error) => error.code === 'YOUTUBE_LOOKUP_INCOMPLETE',
+  );
+  assert.equal(calls, 10);
+  assert.deepEqual(
+    await new GoogleProvider(async () => Response.json({ items: [] })).channels('private-access'),
+    [],
+  );
+});

@@ -5,6 +5,18 @@ The Settings page at `/settings/moderation` has two sections:
 - **Blocked words:** streamer-defined words, phrases, and domains. Each match deletes the message and can also select a timeout or ban.
 - **AI action limits:** local model identity, enabled actions, severity thresholds, and timeout duration.
 
+## Channel setup before streaming
+
+Google sign-in retrieves the authenticated account's YouTube channels using `channels.list` with `mine=true`. Verified channels receive an internal mapping and OWNER membership before any monitoring run exists. Settings displays the stored channel name; internal identifiers remain in API requests only.
+
+If the channel lookup is unavailable, sign-in still completes. Settings offers **Load my channel**, which calls the authenticated, trusted-origin `POST /v1/youtube/channels/sync` endpoint with an empty body. This also supports accounts connected before channel onboarding was introduced. It does not create a livestream session or monitoring run. An empty result prompts the streamer to connect the correct Google account. Provider failures and empty results do not remove existing memberships.
+
+Channel setup reuses the same mapping and transaction lock as monitoring, updates the verified channel name, and grants ownership only from server-side Google verification. `/v1/me` reads names and memberships from PostgreSQL; it never polls YouTube. Setup requests occur at login or through the explicit button.
+
+After updating the API, run `npm run db:runtime` to grant the runtime role permission to update only `channels.display_name`, then restart the API. No migration or database reset is required. Existing users with no channel can click **Load my channel** or sign in again. Verify that Settings works without starting a livestream and that subsequent monitoring reuses the same channel.
+
+Automated coverage: `npm run test:channel-onboarding`, Google provider tests, YouTube session tests, auth/monitoring HTTP tests, and dashboard channel setup/settings tests. Provider calls are mocked and database fixtures use isolated schemas.
+
 The worker checks the captured blacklist first. A match uses its selected actions and skips AI inference for that message. Unmatched messages can enter AI processing when the run has compatible enabled AI settings. If no threshold is met, AI selects no action. Model severity is not a probability of a policy violation.
 
 Changes apply to new monitoring runs. Save each section, then stop and restart monitoring to capture the new settings. Settings do not override worker execution switches, current authorization, run state, or safeguards against duplicate and uncertain requests.

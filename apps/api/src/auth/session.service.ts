@@ -83,7 +83,7 @@ export class SessionService {
   }
   async me(account: AuthenticatedAccount) {
     const memberships = await this.database.pool.query(
-      'SELECT channel_id,role FROM channel_memberships WHERE account_id=$1 ORDER BY channel_id',
+      'SELECT m.channel_id,m.role,c.display_name AS channel_name FROM channel_memberships m JOIN channels c ON c.id=m.channel_id WHERE m.account_id=$1 ORDER BY m.channel_id',
       [account.id],
     );
     return meResponse.parse({ account, memberships: memberships.rows });

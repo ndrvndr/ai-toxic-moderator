@@ -1,9 +1,11 @@
-import { Controller, Get, Inject, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Post, Query, Req, Res } from '@nestjs/common';
+import { z } from 'zod';
 
 import type { AppConfig } from '@moderator/config';
 
 import { APP_CONFIG } from '../database.module';
 import type { ApiRequest, ApiResponse } from '../http';
+import { failure } from '../http';
 import { GoogleService, oauthBrowserToken, oauthCookie } from './google.service';
 import { Public } from './guards';
 import { cookieToken, sessionCookie } from './session.service';
@@ -69,5 +71,17 @@ export class GoogleController {
   @Get('youtube/broadcasts')
   broadcasts(@Req() request: ApiRequest) {
     return this.google.broadcasts(request.account!.id);
+  }
+
+  @Post('youtube/channels/sync')
+  syncChannels(@Body() body: unknown, @Req() request: ApiRequest) {
+    if (!z.strictObject({}).safeParse(body).success) {
+      throw failure(
+        422,
+        'VALIDATION_ERROR',
+        'Channel setup does not accept account or channel overrides.',
+      );
+    }
+    return this.google.syncChannels(request.account!.id);
   }
 }

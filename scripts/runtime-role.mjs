@@ -73,6 +73,7 @@ export async function provisionRuntimeRole(client, { role, password, schema = 'p
     }
 
     await client.query(`GRANT UPDATE(role) ON ${schemaSql}.channel_memberships TO ${roleSql}`);
+    await client.query(`GRANT UPDATE(display_name) ON ${schemaSql}.channels TO ${roleSql}`);
 
     for (const table of ['youtube_channels', 'youtube_broadcasts']) {
       await client.query(`GRANT SELECT,INSERT ON ${schemaSql}.${identifier(table)} TO ${roleSql}`);
