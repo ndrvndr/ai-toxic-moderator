@@ -101,6 +101,10 @@ export async function provisionRuntimeRole(client, { role, password, schema = 'p
       `GRANT SELECT ON ${schemaSql}.youtube_moderation_action_plans TO ${roleSql}`,
     );
     await client.query(`GRANT SELECT ON ${schemaSql}.youtube_blacklist_decisions TO ${roleSql}`);
+    await client.query(`GRANT SELECT,INSERT ON ${schemaSql}.youtube_unban_requests TO ${roleSql}`);
+    await client.query(
+      `GRANT UPDATE(status, finished_at, http_status, error_code) ON ${schemaSql}.youtube_unban_requests TO ${roleSql}`,
+    );
     for (const table of [
       'youtube_delete_executions',
       'youtube_delete_attempts',

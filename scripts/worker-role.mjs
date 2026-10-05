@@ -119,6 +119,7 @@ export async function provisionWorkerRole(client, { role, password, schema = 'pu
     );
 
     await client.query(`GRANT SELECT ON ${schemaSql}.google_credentials TO ${roleSql}`);
+    await client.query(`GRANT SELECT ON ${schemaSql}.youtube_unban_requests TO ${roleSql}`);
 
     await client.query(
       `GRANT UPDATE(

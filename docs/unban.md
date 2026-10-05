@@ -9,17 +9,31 @@ Unban is part of the portfolio MVP. It has two manual intents:
 
 ## Implementation steps
 
-| Step | Scope                                                                                                         | Status                                 |
-| ---- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| 1    | Strict request/result contracts and a single-attempt YouTube removal adapter                                  | Implemented and covered by local tests |
-| 2    | New migration and scoped removal records, idempotency, audit identity and concurrent-request protection       | Pending                                |
-| 3    | Authorized API workflow, token resolution and separate Studio confirmation path                               | Pending                                |
-| 4    | Dispatch eligibility after removal; keep historical ban outcomes unchanged and suppress stale queued messages | Pending                                |
-| 5    | Dashboard controls, confirmation dialogs, outcome display and Live/History refresh                            | Pending                                |
-| 6    | Database/HTTP/UI integration tests and controlled livestream E2E verification                                 | Pending                                |
+| Step | Scope                                                                                                         | Status                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| 1    | Strict request/result contracts and a single-attempt YouTube removal adapter                                  | Implemented and covered by local tests        |
+| 2    | New migration and scoped removal records, idempotency, audit identity and concurrent-request protection       | Schema implemented and covered by local tests |
+| 3    | Authorized API workflow, token resolution and separate Studio confirmation path                               | Pending                                       |
+| 4    | Dispatch eligibility after removal; keep historical ban outcomes unchanged and suppress stale queued messages | Pending                                       |
+| 5    | Dashboard controls, confirmation dialogs, outcome display and Live/History refresh                            | Pending                                       |
+| 6    | Database/HTTP/UI integration tests and controlled livestream E2E verification                                 | Pending                                       |
 
 The adapter is not wired to an HTTP endpoint or dashboard yet. No actual ban is
 removed by installing this foundation.
+
+Migration `028_youtube_unban_requests.sql` adds scoped removal history with
+request identity, requester and credential-account identity, deadlines, and
+terminal outcomes that cannot be rewritten. Only the channel owner can create
+a removal record. The API has limited insert/result-update permissions; the
+worker can read removal history but cannot create, update or delete it.
+
+Both MVP intents currently target application-created, provider-confirmed
+permanent bans. An unknown original ban or a temporary timeout is outside this
+initial removal scope. A failed or unknown removal of a confirmed ban can be
+followed by a separate explicit Studio confirmation. This preserves uncertainty
+on the original removal request. Database uniqueness prevents concurrent active
+removals and reuse of a request ID for a different target. API idempotent replay
+handling and recovery are part of step 3.
 
 ## Outcome rules
 
@@ -52,6 +66,7 @@ OAuth scope. It returns `204 No Content` on success.
 
 ```sh
 npm run test:unban
+npm run test:classification-schema
 npm run check
 ```
 

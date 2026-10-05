@@ -660,6 +660,241 @@ async function insertBanAttempt(executionId, { accountId = null, moderatorChanne
   return id;
 }
 
+async function unbanFixture(action = 'BAN', outcome = 'SUCCEEDED') {
+  const f = await banFixture(action);
+  await client.query(
+    "INSERT INTO channel_memberships(channel_id,account_id,role) VALUES($1,$2,'OWNER')",
+    [f.channelId, f.accountId],
+  );
+  const executionId = await insertBanExecution(f);
+  const attemptId = await insertBanAttempt(executionId);
+  if (outcome === 'SUCCEEDED') {
+    await client.query(
+      "UPDATE youtube_ban_attempts SET status='SUCCEEDED',http_status=200,ban_id='fixture-ban',finished_at=clock_timestamp() WHERE id=$1",
+      [attemptId],
+    );
+  } else {
+    await client.query(
+      "UPDATE youtube_ban_attempts SET status='UNKNOWN',error_code='TRANSPORT_ERROR',finished_at=clock_timestamp() WHERE id=$1",
+      [attemptId],
+    );
+  }
+  return { ...f, executionId, attemptId };
+}
+
+async function insertUnban(f, method = 'YOUTUBE', overrides = {}, connection = client) {
+  const row = {
+    id: randomUUID(),
+    requestId: randomUUID(),
+    attemptId: f.attemptId,
+    executionId: f.executionId,
+    channelId: f.channelId,
+    sessionId: f.sessionId,
+    accountId: f.accountId,
+    credentialId: method === 'YOUTUBE' ? f.accountId : null,
+    method,
+    status: method === 'YOUTUBE' ? 'DISPATCHED' : 'USER_CONFIRMED',
+    ...overrides,
+  };
+  await connection.query(
+    `WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS at)
+    INSERT INTO youtube_unban_requests(id,request_id,ban_attempt_id,execution_id,
+      channel_id,session_id,requested_by_account_id,credential_account_id,method,status,
+      requested_at,deadline_at,finished_at)
+    SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,at,
+      CASE WHEN $9='YOUTUBE' THEN at+interval '30 seconds' ELSE NULL END,
+      CASE WHEN $9='STUDIO_CONFIRMATION' THEN at ELSE NULL END FROM moment`,
+    [
+      row.id,
+      row.requestId,
+      row.attemptId,
+      row.executionId,
+      row.channelId,
+      row.sessionId,
+      row.accountId,
+      row.credentialId,
+      row.method,
+      row.status,
+    ],
+  );
+  return row;
+}
+
+test('unban migration is repeatable and Studio confirmation preserves the original ban', async () => {
+  await migrate(client);
+  const f = await unbanFixture();
+  const row = await insertUnban(f, 'STUDIO_CONFIRMATION');
+  const result = await client.query(
+    `SELECT u.status AS removal_status,a.status AS ban_status,a.ban_id
+     FROM youtube_unban_requests u JOIN youtube_ban_attempts a ON a.id=u.ban_attempt_id WHERE u.id=$1`,
+    [row.id],
+  );
+  assert.deepEqual(result.rows[0], {
+    removal_status: 'USER_CONFIRMED',
+    ban_status: 'SUCCEEDED',
+    ban_id: 'fixture-ban',
+  });
+});
+
+test('unban rejects wrong scope, source, credentials, and missing owner authorization', async () => {
+  const f = await unbanFixture();
+  const other = await unbanFixture();
+  for (const overrides of [
+    { channelId: other.channelId },
+    { sessionId: other.sessionId },
+    { executionId: other.executionId },
+    { attemptId: other.attemptId },
+    { credentialId: other.accountId },
+    { accountId: other.accountId },
+    { status: 'SUCCEEDED' },
+  ])
+    await assert.rejects(insertUnban(f, 'YOUTUBE', overrides), { code: '23514' });
+  for (const [action, outcome] of [
+    ['TIMEOUT', 'SUCCEEDED'],
+    ['BAN', 'UNKNOWN'],
+  ]) {
+    const invalid = await unbanFixture(action, outcome);
+    await assert.rejects(insertUnban(invalid), { code: '23514' });
+    await assert.rejects(insertUnban(invalid, 'STUDIO_CONFIRMATION'), { code: '23514' });
+  }
+  await client.query(
+    "UPDATE channel_memberships SET role='MODERATOR' WHERE channel_id=$1 AND account_id=$2",
+    [f.channelId, f.accountId],
+  );
+  await assert.rejects(insertUnban(f), { code: '23514' });
+});
+
+test('unban success requires 204 and terminal outcomes and identities are immutable', async () => {
+  const f = await unbanFixture();
+  const row = await insertUnban(f);
+  for (const status of [200, 201, 404])
+    await assert.rejects(
+      client.query(
+        "UPDATE youtube_unban_requests SET status='SUCCEEDED',http_status=$2,finished_at=clock_timestamp() WHERE id=$1",
+        [row.id, status],
+      ),
+      { code: '23514' },
+    );
+  await assert.rejects(
+    client.query('UPDATE youtube_unban_requests SET request_id=$2 WHERE id=$1', [
+      row.id,
+      randomUUID(),
+    ]),
+    { code: '23514' },
+  );
+  await client.query(
+    "UPDATE youtube_unban_requests SET status='SUCCEEDED',http_status=204,finished_at=clock_timestamp() WHERE id=$1",
+    [row.id],
+  );
+  await assert.rejects(
+    client.query(
+      "UPDATE youtube_unban_requests SET status='UNKNOWN',error_code='TRANSPORT_ERROR' WHERE id=$1",
+      [row.id],
+    ),
+    { code: '23514' },
+  );
+  await assert.rejects(insertUnban(f, 'STUDIO_CONFIRMATION'), { code: '23505' });
+});
+
+test('unknown removal permits a separate explicit Studio confirmation without rewriting uncertainty', async () => {
+  const f = await unbanFixture();
+  const row = await insertUnban(f);
+  await client.query(
+    "UPDATE youtube_unban_requests SET status='UNKNOWN',error_code='TRANSPORT_ERROR',finished_at=clock_timestamp() WHERE id=$1",
+    [row.id],
+  );
+  await insertUnban(f, 'STUDIO_CONFIRMATION');
+  const result = await client.query(
+    'SELECT status FROM youtube_unban_requests WHERE ban_attempt_id=$1 ORDER BY requested_at,id',
+    [f.attemptId],
+  );
+  assert.deepEqual(
+    result.rows.map((row) => row.status),
+    ['UNKNOWN', 'USER_CONFIRMED'],
+  );
+});
+
+test('duplicate request IDs cannot be repurposed for another ban', async () => {
+  const f = await unbanFixture();
+  const row = await insertUnban(f);
+  const other = await unbanFixture();
+  // Same owner legitimately has both channels; request identity still cannot change target.
+  await client.query(
+    "INSERT INTO channel_memberships(channel_id,account_id,role) VALUES($1,$2,'OWNER')",
+    [other.channelId, f.accountId],
+  );
+  await assert.rejects(
+    insertUnban(other, 'YOUTUBE', { accountId: f.accountId, requestId: row.requestId }),
+    { code: '23505' },
+  );
+});
+
+test('concurrent removal creation admits one in-flight record per original attempt', async () => {
+  const f = await unbanFixture();
+  const peer = new Client({ connectionString: process.env.TEST_DATABASE_URL });
+  await peer.connect();
+  try {
+    await peer.query(`SET search_path TO ${schema}`);
+    const results = await Promise.allSettled([insertUnban(f), insertUnban(f, 'YOUTUBE', {}, peer)]);
+    assert.equal(results.filter((row) => row.status === 'fulfilled').length, 1);
+    assert.equal(results.find((row) => row.status === 'rejected').reason.code, '23505');
+  } finally {
+    await peer.end();
+  }
+});
+
+test('runtime API can create and finish removal while worker is read-only and neither can delete history', async () => {
+  const f = await unbanFixture();
+  const apiRole = `unban_api_${randomUUID().replaceAll('-', '')}`;
+  const workerRole = `unban_worker_${randomUUID().replaceAll('-', '')}`;
+  const { provisionRuntimeRole } = await import('../scripts/runtime-role.mjs');
+  const { provisionWorkerRole } = await import('../scripts/worker-role.mjs');
+  const roles = [];
+  try {
+    await provisionRuntimeRole(client, { role: apiRole, password: randomUUID(), schema });
+    roles.push(apiRole);
+    await provisionWorkerRole(client, { role: workerRole, password: randomUUID(), schema });
+    roles.push(workerRole);
+    await client.query(`SET ROLE ${apiRole}`);
+    const row = await insertUnban(f);
+    await client.query(
+      "UPDATE youtube_unban_requests SET status='UNKNOWN',error_code='TRANSPORT_ERROR',finished_at=clock_timestamp() WHERE id=$1",
+      [row.id],
+    );
+    await assert.rejects(client.query('DELETE FROM youtube_unban_requests WHERE id=$1', [row.id]), {
+      code: '42501',
+    });
+    await assert.rejects(
+      client.query('UPDATE youtube_unban_requests SET requested_by_account_id=$2 WHERE id=$1', [
+        row.id,
+        f.accountId,
+      ]),
+      { code: '42501' },
+    );
+    await client.query('RESET ROLE');
+    await client.query(`SET ROLE ${workerRole}`);
+    assert.equal(
+      (await client.query('SELECT status FROM youtube_unban_requests WHERE id=$1', [row.id]))
+        .rows[0].status,
+      'UNKNOWN',
+    );
+    await assert.rejects(insertUnban(f, 'STUDIO_CONFIRMATION'), { code: '42501' });
+    await assert.rejects(
+      client.query("UPDATE youtube_unban_requests SET status='SUCCEEDED' WHERE id=$1", [row.id]),
+      { code: '42501' },
+    );
+    await assert.rejects(client.query('DELETE FROM youtube_unban_requests WHERE id=$1', [row.id]), {
+      code: '42501',
+    });
+  } finally {
+    await client.query('RESET ROLE');
+    for (const role of roles) {
+      await client.query(`DROP OWNED BY ${role}`);
+      await client.query(`DROP ROLE ${role}`);
+    }
+  }
+});
+
 test('ban execution migration is repeatable and accepts TIMEOUT and BAN provenance', async () => {
   await migrate(client);
   for (const action of ['TIMEOUT', 'BAN']) {
