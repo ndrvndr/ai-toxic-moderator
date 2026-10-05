@@ -35,6 +35,7 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
     }
 
     const chatKey = ['live-chat', accountId, channelId, sessionId] as const;
+    const unbanKey = ['unban', accountId, channelId, sessionId] as const;
     const monitoringKey = ['monitoring', accountId, broadcastId] as const;
     const statisticsKey = ['history-statistics', accountId, sessionId] as const;
     const actionStatisticsKey = ['history-action-statistics', accountId, sessionId] as const;
@@ -83,7 +84,7 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
               {
                 predicate: ({ queryKey }) =>
                   (queryKey.length >= 4 &&
-                    queryKey[0] === 'live-chat' &&
+                    (queryKey[0] === 'live-chat' || queryKey[0] === 'unban') &&
                     queryKey[1] === accountId &&
                     queryKey[2] === channelId &&
                     queryKey[3] === sessionId) ||
@@ -220,6 +221,8 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
           void queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
           void queryClient.cancelQueries({ queryKey: chatKey, exact: false });
           queryClient.removeQueries({ queryKey: chatKey, exact: false });
+          void queryClient.cancelQueries({ queryKey: unbanKey });
+          queryClient.removeQueries({ queryKey: unbanKey });
           void queryClient.resetQueries({
             queryKey: statisticsKey,
             exact: true,
@@ -234,6 +237,8 @@ export function useLiveEvents({ accountId, broadcastId, channelId, sessionId }: 
         if (event.code === 4003 || event.code === 4004) {
           stopped = true;
           setStatus('forbidden');
+          void queryClient.cancelQueries({ queryKey: unbanKey });
+          queryClient.removeQueries({ queryKey: unbanKey });
 
           void queryClient.cancelQueries({
             queryKey: chatKey,

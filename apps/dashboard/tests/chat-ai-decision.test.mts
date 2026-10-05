@@ -13,6 +13,7 @@ import { LiveChatPanel } from '../features/live/components/live-chat-panel.js';
 import { SavedSessionViewer } from '../features/live/components/saved-session-viewer.js';
 
 const mocks = vi.hoisted(() => ({ chat: vi.fn(), monitoring: vi.fn(), events: vi.fn() }));
+vi.mock('../features/auth/hooks/use-session.js', () => ({ useSession: () => ({ data: null }) }));
 vi.mock('../features/live/hooks/use-live-chat.js', () => ({ useLiveChat: mocks.chat }));
 vi.mock('../features/live/hooks/use-monitoring.js', () => ({ useMonitoring: mocks.monitoring }));
 vi.mock('../features/live/hooks/use-live-events.js', () => ({ useLiveEvents: mocks.events }));

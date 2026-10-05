@@ -4,6 +4,7 @@ import type { ChatObservation, MonitoringRun } from '@moderator/contracts';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { useSession } from '@/features/auth/hooks/use-session';
 import { getErrorMessage } from '@/lib/api-client';
 
 import { useLiveChat } from '../hooks/use-live-chat';
@@ -38,6 +39,13 @@ export function LiveChatPanel(props: LiveChatPanelProps) {
 }
 
 function LiveChatPanelContent({ accountId, run, connectionStatus }: LiveChatPanelProps) {
+  const session = useSession();
+  const owner =
+    !session.isError &&
+    session.data?.account.id === accountId &&
+    session.data.memberships.some(
+      (membership) => membership.channel_id === run.channel_id && membership.role === 'OWNER',
+    );
   const [filters, setFilters] = useState<ChatFilters>({});
   const chat = useLiveChat(accountId, run, connectionStatus, filters);
   const hasFilters = Boolean(filters.outcome || filters.category);
@@ -154,7 +162,17 @@ function LiveChatPanelContent({ accountId, run, connectionStatus }: LiveChatPane
           >
             <ol>
               {messages.map((message) => (
-                <ChatMessage key={message.external_message_id} message={message} compact />
+                <ChatMessage
+                  key={message.external_message_id}
+                  message={message}
+                  compact
+                  unbanScope={{
+                    accountId,
+                    channelId: run.channel_id,
+                    sessionId: run.session_id,
+                    owner: Boolean(owner),
+                  }}
+                />
               ))}
             </ol>
           </div>

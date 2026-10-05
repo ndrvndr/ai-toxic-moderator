@@ -60,7 +60,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   current = { ...run };
   unavailable = false;
-  mocks.session.mockReturnValue({ data: { account: { id: 'fixture-account' } } });
+  mocks.session.mockReturnValue({ data: { account: { id: 'fixture-account' }, memberships: [] } });
   mocks.monitoring.mockImplementation(() => ({
     monitoring: {
       data: { run: current },

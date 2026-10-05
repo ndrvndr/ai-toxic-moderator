@@ -15,12 +15,12 @@ Unban is part of the portfolio MVP. It has two manual intents:
 | 2    | New migration and scoped removal records, idempotency, audit identity and concurrent-request protection       | Schema implemented and covered by local tests |
 | 3    | Authorized API workflow, token resolution and separate Studio confirmation path                               | Implemented and covered by local HTTP tests   |
 | 4    | Dispatch eligibility after removal; keep historical ban outcomes unchanged and suppress stale queued messages | Implemented and covered by local tests        |
-| 5    | Dashboard controls, confirmation dialogs, outcome display and Live/History refresh                            | Pending                                       |
+| 5    | Dashboard controls, confirmation dialogs, outcome display and Live/History refresh                            | Implemented and covered by local UI tests     |
 | 6    | Database/HTTP/UI integration tests and controlled livestream E2E verification                                 | Pending                                       |
 
 The adapter is wired to the authorized API and worker dispatch eligibility.
-Dashboard controls are still pending; the complete feature is not ready for
-live verification yet.
+Dashboard controls are implemented. Controlled livestream verification remains
+pending in step 6; local tests do not establish real YouTube removal behavior.
 
 Migration `028_youtube_unban_requests.sql` adds scoped removal history with
 request identity, requester and credential-account identity, deadlines, and
@@ -121,6 +121,31 @@ create another action; a new confirmed ban requires its own removal record.
   a whitelist exemption and does not promise restoration of deleted messages.
 
 Automatic synchronization with YouTube Studio is after-MVP work.
+
+## Dashboard workflow
+
+In Live or a History stream report, expand **Moderation details** on the message
+that triggered a provider-confirmed permanent ban. The channel owner can choose:
+
+- **Unban viewer**, then **Confirm unban**: send one authorized YouTube removal request.
+- **Already unbanned in YouTube Studio**, then **Confirm already unbanned**: record
+  the owner's explicit confirmation after removing that viewer from Hidden users.
+
+The confirmation dialog explains the scope and that deleted messages are not
+restored. Closing it before confirmation sends nothing. Non-owners can read saved
+removal results but do not receive mutation controls. Timeouts and uncertain original
+bans are outside this workflow.
+
+The panel checks removal history before enabling actions. Pending or confirmed
+removals block further requests. An unknown removal blocks another provider request
+but allows explicit Studio confirmation. A lost HTTP response offers only manual
+replay with the same request ID; there is no automatic mutation retry.
+
+Results remain separate from **Ban confirmed**. Provider success is labelled
+**Unban confirmed by YouTube**; Studio confirmation is **Unban confirmed by you**.
+Live events refresh the chat and scoped removal history in both Live and History.
+Pending removals also check their result every two seconds, allowing expiry recovery
+without another provider call. Access loss clears the scoped removal cache.
 
 ## Provider reference
 

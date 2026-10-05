@@ -537,6 +537,37 @@ describe('useLiveEvents', () => {
     expect(otherSession).not.toHaveBeenCalled();
   });
 
+  it('refreshes scoped unban history on chat updates without touching another session', async () => {
+    const key = ['unban', accountId, channelId, sessionId, 'ban-execution'];
+    const removal = observe(key);
+    const anotherSession = observe([
+      'unban',
+      accountId,
+      channelId,
+      'another-session',
+      'ban-execution',
+    ]);
+    mount();
+    const socket = latestSocket();
+    ready(socket, '0');
+    await advance(250);
+    expect(removal).toHaveBeenCalledTimes(1);
+    event(socket, '1');
+    await advance(250);
+    expect(removal).toHaveBeenCalledTimes(2);
+    expect(anotherSession).not.toHaveBeenCalled();
+  });
+
+  it.each([4001, 4003, 4004])('clears unban history when access closes with %s', async (code) => {
+    const key = ['unban', accountId, channelId, sessionId, 'ban-execution'];
+    client.setQueryData(key, { items: [{ private: true }] });
+    mount();
+    ready(latestSocket(), '0');
+    act(() => latestSocket().disconnect(code));
+    await advance(60_000);
+    expect(client.getQueryData(key)).toBeUndefined();
+  });
+
   it.each([4001, 4003, 4004])(
     'clears cached action statistics after access close code %s',
     async (code) => {

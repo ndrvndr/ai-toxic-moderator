@@ -109,6 +109,8 @@ class ChatController {
         author_action_duration: string | null;
         author_action_block_reason: string | null;
         author_action_has_evidence: boolean | null;
+        author_action_execution_id: string | null;
+        author_action_unban: unknown;
         ai_shadow: unknown;
         first_observed_run_id: string;
         ai_record: unknown;
@@ -155,6 +157,8 @@ class ChatController {
             author_action.author_action_duration,
             author_action.author_action_block_reason,
             author_action.author_action_has_evidence,
+            author_action.author_action_execution_id,
+            author_action.author_action_unban,
             shadow.summary AS ai_shadow,
             first_observed_run_id,
             ai.record AS ai_record,
@@ -265,6 +269,9 @@ class ChatController {
            LEFT JOIN LATERAL (
   SELECT
     e.action AS author_action_type,
+    CASE WHEN e.action = 'BAN' AND a.status = 'SUCCEEDED' AND a.ban_id IS NOT NULL
+      THEN e.id ELSE NULL END AS author_action_execution_id,
+    removal.summary AS author_action_unban,
     CASE
       WHEN a.id IS NOT NULL THEN a.status
       WHEN decision.reason IN ('MESSAGE_BEFORE_TIMEOUT_END', 'MESSAGE_BEFORE_UNBAN') THEN 'SUPPRESSED'
@@ -286,6 +293,17 @@ CASE
 END AS author_action_has_evidence
 FROM youtube_ban_executions e
   LEFT JOIN youtube_ban_attempts a ON a.execution_id = e.id
+  LEFT JOIN LATERAL (
+    SELECT jsonb_build_object(
+      'id', u.id, 'execution_id', u.execution_id, 'method', u.method, 'status', u.status,
+      'requested_at', to_char(u.requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+      'finished_at', to_char(u.finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+    ) AS summary
+    FROM youtube_unban_requests u
+    WHERE u.execution_id = e.id AND u.ban_attempt_id = a.id
+      AND u.channel_id = e.channel_id AND u.session_id = e.session_id
+    ORDER BY u.requested_at DESC, u.id DESC LIMIT 1
+  ) removal ON true
   LEFT JOIN LATERAL (
     SELECT ${BAN_DISPATCH_BLOCK_REASON_SQL} AS reason
     FROM youtube_chat_observations o
@@ -387,6 +405,12 @@ FROM youtube_ban_executions e
               : {
                   action: row.author_action_type,
                   status: row.author_action_status,
+                  ...(row.author_action_execution_id
+                    ? {
+                        execution_id: row.author_action_execution_id,
+                        unban: row.author_action_unban,
+                      }
+                    : {}),
                   ...(row.author_action_status === 'UNKNOWN'
                     ? {
                         evidence: {

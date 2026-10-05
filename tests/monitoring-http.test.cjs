@@ -1137,6 +1137,9 @@ test('chat exposes author action results only on their triggering messages', asy
         action,
         status,
         duration_seconds: duration,
+        ...(action === 'BAN' && status === 'SUCCEEDED'
+          ? { execution_id: executionId, unban: null }
+          : {}),
         ...(status === 'UNKNOWN'
           ? {
               evidence: {
@@ -1168,6 +1171,9 @@ test('chat exposes author action results only on their triggering messages', asy
         action,
         status,
         duration_seconds: duration,
+        ...(action === 'BAN' && status === 'SUCCEEDED'
+          ? { execution_id: executionId, unban: null }
+          : {}),
         ...(status === 'UNKNOWN'
           ? {
               evidence: {
@@ -1511,6 +1517,12 @@ test('chat suppresses pre-unban messages, permits fresh plans and preserves the 
   assert.equal(response.status, 200, await response.clone().text());
   const page = chatPage.parse(await response.json());
   assert.equal(page.items.find((item) => item.id === originalId).author_action.status, 'SUCCEEDED');
+  const originalAction = page.items.find((item) => item.id === originalId).author_action;
+  assert.equal(originalAction.execution_id, executionId);
+  assert.equal(originalAction.unban.execution_id, executionId);
+  assert.equal(originalAction.unban.status, 'USER_CONFIRMED');
+  assert.equal(originalAction.unban.method, 'STUDIO_CONFIRMATION');
+  assert.equal(JSON.stringify(originalAction).includes('test-unban-source'), false);
   assert.deepEqual(page.items.find((item) => item.id === queuedId).author_action, {
     action: 'TIMEOUT',
     status: 'SUPPRESSED',

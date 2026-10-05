@@ -7,6 +7,7 @@ import { ChatBlacklist } from './chat-blacklist';
 import { ChatDeletion } from './chat-deletion';
 import { ChatEvaluation } from './chat-evaluation';
 import { ChatMessageSummary } from './chat-message-summary';
+import { ChatUnban, type UnbanScope } from './chat-unban';
 
 const eventLabels: Record<string, string> = {
   textMessageEvent: 'Message',
@@ -27,9 +28,11 @@ const eventLabels: Record<string, string> = {
 export function ChatMessage({
   message,
   compact = false,
+  unbanScope,
 }: {
   message: ChatObservation;
   compact?: boolean;
+  unbanScope?: UnbanScope;
 }) {
   const label = eventLabels[message.event_type] ?? 'Chat event';
   const details = (
@@ -46,6 +49,9 @@ export function ChatMessage({
       <ChatAiDecision decision={message.ai_decision} />
       <ChatDeletion deletion={message.deletion} />
       <ChatAuthorAction action={message.author_action} />
+      {message.author_action?.action === 'BAN' && message.author_action.status === 'SUCCEEDED' && (
+        <ChatUnban action={message.author_action} scope={unbanScope} />
+      )}
     </div>
   );
   const hasDetails = Boolean(

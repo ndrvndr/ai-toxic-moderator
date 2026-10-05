@@ -4,6 +4,7 @@ import { aiShadowSummary } from './ai-shadow';
 import { chatAiDecision } from './chat-ai-decision';
 import { customBlacklistRule } from './custom-blacklist';
 import { category, outcome } from './moderation-enums';
+import { unbanSummary } from './unban';
 
 export const chatOutcomeFilter = z.enum([...outcome.options, 'NOT_EVALUATED']);
 
@@ -84,9 +85,21 @@ export const chatAuthorAction = z
       ...authorActionFields,
       action: z.literal('BAN'),
       duration_seconds: z.null(),
+      execution_id: z.uuid().optional(),
+      unban: unbanSummary.nullable().optional(),
     }),
   ])
   .superRefine((value, context) => {
+    if (
+      value.action === 'BAN' &&
+      ((value.execution_id !== undefined && value.status !== 'SUCCEEDED') ||
+        (value.unban != null && value.unban.execution_id !== value.execution_id))
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Removal must match a confirmed ban execution.',
+      });
+    }
     const valid =
       value.status === 'SUPPRESSED'
         ? value.block_reason === 'MESSAGE_BEFORE_TIMEOUT_END' ||
