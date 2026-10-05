@@ -16,6 +16,7 @@ import { ApiExceptionFilter, type ApiRequest, type ApiResponse } from './http';
 import { LiveModule } from './live/live.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { SettingsModule } from './settings/settings.module';
+import { UnbanModule } from './unban/unban.module';
 
 export async function createApi(config: AppConfig, pool?: DatabasePool) {
   @Module({
@@ -28,6 +29,7 @@ export async function createApi(config: AppConfig, pool?: DatabasePool) {
       ChatModule,
       LiveModule,
       SettingsModule,
+      UnbanModule,
     ],
   })
   class ApiModule {}

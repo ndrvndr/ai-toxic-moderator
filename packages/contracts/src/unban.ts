@@ -61,3 +61,5 @@ export const unbanSummary = z.discriminatedUnion('method', [
 
 export type UnbanRequest = z.infer<typeof unbanRequest>;
 export type UnbanSummary = z.infer<typeof unbanSummary>;
+export const unbanResponse = z.strictObject({ removal: unbanSummary, reused: z.boolean() });
+export const unbanHistory = z.strictObject({ items: z.array(unbanSummary).max(50) });
