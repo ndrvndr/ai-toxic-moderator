@@ -11,7 +11,7 @@ export function LiveHeader({ refreshing, onRefresh }: LiveHeaderProps) {
       <div className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Live</h1>
         <p className="text-sm text-muted-foreground">
-          Active YouTube broadcasts from your connected account.
+          Follow your chat and see what moderation is doing during your stream.
         </p>
       </div>
 

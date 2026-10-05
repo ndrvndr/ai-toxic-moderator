@@ -150,11 +150,11 @@ function LiveChatPanelContent({ accountId, run, connectionStatus }: LiveChatPane
             role="region"
             aria-label="Chat messages, newest first"
             tabIndex={0}
-            className="max-h-112 overflow-y-auto rounded-lg border"
+            className="max-h-[65vh] min-h-64 overflow-y-auto rounded-xl border bg-background"
           >
             <ol>
               {messages.map((message) => (
-                <ChatMessage key={message.external_message_id} message={message} />
+                <ChatMessage key={message.external_message_id} message={message} compact />
               ))}
             </ol>
           </div>

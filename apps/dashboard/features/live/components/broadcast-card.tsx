@@ -9,16 +9,14 @@ export function BroadcastCard({ broadcast }: { broadcast: Broadcast }) {
       <CardHeader>
         <p className="text-xs font-semibold text-muted-foreground">LIVE</p>
         <CardTitle className="wrap-break-word">{broadcast.title}</CardTitle>
-        <CardDescription className="break-all">
-          Channel: {broadcast.youtube_channel_id}
-        </CardDescription>
+        <CardDescription>Choose when to start or stop monitoring this stream.</CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-4">
         <p className="text-sm">
           {broadcast.live_chat_available
-            ? 'Live chat is available.'
-            : 'Live chat is unavailable for this broadcast.'}
+            ? 'Chat is ready to monitor.'
+            : 'Chat is unavailable for this stream.'}
         </p>
 
         <MonitoringControls

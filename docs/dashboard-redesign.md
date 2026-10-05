@@ -24,9 +24,19 @@ A `RUNNING` session is displayed as “Monitoring started.” This does not clai
 - Dashboard production build includes `/overview`.
 - Manual authenticated desktop and mobile review is pending. The preview reached the session guard, but the API was unavailable during browser inspection.
 
+## Compact chat
+
+Live chat now prioritizes the viewer's message, author, and time. The shared saved-session chat viewer uses the same compact presentation.
+
+Each message shows short, separate summaries for rule checks, blocked-word matches, AI planning, and provider outcomes. A planned action is not displayed as a confirmed action. Unknown results remain visible with a notice that the request will not be retried automatically. Timeout and ban confirmations describe the request result, not the viewer's current restriction.
+
+“Moderation details” expands the existing classification, blacklist, model, planning, and execution explanations. The original message remains available after a confirmed deletion for reviewing the saved record. Live chat has a taller scroll area, and broadcast cards no longer display internal channel identifiers.
+
+Tests cover collapsed details, access to expanded results, changing execution outcomes, uncertainty notices, and system events without fabricated moderation results. Authenticated browser and responsive visual review remains pending.
+
 ## Remaining design work
 
-1. Live: make chat the main focus and move detailed model and execution explanations into expandable details.
+1. Live: simplify page-level monitoring controls and operational status explanations, then review the complete layout.
 2. History: simplify report hierarchy, filters, and action summaries.
 3. Moderation: simplify settings labels and explain when saved changes take effect.
 4. Review responsive layouts and the complete streamer workflow before final AI-quality evaluation.
