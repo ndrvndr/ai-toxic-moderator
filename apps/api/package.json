@@ -11,9 +11,9 @@
     "@moderator/contracts": "0.1.0",
     "@moderator/persistence": "0.1.0",
     "@moderator/provider-adapters": "^0.1.0",
-    "@nestjs/common": "12.0.1",
-    "@nestjs/core": "12.0.1",
-    "@nestjs/platform-express": "12.0.1",
+    "@nestjs/common": "12.1.2",
+    "@nestjs/core": "12.1.2",
+    "@nestjs/platform-express": "12.1.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.0",
     "ws": "^8.21.3"

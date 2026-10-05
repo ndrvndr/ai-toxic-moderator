@@ -566,6 +566,7 @@ readiness. Final demo threshold selection and verification remain pending.
 - [Moderation Settings](docs/moderation-settings.md)
 - [Moderation reconciliation](docs/moderation-reconciliation.md)
 - [Security checklist](docs/security-checklist.md)
+- [Local security audit and remaining release requirements](docs/security-audit-2026-10-05.md)
 - [Product direction](docs/spec/04-live-product-direction.md)
 - [Backlog](docs/spec/03-backlog.md)
 - [Verification records](docs/verification.md)

@@ -36,10 +36,15 @@ export async function createApi(config: AppConfig, pool?: DatabasePool) {
     logger: false,
     abortOnError: false,
   });
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
   app.use((request: ApiRequest, response: ApiResponse, next: () => void) => {
     request.traceId = randomUUID();
     response.setHeader('X-Request-Id', request.traceId);
     response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Frame-Options', 'DENY');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     const host = request.headers.host;
     const localPort = request.socket.localPort;
     const remote = request.socket.remoteAddress;
