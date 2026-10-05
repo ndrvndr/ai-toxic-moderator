@@ -11,7 +11,10 @@ deduplication, retry handling, and lease-based recovery.
 The dashboard supports authenticated WebSocket updates, rule-based classification,
 per-message moderation results, livestream history, and channel moderation Settings.
 The worker can plan and execute DELETE, TIMEOUT, and BAN actions with existing
-authorization and execution guards. AI model integration is not implemented yet.
+authorization and execution guards. Local AI inference, configurable severity
+thresholds, and automatic action planning are implemented. Model quality has been
+explored on 40 authored examples; safe and abusive scores overlap, so this is a
+portfolio prototype rather than a validated replacement for human moderators.
 
 ## Current capabilities
 
@@ -31,6 +34,11 @@ authorization and execution guards. AI model integration is not implemented yet.
 - Automatic deletion, repeated timeouts, permanent bans, and uncertain-outcome evidence.
 - Saved livestream history, chat filters, message statistics, and action statistics.
 - Versioned moderation Settings and immutable configuration snapshots per run.
+- Custom blocked words, phrases, and domains with independent action choices.
+- Local INT8 AI inference with pinned model identity and isolated native execution.
+- Automatic AI discovery for eligible monitoring runs and captured action thresholds.
+- AI operational status, bounded recovery, and separate planning/execution results.
+- English Overview, compact Live chat, and readable History reports and settings.
 
 A newly created run has status `STARTING`. The worker sets it to `RUNNING`
 after successfully persisting a polling batch, which may contain no messages.
@@ -48,6 +56,7 @@ API. Opening saved History does not start monitoring or contact YouTube for chat
 - **Database:** PostgreSQL with `pg` and explicit SQL migrations.
 - **Queue infrastructure:** Redis and BullMQ dependencies are available.
 - **Validation:** Zod.
+- **Local AI:** Transformers.js tokenizer and ONNX Runtime CPU inference.
 - **Tooling:** npm workspaces, TypeScript, Prettier, and import organization.
 
 The ingestion worker currently uses PostgreSQL monitoring runs as its persistent
@@ -208,6 +217,7 @@ Current routes include:
 
 - `/`: landing page.
 - `/login`: authentication.
+- `/overview`: authenticated workspace summary and shortcuts.
 - `/live`: live broadcast page within the dashboard shell.
 - `/history`: saved livestream sessions.
 - `/history/[sessionId]`: saved chat, classification reasons, and statistics.
@@ -442,15 +452,28 @@ request. This is one observation, not a performance guarantee.
 
 See [YouTube ingestion](docs/youtube-ingestion.md) for the verification scope.
 
-## Next steps
+## Portfolio status and limits
 
-Next, improve dashboard readability through the planned design revamp. AI
-inference, settings-driven action planning, operational status, and the scoped
-[worker resilience work](docs/worker-resilience.md) are implemented. AI quality
-evaluation remains deferred until after the design revamp; the initial dataset
-design is in the [AI classification plan](docs/ai-classification-plan.md).
-Integration/connection settings, remaining browser acceptance checks, and
-production security/deployment verification remain separate work.
+The planned dashboard redesign is complete with automated checks and
+developer-reported manual review. The local model ran on all 40 authored examples
+on 2026-10-05. At severity threshold 0.50 it selected ten of eleven abusive examples
+and one of twenty clear examples; at 0.56 it selected six abusive examples and no
+clear examples. Threats, ambiguous messages, and out-of-scope concerns were counted
+separately. These in-sample results are not independent accuracy estimates or
+recommended production defaults. See [AI quality results](docs/ai-quality-results.md).
+
+Portfolio strengths are the complete monitoring-to-report workflow, immutable
+per-run settings, configurable blacklist/AI policy, reconnect and replay handling,
+recovery, restricted database roles, and honest treatment of uncertain provider
+outcomes. Successful execution does not prove that a model's decision was correct.
+Toxicity scores do not establish spam, scam, or gambling-promotion detection.
+
+Use the [portfolio demo guide](docs/portfolio-demo.md) to prepare a repeatable
+demonstration. Final demo policy selection remains separate from the completed
+technical evaluation. Integration/connection settings and production
+security/deployment verification remain separate work. The application currently
+enforces local development boundaries; this README does not describe a public
+production deployment procedure.
 
 On October 3, 2026, the developer indicated successful Settings-driven DELETE,
 snapshot/restart, TIMEOUT, repeated-TIMEOUT, and BAN verification by continuing
@@ -463,6 +486,14 @@ readiness.
 
 ## Documentation
 
+- [Portfolio demo guide](docs/portfolio-demo.md)
+- [Dashboard redesign](docs/dashboard-redesign.md)
+- [AI quality evaluation](docs/ai-quality-evaluation.md)
+- [AI quality results](docs/ai-quality-results.md)
+- [Automatic AI monitoring](docs/automatic-ai-monitoring.md)
+- [AI moderation settings and planning](docs/ai-moderation.md)
+- [AI operational status](docs/ai-operational-status.md)
+- [Custom blacklist](docs/custom-blacklist.md)
 - [Worker resilience audit](docs/worker-resilience.md)
 - [AI classification plan](docs/ai-classification-plan.md)
 - [Development sessions](docs/dev-session-access.md)
