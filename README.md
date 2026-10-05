@@ -39,6 +39,9 @@ portfolio prototype rather than a validated replacement for human moderators.
 - Automatic AI discovery for eligible monitoring runs and captured action thresholds.
 - AI operational status, bounded recovery, and separate planning/execution results.
 - English Overview, compact Live chat, and readable History reports and settings.
+- Streamer-facing public homepage and server-managed AI model configuration.
+- Verified YouTube channel setup before starting monitoring.
+- Dashboard recovery during temporary API outages, including when monitoring is idle.
 
 A newly created run has status `STARTING`. The worker sets it to `RUNNING`
 after successfully persisting a polling batch, which may contain no messages.
@@ -114,15 +117,20 @@ The API, worker, and migration connections must target the same development
 database, using their respective roles. The test connection must support the
 temporary schemas and roles used by integration tests.
 
-Apply migrations and create the foundation fixtures:
+Apply migrations:
 
 ```powershell
 npm run db:migrate
-npm run db:seed
 ```
 
-The seed creates synthetic foundation data. It does not enable a functioning
-moderation ruleset or classifier.
+Google OAuth setup does not require seed data. For optional foundation fixtures or
+development login with the default test account, run `npm run db:seed` separately.
+The seed creates synthetic data; it does not set up a real YouTube channel or
+enable moderation.
+
+See the [environment variable reference](docs/environment.md) for all supported
+application, database, dashboard, and optional test settings. Compose database
+owner credentials are defined in `compose.yaml`; the root `.env` does not change them.
 
 ## Runtime database roles
 
@@ -223,6 +231,16 @@ Current routes include:
 - `/history/[sessionId]`: saved chat, classification reasons, and statistics.
 - `/settings/moderation`: channel action preferences and settings revisions.
 
+The dashboard defaults to API address `http://127.0.0.1:3001`. If it changes, set
+`NEXT_PUBLIC_API_URL` in `apps/dashboard/.env.local` or the terminal environment
+before starting Next.js. Next.js does not automatically read the repository-root
+`.env`. This browser-visible variable must never contain credentials.
+
+A previously verified dashboard stays open during temporary API failures and
+retries session verification automatically. Reloading while the API is offline
+requires a fresh verification and displays an unavailable-session page until the
+API returns. This does not depend on monitoring being active.
+
 ### Ingestion worker
 
 Configure:
@@ -252,6 +270,39 @@ waits for the cycle to settle, and closes the database pool.
 
 See [YouTube ingestion](docs/youtube-ingestion.md) for configuration and
 verification details.
+
+### Local AI and automatic actions
+
+Prepare the local model artifacts before enabling automatic AI:
+
+```powershell
+node scripts/ai-prototype.mjs download
+```
+
+This explicit setup downloads the model. The worker itself does not download
+artifacts. Copy the exact `revision` value from `.cache/ai-prototype/manifest.json`
+into `AI_SHADOW_MODEL_REVISION`; do not enter the manifest path. The API and worker
+must use the same revision. Model ID, adapter version, and INT8 variant are managed
+by the application rather than streamer input fields.
+
+```dotenv
+AI_AUTOMATIC_ENABLED=true
+AI_SHADOW_MODEL_REVISION=<40-character revision from the manifest>
+AI_SHADOW_CACHE_DIRECTORY=.cache/ai-prototype
+YOUTUBE_DELETE_ENABLED=true
+YOUTUBE_BAN_ENABLED=true
+```
+
+`WORKER_ENABLED` and `GOOGLE_AUTH_ENABLED` must also be enabled and configured.
+The action switches permit real requests: save the desired blocked-word rules
+and AI action limits in Moderation before starting a new monitoring run. These
+settings are captured per run; changing them does not modify an existing run.
+Keep executor switches off when testing inference without provider actions.
+Automatic AI currently supports one eligible run at a time.
+
+Manual AI and controlled author/session test scopes are optional development
+tools. They remain supported but are intentionally omitted from the normal
+`.env.example` workflow; see [optional test settings](docs/environment.md#optional-development-test-settings).
 
 ## Monitoring lifecycle
 
@@ -371,6 +422,13 @@ npm run test:youtube-chat-adapter
 npm run test:ingestion-integration
 ```
 
+Run dashboard component and live protocol checks:
+
+```powershell
+npm run test:live-hooks
+npm run test:live-event-protocol
+```
+
 Database tests require `TEST_DATABASE_URL` pointing to local PostgreSQL.
 They create temporary schemas and, where needed, temporary runtime roles.
 
@@ -481,12 +539,13 @@ snapshot/restart, TIMEOUT, repeated-TIMEOUT, and BAN verification by continuing
 after each procedure. See [historical verification notes](docs/archive/built-in-moderation-settings.md) for
 the reported outcomes and evidence limits. The assistant did not run those checks.
 
-Built-in rule enforcement is retired. AI accuracy and performance
-have not been measured, and these development checks do not establish production
-readiness.
+Built-in rule enforcement is retired. The authored-example AI measurements above
+do not establish independent accuracy, production throughput, or production
+readiness. Final demo threshold selection and verification remain pending.
 
 ## Documentation
 
+- [Environment variable reference](docs/environment.md)
 - [Portfolio demo guide](docs/portfolio-demo.md)
 - [Dashboard redesign](docs/dashboard-redesign.md)
 - [AI quality evaluation](docs/ai-quality-evaluation.md)
