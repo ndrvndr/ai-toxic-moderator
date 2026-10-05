@@ -48,7 +48,7 @@ export function HistorySearchForm({ search, status }: HistorySearchFormProps) {
     <form
       role="search"
       aria-label="Search livestream history"
-      className="space-y-4"
+      className="space-y-4 rounded-xl border bg-muted/20 p-5"
       onSubmit={(event) => {
         event.preventDefault();
         navigate(value.trim(), selectedStatus);
@@ -110,8 +110,7 @@ export function HistorySearchForm({ search, status }: HistorySearchFormProps) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Filter accessible saved sessions by title and latest monitoring status. Select Apply filters
-        to update the results.
+        Find a stream by title or monitoring status, then select Apply filters.
       </p>
     </form>
   );

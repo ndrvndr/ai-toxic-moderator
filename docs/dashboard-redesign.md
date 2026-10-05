@@ -34,11 +34,21 @@ Each message shows short, separate summaries for rule checks, blocked-word match
 
 Tests cover collapsed details, access to expanded results, changing execution outcomes, uncertainty notices, and system events without fabricated moderation results. Authenticated browser and responsive visual review remains pending.
 
+## History reports
+
+History uses a clearer search area, monitoring status labels, saved dates, and “View report” links. A report groups the stream heading, chat summary, confirmed moderation actions, and saved messages.
+
+Message counts explicitly describe rule checks. An allowed rule classification is not presented as a guarantee that no AI or blacklist action occurred. Flagged reasons expand on demand.
+
+Action cards highlight successful deletions, timeout requests, and ban requests. Uncertain and awaiting outcomes remain visible outside the expandable “All outcomes” breakdown. Repeated timeouts count requests rather than unique viewers; confirmations do not imply that restrictions remain active. No statistics endpoints or counting rules were changed.
+
+Dashboard tests cover confirmed-only highlights, changing counts, uncertain result warnings, access failures with cached data, temporary failure retries, and stream report navigation.
+
 ## Remaining design work
 
 Live monitoring controls now sit next to the session status. The copy explains that stopping monitoring does not end the YouTube livestream and that settings changes apply to the next session. AI status descriptions use streamer-facing language; diagnostic codes remain inside closed technical details. AI availability continues to be separate from successful moderation outcomes.
 
 1. Review the Live layout with an authenticated account on desktop and mobile.
-2. History: simplify report hierarchy, filters, and action summaries.
+2. Review History reports with real saved streams on desktop and mobile.
 3. Moderation: simplify settings labels and explain when saved changes take effect.
 4. Review responsive layouts and the complete streamer workflow before final AI-quality evaluation.

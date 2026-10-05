@@ -53,16 +53,19 @@ export function HistoryStatisticsPanel({ accountId, sessionId }: HistoryStatisti
   const data = statistics.data;
   const metrics = [
     { label: 'Total messages', value: data.total_messages },
-    { label: 'Allowed', value: data.allowed_messages },
-    { label: 'Flagged', value: data.flagged_messages },
-    { label: 'Evaluation errors', value: data.error_messages },
-    { label: 'Not evaluated', value: data.unevaluated_messages },
+    { label: 'Allowed by rules', value: data.allowed_messages },
+    { label: 'Flagged by rules', value: data.flagged_messages },
+    { label: 'Checks failed', value: data.error_messages },
+    { label: 'Not checked by rules', value: data.unevaluated_messages },
   ];
 
   return (
-    <section aria-label="Message statistics" className="space-y-4">
+    <section
+      aria-label="Message statistics"
+      className="space-y-5 rounded-2xl border bg-card p-5 sm:p-6"
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Message statistics</h2>
+        <h2 className="text-lg font-semibold">Your chat at a glance</h2>
 
         <Button
           variant="outline"
@@ -75,7 +78,7 @@ export function HistoryStatisticsPanel({ accountId, sessionId }: HistoryStatisti
 
       <dl className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {metrics.map((metric) => (
-          <div key={metric.label} className="rounded-lg border bg-card p-4">
+          <div key={metric.label} className="rounded-xl bg-muted/40 p-4">
             <dt className="text-sm text-muted-foreground">{metric.label}</dt>
             <dd className="mt-2 text-2xl font-semibold tabular-nums">
               {metric.value.toLocaleString('en-US')}
@@ -84,15 +87,21 @@ export function HistoryStatisticsPanel({ accountId, sessionId }: HistoryStatisti
         ))}
       </dl>
 
-      <HistoryFlaggedReasons reasons={data.flagged_reasons} />
+      <p className="text-xs leading-5 text-muted-foreground">
+        These counts cover saved text messages and their rule checks. AI ratings and action results
+        are separate; “allowed by rules” does not mean no action was taken.
+      </p>
+      <details className="rounded-lg border p-4">
+        <summary className="cursor-pointer text-sm font-medium">Why messages were flagged</summary>
+        <div className="mt-4">
+          <HistoryFlaggedReasons reasons={data.flagged_reasons} />
+        </div>
+      </details>
 
       <div className="space-y-1 text-xs text-muted-foreground">
         <p>
-          Counts cover unique text messages stored during monitoring. Moderation events are
-          excluded. Flagged includes messages requiring review or action.
-        </p>
-        <p>
-          Statistics update when live chat updates are received. You can also refresh them manually.
+          Each saved text message is counted once. YouTube system events are excluded. Counts
+          refresh when chat updates arrive.
         </p>
         <p>
           Last updated:{' '}

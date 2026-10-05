@@ -23,9 +23,9 @@ export function HistoryPage({ search = '', status = '' }: HistoryPageProps) {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <header className="space-y-2">
-        <h1 className="text-2xl font-semibold">Livestream history</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Livestream history</h1>
         <p className="text-sm text-muted-foreground">
-          Browse saved monitoring sessions and review their stored chat and moderation results.
+          Look back at your streams. See what your viewers said and how moderation handled it.
         </p>
       </header>
 

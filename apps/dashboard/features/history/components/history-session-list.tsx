@@ -61,7 +61,7 @@ export function HistorySessionList({ accountId, search = '', status }: HistorySe
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          Opening a saved session does not start monitoring.
+          Newest saved streams first. Viewing a report does not start monitoring.
         </p>
 
         <Button
@@ -74,7 +74,7 @@ export function HistorySessionList({ accountId, search = '', status }: HistorySe
       </div>
 
       {items.length === 0 ? (
-        <div className="space-y-2 rounded-lg border border-dashed p-6">
+        <div className="space-y-2 rounded-xl border border-dashed p-8">
           <h2 className="font-medium">
             {hasFilters ? 'No matching sessions' : 'No saved sessions yet'}
           </h2>

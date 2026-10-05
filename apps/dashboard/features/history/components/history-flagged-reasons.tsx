@@ -17,8 +17,8 @@ export function HistoryFlaggedReasons({ reasons }: { reasons: FlaggedReasons }) 
       <h3 className="font-semibold">Flagged message reasons</h3>
 
       <p className="text-sm text-muted-foreground">
-        Grouped by primary category and reason from the latest evaluation. Detailed explanations are
-        available on individual chat messages.
+        The reasons your rule checks flagged messages. Open a message’s moderation details for its
+        full explanation.
       </p>
 
       {reasons.length === 0 ? (

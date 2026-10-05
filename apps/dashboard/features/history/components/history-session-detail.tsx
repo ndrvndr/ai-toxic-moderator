@@ -57,18 +57,27 @@ export function HistorySessionDetail({ accountId, sessionId }: HistorySessionDet
 
   return (
     <div className="space-y-6">
-      <header className="space-y-2">
-        <h1 className="wrap-break-word text-2xl font-semibold">
+      <header className="space-y-3 rounded-2xl border bg-muted/20 p-6">
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          Stream report
+        </p>
+        <h1 className="wrap-break-word text-3xl font-semibold tracking-tight">
           {saved.title || 'Untitled livestream'}
         </h1>
 
         <p className="text-sm text-muted-foreground">
           Saved{' '}
-          <time dateTime={saved.created_at}>{new Date(saved.created_at).toLocaleString()}</time>
+          <time dateTime={saved.created_at}>
+            {new Date(saved.created_at).toLocaleString('en-US', {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            })}
+          </time>
         </p>
 
         <p className="text-sm text-muted-foreground">
-          Review stored chat and moderation results. Opening this page does not start monitoring.
+          Review the chat and moderation results saved for this stream. Viewing this report does not
+          start monitoring.
         </p>
       </header>
 
@@ -80,7 +89,7 @@ export function HistorySessionDetail({ accountId, sessionId }: HistorySessionDet
 
       <HistoryActionStatisticsPanel accountId={accountId} sessionId={saved.session_id} />
 
-      <section aria-label="Saved session chat" className="rounded-lg border p-5">
+      <section aria-label="Saved session chat" className="rounded-2xl border p-5 sm:p-6">
         <SavedSessionViewer
           key={`${accountId}:${saved.session_id}`}
           accountId={accountId}
