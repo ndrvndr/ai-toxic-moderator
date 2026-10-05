@@ -1,8 +1,9 @@
 import { apiRequest } from '@/lib/api-client';
 import {
+  aiModerationPreferences,
+  aiModerationPreferencesUpdate,
   aiModerationSettingsResponse,
-  aiModerationSettingsUpdate,
-  type AiModerationSettingsUpdate,
+  type AiModerationPreferencesUpdate,
 } from '@moderator/contracts';
 
 function path(channelId: string) {
@@ -23,9 +24,9 @@ export async function getAiModerationSettings(channelId: string, signal: AbortSi
 
 export async function saveAiModerationSettings(
   channelId: string,
-  input: AiModerationSettingsUpdate,
+  input: AiModerationPreferencesUpdate,
 ) {
-  const update = aiModerationSettingsUpdate.parse(input);
+  const update = aiModerationPreferencesUpdate.parse(input);
   const record = result(
     channelId,
     await apiRequest(path(channelId), {
@@ -33,10 +34,13 @@ export async function saveAiModerationSettings(
       body: JSON.stringify(update),
     }),
   );
+  if (!record || record.revision !== update.expected_revision + 1) {
+    throw new Error('Unexpected AI settings save result.');
+  }
+  const { model, ...preferences } = record.configuration;
   if (
-    !record ||
-    record.revision !== update.expected_revision + 1 ||
-    JSON.stringify(record.configuration) !== JSON.stringify(update.configuration)
+    JSON.stringify(aiModerationPreferences.parse(preferences)) !==
+    JSON.stringify(update.configuration)
   ) {
     throw new Error('Unexpected AI settings save result.');
   }

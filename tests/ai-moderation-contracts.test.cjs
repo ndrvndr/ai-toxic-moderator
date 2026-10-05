@@ -9,7 +9,29 @@ const {
   aiModerationSettingsRecord,
   aiModerationSettingsResponse,
   aiModerationSettingsSnapshot,
+  aiModerationPreferencesUpdate,
 } = source('packages/contracts/src/ai-moderation-settings.ts');
+
+test('streamer preferences exclude model overrides and retain tier validation', () => {
+  const { model, ...preferences } = configuration();
+  const input = { expected_revision: 0, configuration: preferences };
+  assert.deepEqual(aiModerationPreferencesUpdate.parse(input), input);
+  assert.equal(
+    aiModerationPreferencesUpdate.safeParse({ ...input, configuration: { ...preferences, model } })
+      .success,
+    false,
+  );
+  assert.equal(
+    aiModerationPreferencesUpdate.safeParse({
+      ...input,
+      configuration: {
+        ...preferences,
+        timeout: { ...preferences.timeout, threshold: preferences.delete.threshold },
+      },
+    }).success,
+    false,
+  );
+});
 
 // Fixture values exercise validation; they are not calibrated enforcement defaults.
 function configuration() {

@@ -3,7 +3,9 @@
 The Settings page at `/settings/moderation` has two sections:
 
 - **Blocked words:** streamer-defined words, phrases, and domains. Each match deletes the message and can also select a timeout or ban.
-- **AI action limits:** local model identity, enabled actions, severity thresholds, and timeout duration.
+- **AI action limits:** enabled actions, severity thresholds, and timeout duration. The application supplies model identity; streamers do not configure model details.
+
+AI settings writes accept action preferences without a `model` field. The API attaches the supported model ID, INT8 variant, adapter version, and `AI_SHADOW_MODEL_REVISION` from its server configuration. Browser-supplied model overrides are rejected. Saved records and run snapshots retain their complete model identity for audit and matching; previous records are not rewritten. API and worker must use the same pinned revision. Missing server model configuration returns `AI_MODEL_NOT_CONFIGURED` without saving a revision.
 
 ## Channel setup before streaming
 

@@ -19,33 +19,54 @@ const tier = {
   threshold: aiModerationThreshold,
 };
 
-export const aiModerationSettingsConfiguration = z
-  .strictObject({
-    schema_version: z.literal(1),
-    automatic_actions_enabled: z.boolean(),
-    model: aiModerationModelIdentity,
-    score_metric: z.literal('EXPECTED_SEVERITY'),
-    delete: z.strictObject(tier),
-    timeout: z.strictObject({ ...tier, duration_seconds: moderationTimeoutDuration }),
-    ban: z.strictObject(tier),
-  })
-  .superRefine((configuration, context) => {
-    // Staged tiers must remain ordered even while enforcement or a tier is disabled.
-    if (configuration.delete.threshold >= configuration.timeout.threshold) {
-      context.addIssue({
-        code: 'custom',
-        path: ['timeout', 'threshold'],
-        message: 'Timeout threshold must be greater than delete threshold.',
-      });
-    }
-    if (configuration.timeout.threshold >= configuration.ban.threshold) {
-      context.addIssue({
-        code: 'custom',
-        path: ['ban', 'threshold'],
-        message: 'Ban threshold must be greater than timeout threshold.',
-      });
-    }
-  });
+const configurationBase = z.strictObject({
+  schema_version: z.literal(1),
+  automatic_actions_enabled: z.boolean(),
+  model: aiModerationModelIdentity,
+  score_metric: z.literal('EXPECTED_SEVERITY'),
+  delete: z.strictObject(tier),
+  timeout: z.strictObject({ ...tier, duration_seconds: moderationTimeoutDuration }),
+  ban: z.strictObject(tier),
+});
+
+function validateThresholdOrder(
+  configuration: {
+    delete: { threshold: number };
+    timeout: { threshold: number };
+    ban: { threshold: number };
+  },
+  context: z.RefinementCtx,
+) {
+  // Staged tiers must remain ordered even while enforcement or a tier is disabled.
+  if (configuration.delete.threshold >= configuration.timeout.threshold) {
+    context.addIssue({
+      code: 'custom',
+      path: ['timeout', 'threshold'],
+      message: 'Timeout threshold must be greater than delete threshold.',
+    });
+  }
+  if (configuration.timeout.threshold >= configuration.ban.threshold) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ban', 'threshold'],
+      message: 'Ban threshold must be greater than timeout threshold.',
+    });
+  }
+}
+
+export const aiModerationSettingsConfiguration =
+  configurationBase.superRefine(validateThresholdOrder);
+
+// Streamers choose actions. The API supplies the model identity when saving.
+export const aiModerationPreferences = configurationBase
+  .omit({ model: true })
+  .superRefine(validateThresholdOrder);
+export const aiModerationPreferencesUpdate = z.strictObject({
+  expected_revision: z.number().int().nonnegative().safe(),
+  configuration: aiModerationPreferences,
+});
+export type AiModerationPreferences = z.infer<typeof aiModerationPreferences>;
+export type AiModerationPreferencesUpdate = z.infer<typeof aiModerationPreferencesUpdate>;
 
 // Zero means no stored settings exist; later writes use the revision last read.
 export const aiModerationSettingsUpdate = z.strictObject({

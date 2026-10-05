@@ -63,7 +63,10 @@ beforeEach(() => {
     const channel = path.split('/')[3]!.toLowerCase();
     if (options?.method === 'POST') {
       const input = JSON.parse(options.body as string);
-      const saved = record(channel, input.expected_revision + 1, input.configuration);
+      const saved = record(channel, input.expected_revision + 1, {
+        ...input.configuration,
+        model: configuration.model,
+      });
       records.set(channel, saved);
       return { settings: saved };
     }
@@ -84,6 +87,10 @@ function editor(canEdit = true, channel = channelId, account = accountId) {
     canEdit,
   });
 }
+function preferences(config: AiModerationSettingsConfiguration) {
+  const { model, ...input } = config;
+  return input;
+}
 const posts = () =>
   vi.mocked(apiRequest).mock.calls.filter(([, options]) => options?.method === 'POST');
 function change(label: string, value: string) {
@@ -93,9 +100,6 @@ function save() {
   fireEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
 }
 function fill() {
-  change('AI model ID', configuration.model.model_id);
-  change('AI model revision', configuration.model.model_revision);
-  change('AI adapter version', configuration.model.adapter_version);
   change('Delete threshold', '0.6');
   change('Timeout threshold', '0.8');
   change('Ban threshold', '0.95');
@@ -103,15 +107,8 @@ function fill() {
 
 it('selects all new AI actions without implicit thresholds and saves an explicit scoped configuration', async () => {
   render(editor(), { wrapper });
-  await screen.findByText(
-    'No AI settings saved yet. Complete the one-time model setup and choose your action limits before saving.',
-  );
-  for (const label of [
-    'Delete threshold',
-    'Timeout threshold',
-    'Ban threshold',
-    'AI model revision',
-  ]) {
+  await screen.findByText('No AI settings saved yet. Choose your action limits before saving.');
+  for (const label of ['Delete threshold', 'Timeout threshold', 'Ban threshold']) {
     expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe('');
   }
   for (const label of [
@@ -128,9 +125,12 @@ it('selects all new AI actions without implicit thresholds and saves an explicit
   await screen.findByText('AI settings revision 1 saved.');
   const input = JSON.parse(posts()[0]![1]!.body as string);
   expect(input.expected_revision).toBe(0);
+  expect(input.configuration).not.toHaveProperty('model');
+  for (const label of ['AI model ID', 'AI model revision', 'AI adapter version'])
+    expect(screen.queryByLabelText(label)).toBeNull();
+  expect(screen.queryByText(/Model variant/)).toBeNull();
   expect(input.configuration).toMatchObject({
     automatic_actions_enabled: true,
-    model: configuration.model,
     delete: { enabled: true, threshold: 0.6 },
     timeout: { enabled: true, threshold: 0.8, duration_seconds: 60 },
     ban: { enabled: true, threshold: 0.95 },
@@ -169,14 +169,12 @@ it('preserves disabled saved actions instead of applying new-channel defaults', 
 
 it('explains an incomplete first save near the save button and focuses the error without sending HTTP', async () => {
   render(editor(), { wrapper });
-  await screen.findByText(
-    'No AI settings saved yet. Complete the one-time model setup and choose your action limits before saving.',
-  );
+  await screen.findByText('No AI settings saved yet. Choose your action limits before saving.');
   const button = screen.getByRole('button', { name: 'Save AI settings' }) as HTMLButtonElement;
   expect(button.disabled).toBe(false);
   save();
   const alert = screen.getByRole('alert');
-  expect(alert.textContent).toContain('model.model_id');
+  expect(alert.textContent).toContain('delete.threshold');
   expect(document.activeElement).toBe(alert);
   const form = button.closest('form')!;
   const controls = form.querySelector('fieldset')!;
@@ -203,7 +201,8 @@ it('preserves model identity, disables saved AI policy, and uses each newly retu
   const first = JSON.parse(posts()[0]![1]!.body as string);
   expect(first.expected_revision).toBe(4);
   expect(first.configuration.automatic_actions_enabled).toBe(false);
-  expect(first.configuration.model).toEqual(configuration.model);
+  expect(first.configuration).not.toHaveProperty('model');
+  expect(records.get(channelId)?.configuration.model).toEqual(configuration.model);
   fireEvent.click(screen.getByLabelText('Allow AI ban'));
   save();
   await screen.findByText('AI settings revision 6 saved.');
@@ -217,7 +216,6 @@ it.each([
   ['Ban threshold', '1.1', 'ban.threshold'],
   ['AI timeout seconds', '0', 'timeout.duration_seconds'],
   ['AI timeout seconds', '1.5', 'timeout.duration_seconds'],
-  ['AI model revision', 'main', 'model.model_revision'],
 ])('validates %s = %s before HTTP', async (label, value, path) => {
   records.set(channelId, record());
   render(editor(), { wrapper });
@@ -348,7 +346,9 @@ it('blocks duplicate submissions while a save is pending', async () => {
   fireEvent.submit(screen.getByLabelText('Timeout threshold').closest('form')!);
   expect(posts()).toHaveLength(1);
   const submitted = JSON.parse(posts()[0]![1]!.body as string);
-  resolveSave({ settings: record(channelId, 2, submitted.configuration) });
+  resolveSave({
+    settings: record(channelId, 2, { ...submitted.configuration, model: configuration.model }),
+  });
   await screen.findByText('AI settings revision 2 saved.');
 });
 
@@ -359,12 +359,49 @@ it('rejects a response for another channel and refuses unexpected save revisions
   );
   vi.mocked(apiRequest).mockResolvedValue({ settings: record(channelId, 4) });
   await expect(
-    saveAiModerationSettings(channelId, { expected_revision: 0, configuration }),
+    saveAiModerationSettings(channelId, {
+      expected_revision: 0,
+      configuration: preferences(configuration),
+    }),
   ).rejects.toThrow('Unexpected AI settings save result');
   vi.mocked(apiRequest).mockResolvedValue({
     settings: record(channelId, 1, { ...configuration, automatic_actions_enabled: true }),
   });
   await expect(
-    saveAiModerationSettings(channelId, { expected_revision: 0, configuration }),
+    saveAiModerationSettings(channelId, {
+      expected_revision: 0,
+      configuration: preferences(configuration),
+    }),
   ).rejects.toThrow('Unexpected AI settings save result');
+});
+
+it('loads historical model settings and accepts the server model on a new save without technical controls', async () => {
+  const old = {
+    ...configuration,
+    model: { ...configuration.model, model_revision: 'a'.repeat(40) },
+  };
+  records.set(channelId, record(channelId, 4, old));
+  render(editor(), { wrapper });
+  await screen.findByText('Saved AI revision: 4.');
+  expect(screen.queryByLabelText('AI model revision')).toBeNull();
+  change('Timeout threshold', '0.85');
+  save();
+  await screen.findByText('AI settings revision 5 saved.');
+  expect(records.get(channelId)?.configuration.model).toEqual(configuration.model);
+  expect(JSON.parse(posts()[0]![1]!.body as string).configuration).not.toHaveProperty('model');
+});
+
+it('explains missing application AI setup while retaining action preferences', async () => {
+  vi.mocked(apiRequest).mockImplementation(async (_path, options) => {
+    if (options?.method === 'POST') throw new ApiError(503, 'AI_MODEL_NOT_CONFIGURED');
+    return { settings: null };
+  });
+  render(editor(), { wrapper });
+  await screen.findByText('No AI settings saved yet. Choose your action limits before saving.');
+  fill();
+  save();
+  await screen.findByText(/AI setup is not ready. Contact the app administrator/);
+  expect((screen.getByLabelText('Timeout threshold') as HTMLInputElement).value).toBe('0.8');
+  expect(screen.queryByLabelText('AI model ID')).toBeNull();
+  expect(posts()).toHaveLength(1);
 });

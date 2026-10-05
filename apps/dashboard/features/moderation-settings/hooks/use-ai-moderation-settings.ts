@@ -2,7 +2,7 @@
 
 import { SESSION_QUERY_KEY } from '@/features/auth/hooks/use-session';
 import { ApiError } from '@/lib/api-client';
-import type { AiModerationSettingsUpdate } from '@moderator/contracts';
+import type { AiModerationPreferencesUpdate } from '@moderator/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getAiModerationSettings,
@@ -43,7 +43,8 @@ export function useSaveAiModerationSettings(accountId: string, channelId: string
   const key = aiModerationSettingsKey(accountId, channelId);
   return useMutation({
     mutationKey: ['save-ai-moderation-settings', accountId, channelId.toLowerCase()],
-    mutationFn: (input: AiModerationSettingsUpdate) => saveAiModerationSettings(channelId, input),
+    mutationFn: (input: AiModerationPreferencesUpdate) =>
+      saveAiModerationSettings(channelId, input),
     retry: false,
     onSuccess: async (record) => {
       await client.cancelQueries({ queryKey: key, exact: true });

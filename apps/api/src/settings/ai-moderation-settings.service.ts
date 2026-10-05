@@ -1,12 +1,19 @@
 import {
+  LASKAR_ADAPTER_VERSION,
+  LASKAR_MODEL_ID,
+  LASKAR_MODEL_VARIANT,
+  type AppConfig,
+} from '@moderator/config';
+import {
+  aiModerationModelIdentity,
+  aiModerationPreferencesUpdate,
   aiModerationSettingsResponse,
-  aiModerationSettingsUpdate,
   uuid,
 } from '@moderator/contracts';
 import type { PoolClient } from '@moderator/persistence';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../database.module';
+import { APP_CONFIG, DatabaseService } from '../database.module';
 import { failure } from '../http';
 import {
   AiModerationSettingsConflict,
@@ -17,7 +24,10 @@ import {
 export class AiModerationSettingsService {
   private readonly store: AiModerationSettingsStore;
 
-  constructor(private readonly database: DatabaseService) {
+  constructor(
+    private readonly database: DatabaseService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+  ) {
     this.store = new AiModerationSettingsStore(database.pool);
   }
 
@@ -30,7 +40,7 @@ export class AiModerationSettingsService {
   async save(accountId: string, channelId: string, body: unknown) {
     const channel = this.channel(channelId);
     await this.requireAccess(accountId, channel, true);
-    const parsed = aiModerationSettingsUpdate.safeParse(body);
+    const parsed = aiModerationPreferencesUpdate.safeParse(body);
     if (!parsed.success) {
       throw failure(
         422,
@@ -39,9 +49,27 @@ export class AiModerationSettingsService {
         parsed.error.issues.map((issue) => ({ field: issue.path.join('.'), code: issue.code })),
       );
     }
+    const model = aiModerationModelIdentity.safeParse({
+      model_id: LASKAR_MODEL_ID,
+      model_revision: this.config.AI_SHADOW_MODEL_REVISION,
+      model_variant: LASKAR_MODEL_VARIANT,
+      adapter_version: LASKAR_ADAPTER_VERSION,
+    });
+    if (!model.success)
+      throw failure(
+        503,
+        'AI_MODEL_NOT_CONFIGURED',
+        'The application AI model has not been configured.',
+      );
     try {
-      const settings = await this.store.save(channel, accountId, parsed.data, (client) =>
-        this.requireAccess(accountId, channel, true, client),
+      const settings = await this.store.save(
+        channel,
+        accountId,
+        {
+          ...parsed.data,
+          configuration: { ...parsed.data.configuration, model: model.data },
+        },
+        (client) => this.requireAccess(accountId, channel, true, client),
       );
       return aiModerationSettingsResponse.parse({ settings });
     } catch (error) {

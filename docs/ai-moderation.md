@@ -10,7 +10,7 @@ The contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They a
 
 ## Configuration contract
 
-Every configuration requires:
+Every stored configuration requires:
 
 - `schema_version: 1` and an explicit `automatic_actions_enabled` boolean.
 - `model`: exact `model_id`, 40-character hexadecimal `model_revision`, `model_variant: "INT8"`, and `adapter_version`.
@@ -20,9 +20,9 @@ Every configuration requires:
 
 Thresholds must satisfy `delete < timeout < ban`, including when enforcement or individual tiers are disabled. Equal thresholds, crossed thresholds, numeric strings, non-finite numbers, and unknown fields are rejected. The endpoints 0 and 1 are valid if ordering is preserved.
 
-No fields silently enable enforcement or supply calibrated threshold defaults. Initial settings should have enforcement disabled and AI ban disabled. An explicit configuration may enable individual tiers independently.
+No fields silently supply calibrated threshold defaults. New dashboard drafts preselect AI and each action, as requested for the portfolio demo; nothing is saved until the streamer provides ordered thresholds and clicks Save. Saved disabled actions remain disabled. An explicit configuration may enable individual tiers independently.
 
-The update contract requires `expected_revision`: zero for the first write, or the revision last read for later writes. Clients cannot provide channel ownership or record metadata. The record contract requires server-assigned identity, channel, author, creation time, and a positive revision. Responses represent missing settings as `{ "settings": null }`.
+The public `aiModerationPreferencesUpdate` contract requires `expected_revision`: zero for the first write, or the revision last read for later writes. Its configuration excludes `model`; the API supplies that identity. The full `aiModerationSettingsUpdate` remains the persistence contract for settings stores. Clients cannot provide model overrides, channel ownership, or record metadata. The record contract requires server-assigned identity, channel, author, creation time, and a positive revision. Responses represent missing settings as `{ "settings": null }`.
 
 ## Decision flow
 
@@ -39,7 +39,7 @@ Built-in rules and blacklist handling remain independent of AI availability. A c
 
 ## Calibration and verification
 
-The prototype showed overlapping scores for safe and abusive examples. Contract validation establishes valid configuration structure, not model accuracy or safe enforcement thresholds. Automatic AI ban stays disabled in initial settings; enabling it requires an explicit setting and separate verification.
+The prototype showed overlapping scores for safe and abusive examples. Contract validation establishes valid configuration structure, not model accuracy or safe enforcement thresholds. Enabling automatic actions requires an explicit saved setting and separate verification.
 
 Run the checks manually, using a local admin-capable `TEST_DATABASE_URL` for persistence tests:
 
@@ -115,7 +115,9 @@ Open `/settings/moderation`, select an accessible channel, and use **AI moderati
 
 The form provides a global AI action switch, independent delete/timeout/ban switches, thresholds in the range 0–1, and timeout duration. New forms start with the global switch and all three actions selected, while thresholds and model fields remain blank. Existing saved switch values are preserved, including disabled actions. The staged timeout duration starts at 30 seconds; it is not a calibrated AI threshold. No revision exists until a valid configuration is explicitly saved. Preselected controls do not enable worker executors or apply a policy to an active run.
 
-Expand **Model identity** to enter the exact model ID, revision, and adapter version. For the current local prototype, read `modelId` and `revision` from `.cache/ai-prototype/manifest.json`. Use the adapter version recorded by the worker; the current Laskar adapter exports `laskar-shadow-1`. The variant is INT8. Saved model fields are retained when editing thresholds. Changing the model identity requires reviewing threshold behavior again.
+There are no model setup inputs in Moderation. The API fills model identity from application constants and its `AI_SHADOW_MODEL_REVISION` configuration when saving action preferences. Configure the same pinned revision for API and worker; the current prototype manifest at `.cache/ai-prototype/manifest.json` records the downloaded revision. Model ID, INT8 variant, and adapter version are shared with the worker adapter. Streamers choose only AI enablement, actions, thresholds, and timeout duration. Requests containing model overrides are rejected, and missing server configuration prevents a save with `AI_MODEL_NOT_CONFIGURED`.
+
+Saved records and run snapshots still retain full model identity. Older settings load normally; saving creates a new immutable revision using the current server model without rewriting previous settings or active run snapshots. Review threshold behavior when the administrator changes the model. No database migration is required.
 
 Every tier still needs a valid threshold while disabled, and the timeout duration is required while its tier is disabled. This preserves a valid staged configuration. Client validation rejects empty numeric fields instead of interpreting them as zero, and uses the same shared contract as the API.
 

@@ -1,12 +1,8 @@
-import type {
-  AiModerationModelIdentity,
-  AiModerationSettingsConfiguration,
-} from '@moderator/contracts';
+import type { AiModerationSettingsConfiguration } from '@moderator/contracts';
 
 export type AiTierDraft = { enabled: boolean; threshold: string };
 export type AiModerationDraft = {
   automatic_actions_enabled: boolean;
-  model: AiModerationModelIdentity;
   delete: AiTierDraft;
   timeout: AiTierDraft & { duration_seconds: string };
   ban: AiTierDraft;
@@ -17,14 +13,6 @@ export function toAiModerationDraft(
 ): AiModerationDraft {
   return {
     automatic_actions_enabled: configuration?.automatic_actions_enabled ?? true,
-    model: configuration
-      ? { ...configuration.model }
-      : {
-          model_id: '',
-          model_revision: '',
-          model_variant: 'INT8',
-          adapter_version: '',
-        },
     delete: {
       enabled: configuration?.delete.enabled ?? true,
       threshold: configuration ? String(configuration.delete.threshold) : '',
@@ -48,7 +36,6 @@ export function aiModerationDraftInput(draft: AiModerationDraft) {
   return {
     schema_version: 1,
     automatic_actions_enabled: draft.automatic_actions_enabled,
-    model: draft.model,
     score_metric: 'EXPECTED_SEVERITY',
     delete: { enabled: draft.delete.enabled, threshold: numericInput(draft.delete.threshold) },
     timeout: {

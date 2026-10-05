@@ -6,6 +6,9 @@ const { Client, Pool } = require('pg');
 const { createApi } = require('../apps/api/dist/app');
 const { loadConfig } = require('@moderator/config');
 const { aiModerationSettingsResponse } = require('@moderator/contracts');
+const {
+  AiModerationSettingsService,
+} = require('../apps/api/dist/settings/ai-moderation-settings.service');
 
 const schema = `ai_settings_http_${randomUUID().replaceAll('-', '')}`;
 const runtimeRole = `ai_settings_http_api_${randomUUID().replaceAll('-', '')}`;
@@ -53,6 +56,7 @@ before(async () => {
       DEV_AUTH_ENABLED: 'true',
       DEV_ACCOUNT_ID: ownerId,
       DASHBOARD_ORIGIN: origin,
+      AI_SHADOW_MODEL_REVISION: serverModel.model_revision,
     }),
     pool,
   );
@@ -143,16 +147,17 @@ async function save(f, expected_revision, value = configuration(), options = {})
   });
 }
 
+const serverModel = {
+  model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
+  model_revision: '0e011be8ba6aca297059e7ab1a07d4f11054e653',
+  model_variant: 'INT8',
+  adapter_version: 'laskar-shadow-1',
+};
+
 function configuration(enabled = false) {
   return {
     schema_version: 1,
     automatic_actions_enabled: enabled,
-    model: {
-      model_id: 'laskar-ks/toxic-guardrail-minilm-id-en',
-      model_revision: '0e011be8ba6aca297059e7ab1a07d4f11054e653',
-      model_variant: 'INT8',
-      adapter_version: 'laskar-shadow-1',
-    },
     score_metric: 'EXPECTED_SEVERITY',
     delete: { enabled: true, threshold: 0.6 },
     timeout: { enabled: true, threshold: 0.8, duration_seconds: 30 },
@@ -160,7 +165,7 @@ function configuration(enabled = false) {
   };
 }
 
-test('owners read absence and save explicit model identity and threshold settings', async () => {
+test('owners save action limits while the server supplies model identity', async () => {
   const f = await fixture();
   const initial = await request(f.url);
   assert.equal(initial.status, 200);
@@ -174,7 +179,7 @@ test('owners read absence and save explicit model identity and threshold setting
   assert.equal(record.channel_id, f.channelId);
   assert.equal(record.created_by, ownerId);
   assert.equal(record.revision, 1);
-  assert.deepEqual(record.configuration, input);
+  assert.deepEqual(record.configuration, { ...input, model: serverModel });
   const current = await request(endpoint(f.channelId.toUpperCase()));
   assert.equal(current.status, 200);
   assert.deepEqual(aiModerationSettingsResponse.parse(await current.json()).settings, record);
@@ -191,7 +196,7 @@ test('changing settings appends a revision and preserves previously saved config
   const second = aiModerationSettingsResponse.parse(await secondResponse.json()).settings;
   assert.equal(second.revision, 2);
   assert.notEqual(second.id, first.id);
-  assert.deepEqual(second.configuration, updated);
+  assert.deepEqual(second.configuration, { ...updated, model: serverModel });
   const disabled = await save(f, 2, { ...updated, automatic_actions_enabled: false });
   assert.equal(disabled.status, 200);
   assert.equal(aiModerationSettingsResponse.parse(await disabled.json()).settings.revision, 3);
@@ -200,6 +205,34 @@ test('changing settings appends a revision and preserves previously saved config
     [first.id],
   );
   assert.deepEqual(history.rows[0].configuration, first.configuration);
+});
+
+test('server model changes affect only newly saved revisions and missing setup never persists', async () => {
+  const f = await fixture();
+  const initial = aiModerationSettingsResponse.parse(await (await save(f, 0)).json()).settings;
+  const service = app.get(AiModerationSettingsService);
+  const original = service.config;
+  try {
+    service.config = { ...original, AI_SHADOW_MODEL_REVISION: 'a'.repeat(40) };
+    const next = aiModerationSettingsResponse.parse(await (await save(f, 1)).json()).settings;
+    assert.equal(next.configuration.model.model_revision, 'a'.repeat(40));
+    assert.deepEqual(
+      (
+        await admin.query('SELECT configuration FROM channel_ai_moderation_settings WHERE id=$1', [
+          initial.id,
+        ])
+      ).rows[0].configuration,
+      initial.configuration,
+    );
+    service.config = { ...original, AI_SHADOW_MODEL_REVISION: '' };
+    const absent = await fixture();
+    const rejected = await save(absent, 0);
+    assert.equal(rejected.status, 503);
+    assert.equal((await rejected.json()).error.code, 'AI_MODEL_NOT_CONFIGURED');
+    assert.equal((await (await request(absent.url)).json()).settings, null);
+  } finally {
+    service.config = original;
+  }
 });
 
 test('moderators can read settings but only channel owners can save', async () => {
@@ -294,8 +327,9 @@ test('invalid thresholds, model identity, duration, and metadata injection never
     ...[
       { ...configuration(), automatic_actions_enabled: 'false' },
       { ...configuration(), score_metric: 'PROBABILITY' },
-      { ...configuration(), model: { ...configuration().model, model_revision: 'main' } },
-      { ...configuration(), model: { ...configuration().model, model_variant: 'FP32' } },
+      { ...configuration(), model: serverModel },
+      { ...configuration(), model: { ...serverModel, model_revision: 'main' } },
+      { ...configuration(), model: { ...serverModel, model_variant: 'FP32' } },
       { ...configuration(), delete: { enabled: true, threshold: '0.6' } },
       { ...configuration(), delete: { enabled: true, threshold: -0.1 } },
       { ...configuration(), delete: { enabled: true, threshold: 0.8 } },
@@ -382,7 +416,7 @@ test('oversized payloads return a safe error without creating a settings revisio
   const f = await fixture();
   const response = await save(f, 0, {
     ...configuration(),
-    model: { ...configuration().model, model_id: 'x'.repeat(17000) },
+    model: { ...serverModel, model_id: 'x'.repeat(17000) },
   });
   assert.equal(response.status, 413);
   const error = (await response.json()).error;

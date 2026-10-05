@@ -131,8 +131,9 @@ function ChannelSettings({
           AI action limits
         </h2>
         <p className="text-sm text-muted-foreground">
-          Choose when AI can delete a message, time out a viewer, or ban them. Blocked words take
-          priority. A selected action still needs a confirmed result from YouTube.
+          AI checks messages that don’t match your blocked words. Choose when it can delete a
+          message, time out a viewer, or ban them. A selected action still needs a confirmed result
+          from YouTube.
         </p>
         <AiModerationSettingsEditor
           accountId={accountId}

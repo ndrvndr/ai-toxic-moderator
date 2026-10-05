@@ -1,3 +1,4 @@
+import { LASKAR_ADAPTER_VERSION, LASKAR_MODEL_ID } from '@moderator/config';
 import {
   aiShadowIdentity,
   aiShadowResult,
@@ -6,8 +7,7 @@ import {
 } from '@moderator/contracts';
 import { performance } from 'node:perf_hooks';
 
-export const LASKAR_MODEL_ID = 'laskar-ks/toxic-guardrail-minilm-id-en';
-export const LASKAR_ADAPTER_VERSION = 'laskar-shadow-1';
+export { LASKAR_ADAPTER_VERSION, LASKAR_MODEL_ID } from '@moderator/config';
 export type ShadowObservationIdentity = Pick<
   AiShadowIdentity,
   'channel_id' | 'session_id' | 'observation_id' | 'run_id'

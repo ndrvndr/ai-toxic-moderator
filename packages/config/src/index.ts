@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+// Shared by API settings and the supported worker adapter.
+export const LASKAR_MODEL_ID = 'laskar-ks/toxic-guardrail-minilm-id-en';
+export const LASKAR_ADAPTER_VERSION = 'laskar-shadow-1';
+export const LASKAR_MODEL_VARIANT = 'INT8' as const;
+
 const port = z.coerce.number().int().min(1024).max(65535);
 
 const schema = z.object({
