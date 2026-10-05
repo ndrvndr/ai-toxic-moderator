@@ -32,7 +32,7 @@ export function AiModerationTier({
           type="number"
           min="0"
           max="1"
-          step="any"
+          step="0.01"
           value={value.threshold}
           onChange={(event) => onChange({ ...value, threshold: event.target.value })}
           className="h-10 w-full rounded-md border bg-background px-3"
