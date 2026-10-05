@@ -1,4 +1,6 @@
 'use client';
+import { Disclosure } from '@/components/disclosure';
+import { Alert } from '@/components/ui/alert';
 
 import { Button } from '@/components/ui/button';
 import { ApiError, getErrorMessage } from '@/lib/api-client';
@@ -31,11 +33,11 @@ export function HistoryStatisticsPanel({ accountId, sessionId }: HistoryStatisti
       <section aria-label="Message statistics" className="space-y-3 rounded-lg border p-5">
         <h2 className="font-semibold">Message statistics</h2>
 
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {unavailable
             ? 'Statistics are unavailable. Check your session and access permissions.'
             : getErrorMessage(statistics.error)}
-        </p>
+        </Alert>
 
         {!unavailable && (
           <Button
@@ -92,12 +94,11 @@ export function HistoryStatisticsPanel({ accountId, sessionId }: HistoryStatisti
         results. AI ratings and action results are separate; a non-match does not mean no action was
         taken.
       </p>
-      <details className="rounded-lg border p-4">
-        <summary className="cursor-pointer text-sm font-medium">Why messages were flagged</summary>
+      <Disclosure className="rounded-lg border p-4" title={<>Why messages were flagged</>}>
         <div className="mt-4">
           <HistoryFlaggedReasons reasons={data.flagged_reasons} />
         </div>
-      </details>
+      </Disclosure>
 
       <div className="space-y-1 text-xs text-muted-foreground">
         <p>

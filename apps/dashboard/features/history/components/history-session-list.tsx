@@ -1,9 +1,19 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
+import { useRouter } from 'next/navigation';
 
 import { Button } from '@/components/ui/button';
-import { useSavedSessions } from '@/features/live/hooks/use-saved-sessions';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination';
 import { getErrorMessage } from '@/lib/api-client';
 import type { SavedSession } from '@moderator/contracts';
+import { useHistoryPage } from '../hooks/use-history-page';
 
 import { HistorySessionCard } from './history-session-card';
 
@@ -11,19 +21,28 @@ type HistorySessionListProps = {
   accountId: string;
   search?: string;
   status?: NonNullable<SavedSession['latest_status']>;
+  page?: number;
+  take?: number;
 };
 
-export function HistorySessionList({ accountId, search = '', status }: HistorySessionListProps) {
-  const sessions = useSavedSessions(accountId, search, status);
+export function HistorySessionList({
+  accountId,
+  search = '',
+  status,
+  page = 1,
+  take = 10,
+}: HistorySessionListProps) {
+  const router = useRouter();
+  const sessions = useHistoryPage(accountId, search, status, page, take);
   const hasFilters = search !== '' || status !== undefined;
 
-  const items = [
-    ...new Map(
-      (sessions.data?.pages.flatMap((page) => page.items) ?? []).map(
-        (session) => [session.session_id, session] as const,
-      ),
-    ).values(),
-  ];
+  const items = sessions.data?.items ?? [];
+  function pageUrl(next: number) {
+    const params = new URLSearchParams({ page: String(next), take: String(take) });
+    if (search) params.set('q', search);
+    if (status) params.set('status', status);
+    return `/history?${params}`;
+  }
 
   if (sessions.isPending) {
     return (
@@ -36,20 +55,14 @@ export function HistorySessionList({ accountId, search = '', status }: HistorySe
   if (sessions.isError) {
     return (
       <div className="space-y-3 rounded-lg border p-5">
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {getErrorMessage(sessions.error)}
-        </p>
+        </Alert>
 
         <Button
           variant="outline"
           disabled={sessions.isFetching}
-          onClick={() => {
-            if (sessions.isFetchNextPageError) {
-              void sessions.fetchNextPage();
-            } else {
-              void sessions.refetch();
-            }
-          }}
+          onClick={() => void sessions.refetch()}
         >
           Try again
         </Button>
@@ -76,13 +89,19 @@ export function HistorySessionList({ accountId, search = '', status }: HistorySe
       {items.length === 0 ? (
         <div className="space-y-2 rounded-xl border border-dashed p-8">
           <h2 className="font-medium">
-            {hasFilters ? 'No matching sessions' : 'No saved sessions yet'}
+            {page > 1
+              ? 'No sessions on this page'
+              : hasFilters
+                ? 'No matching sessions'
+                : 'No saved sessions yet'}
           </h2>
 
           <p className="text-sm text-muted-foreground">
-            {hasFilters
-              ? 'Try another title or monitoring status, or clear the filters.'
-              : 'Sessions will appear here after you start monitoring a livestream.'}
+            {page > 1
+              ? 'Return to the first page to see the available streams.'
+              : hasFilters
+                ? 'Try another title or monitoring status, or clear the filters.'
+                : 'Sessions will appear here after you start monitoring a livestream.'}
           </p>
         </div>
       ) : (
@@ -95,15 +114,74 @@ export function HistorySessionList({ accountId, search = '', status }: HistorySe
         </ul>
       )}
 
-      {sessions.hasNextPage && (
-        <Button
-          variant="outline"
-          className="w-full"
-          disabled={sessions.isFetching}
-          onClick={() => void sessions.fetchNextPage()}
-        >
-          {sessions.isFetchingNextPage ? 'Loading…' : 'Load older sessions'}
-        </Button>
+      {sessions.data && (
+        <>
+          <p className="text-sm text-muted-foreground">
+            Page {page} of {Math.max(1, sessions.data.total_pages)} · {sessions.data.total} streams
+            · {take} per page
+          </p>
+          <Pagination
+            aria-label="History pages"
+            onClick={(event) => {
+              if (
+                event.button !== 0 ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return;
+              const link = (event.target as HTMLElement).closest('a');
+              const href = link?.getAttribute('href');
+              if (href && link?.getAttribute('aria-disabled') !== 'true') {
+                event.preventDefault();
+                router.push(href);
+              }
+            }}
+          >
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  href={page > 1 ? pageUrl(page - 1) : undefined}
+                  aria-disabled={page <= 1}
+                  className={page <= 1 ? 'pointer-events-none opacity-50' : ''}
+                  tabIndex={page <= 1 ? -1 : 0}
+                />
+              </PaginationItem>
+              {[
+                ...new Set([
+                  1,
+                  ...Array.from({ length: 5 }, (_, i) => page - 2 + i),
+                  sessions.data.total_pages,
+                ]),
+              ]
+                .filter((number) => number >= 1 && number <= sessions.data!.total_pages)
+                .sort((a, b) => a - b)
+                .map((number) => (
+                  <PaginationItem key={number}>
+                    <PaginationLink href={pageUrl(number)} isActive={number === page}>
+                      {number}
+                    </PaginationLink>
+                  </PaginationItem>
+                ))}
+              <PaginationItem>
+                <PaginationNext
+                  href={page < sessions.data.total_pages ? pageUrl(page + 1) : undefined}
+                  aria-disabled={page >= sessions.data.total_pages}
+                  className={
+                    page >= sessions.data.total_pages ? 'pointer-events-none opacity-50' : ''
+                  }
+                  tabIndex={page >= sessions.data.total_pages ? -1 : 0}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+          {page > Math.max(1, sessions.data.total_pages) && (
+            <Button asChild variant="outline">
+              <a href={pageUrl(1)}>Return to first page</a>
+            </Button>
+          )}
+        </>
       )}
     </div>
   );

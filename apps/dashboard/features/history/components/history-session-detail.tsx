@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import { Button } from '@/components/ui/button';
 import { SavedSessionViewer } from '@/features/live/components/saved-session-viewer';
@@ -34,11 +35,11 @@ export function HistorySessionDetail({ accountId, sessionId }: HistorySessionDet
           {unavailable ? 'Session unavailable' : 'Unable to load session'}
         </h1>
 
-        <p role="alert" className="text-sm text-muted-foreground">
+        <Alert role="alert" className="text-sm text-muted-foreground">
           {unavailable
             ? 'This session does not exist or is not accessible to your account.'
             : getErrorMessage(session.error)}
-        </p>
+        </Alert>
 
         {!unavailable && (
           <Button

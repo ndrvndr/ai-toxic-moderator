@@ -2,6 +2,8 @@ import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 
 import {
   historyActionStatistics,
+  historySessionsPage,
+  historySessionsQuery,
   historyStatistics,
   savedSession,
   savedSessionsCursor,
@@ -17,6 +19,54 @@ import { failure, type ApiRequest } from '../http';
 @Controller('v1/youtube/sessions')
 export class SavedSessionsController {
   constructor(private readonly database: DatabaseService) {}
+
+  @Get('history-page')
+  async historyPage(@Query() raw: unknown, @Req() request: ApiRequest) {
+    const parsed = historySessionsQuery.safeParse(raw);
+    if (!parsed.success)
+      throw failure(
+        422,
+        'VALIDATION_ERROR',
+        'Provide a valid page, page size and history filters.',
+      );
+    const { take, page, q, status } = parsed.data;
+    // Count and page share one statement snapshot and exactly the same access filters.
+    const result = await this.database.pool.query<{ total: number; items: unknown[] }>(
+      `
+      WITH accessible AS (
+        SELECT s.id AS session_id, s.channel_id, b.youtube_broadcast_id,
+          s.label AS title,
+          to_char(s.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+          latest.status AS latest_status
+        FROM stream_sessions s
+        JOIN youtube_broadcasts b ON b.session_id=s.id AND b.channel_id=s.channel_id
+        LEFT JOIN LATERAL (
+          SELECT status FROM monitoring_runs
+          WHERE channel_id=s.channel_id AND session_id=s.id
+          ORDER BY requested_at DESC,id DESC LIMIT 1
+        ) latest ON true
+        WHERE EXISTS (
+          SELECT 1 FROM channel_memberships m
+          WHERE m.channel_id=s.channel_id AND m.account_id=$1 AND m.role IN ('OWNER','MODERATOR')
+        ) AND ($2::text='' OR strpos(lower(s.label),lower($2::text))>0)
+          AND ($3::text IS NULL OR latest.status=$3)
+      )
+      SELECT (SELECT count(*)::integer FROM accessible) AS total,
+        COALESCE((SELECT jsonb_agg(rows) FROM (
+          SELECT * FROM accessible ORDER BY created_at DESC,session_id DESC LIMIT $4 OFFSET $5
+        ) rows),'[]'::jsonb) AS items
+    `,
+      [request.account!.id, q, status ?? null, take, (page - 1) * take],
+    );
+    const { total, items } = result.rows[0]!;
+    return historySessionsPage.parse({
+      items,
+      total,
+      take,
+      page,
+      total_pages: Math.ceil(total / take),
+    });
+  }
 
   @Get(':session_id/action-statistics')
   async actionStatistics(@Param('session_id') sessionId: string, @Req() request: ApiRequest) {

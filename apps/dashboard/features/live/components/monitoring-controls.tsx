@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import { Button } from '@/components/ui/button';
 import { useSession } from '@/features/auth/hooks/use-session';
@@ -56,9 +57,9 @@ export function MonitoringControls({ broadcastId, liveChatAvailable }: Monitorin
           )}
 
           {error && (
-            <p role="alert" className="text-sm text-destructive">
+            <Alert role="alert" className="text-sm text-destructive">
               {getErrorMessage(error)}
-            </p>
+            </Alert>
           )}
         </div>
 

@@ -27,7 +27,7 @@ class AuthController {
   ) {
     const result = devSessionInput.safeParse(body);
     if (!result.success)
-      throw failure(422, 'VALIDATION_ERROR', 'Body login harus berupa object kosong.');
+      throw failure(422, 'VALIDATION_ERROR', 'The sign-in body must be an empty object.');
     const session = await this.sessions.create(cookieToken(request.headers.cookie));
     response.setHeader('Set-Cookie', sessionCookie(session.token, this.config.SESSION_TTL_SECONDS));
     return devSessionResponse.parse({ expires_at: session.expires_at });
@@ -44,7 +44,7 @@ class AuthController {
     @Res({ passthrough: true }) response: ApiResponse,
   ) {
     if (!devSessionInput.safeParse(body).success)
-      throw failure(422, 'VALIDATION_ERROR', 'Body logout harus berupa object kosong.');
+      throw failure(422, 'VALIDATION_ERROR', 'The sign-out body must be an empty object.');
     await this.sessions.revoke(request.sessionHash!);
     response.setHeader('Set-Cookie', sessionCookie('', 0));
   }

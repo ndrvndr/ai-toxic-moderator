@@ -1,3 +1,5 @@
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import type { ChatAuthorAction as AuthorAction } from '@moderator/contracts';
 
 const statusLabels: Record<AuthorAction['status'], string> = {
@@ -64,12 +66,16 @@ export function ChatAuthorAction({ action }: { action?: AuthorAction | null }) {
   const actionLabel = action.action === 'TIMEOUT' ? 'Timeout' : 'Ban';
 
   return (
-    <div role="group" aria-label="Author action result" className="space-y-2 rounded-md border p-3">
+    <Card
+      role="group"
+      aria-label="Author action result"
+      className="block ring-0 space-y-2 rounded-md border p-3"
+    >
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-muted-foreground">Automatic author action</span>
-        <span className="rounded-md bg-muted px-2 py-1 font-medium">
+        <Badge variant="secondary" className="rounded-md bg-muted px-2 py-1 font-medium">
           {actionLabel} {statusLabels[action.status]}
-        </span>
+        </Badge>
       </div>
 
       <p className="text-xs text-muted-foreground">{describeAction(action)}</p>
@@ -82,6 +88,6 @@ export function ChatAuthorAction({ action }: { action?: AuthorAction | null }) {
         This execution belongs to this message and targets its author. Execution status does not
         describe the author's current restriction on YouTube.
       </p>
-    </div>
+    </Card>
   );
 }

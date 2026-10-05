@@ -1,3 +1,5 @@
+import { Disclosure } from '@/components/disclosure';
+import { Badge } from '@/components/ui/badge';
 import type { ChatObservation } from '@moderator/contracts';
 
 import { ChatAiDecision } from './chat-ai-decision';
@@ -39,7 +41,7 @@ export function ChatMessage({
     <div
       className={
         compact
-          ? 'space-y-4 [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent [&>div]:p-0'
+          ? 'space-y-4 [&>div]:rounded-none [&>div]:border-0 [&>div]:bg-transparent [&>div]:p-0 [&>div]:ring-0'
           : 'space-y-2'
       }
     >
@@ -83,7 +85,9 @@ export function ChatMessage({
 
       {(!compact || message.event_type !== 'textMessageEvent') && (
         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-          <span className="rounded-md border px-2 py-1">{label}</span>
+          <Badge variant="secondary" className="rounded-md border px-2 py-1">
+            {label}
+          </Badge>
         </div>
       )}
 
@@ -91,12 +95,9 @@ export function ChatMessage({
         <>
           <ChatMessageSummary message={message} />
           {hasDetails && (
-            <details className="group">
-              <summary className="cursor-pointer px-1 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
-                Moderation details
-              </summary>
+            <Disclosure className="group" title={<>Moderation details</>}>
               <div className="border-l-2 pl-4 py-2">{details}</div>
-            </details>
+            </Disclosure>
           )}
         </>
       ) : (

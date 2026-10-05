@@ -32,3 +32,17 @@ export const savedSessionsPage = z.strictObject({
 });
 
 export type SavedSession = z.infer<typeof savedSession>;
+
+export const historySessionsQuery = z.strictObject({
+  take: z.coerce.number().int().min(1).max(50).default(10),
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  q: z.string().trim().max(100).default(''),
+  status: monitoringStatus.optional(),
+});
+export const historySessionsPage = z.strictObject({
+  items: z.array(savedSession).max(50),
+  page: z.number().int().positive(),
+  take: z.number().int().min(1).max(50),
+  total: z.number().int().nonnegative(),
+  total_pages: z.number().int().nonnegative(),
+});

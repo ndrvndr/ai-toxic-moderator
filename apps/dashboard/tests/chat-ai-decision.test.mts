@@ -113,7 +113,9 @@ it.each([
   expect(panel.getByText(/not a probability/)).toBeTruthy();
   expect(panel.getByText(/does not confirm execution/)).toBeTruthy();
   expect(panel.queryByText('Timeout confirmed')).toBeNull();
-  expect(panel.queryByRole('button')).toBeNull();
+  expect(
+    panel.getByRole('button', { name: 'AI decision details' }).getAttribute('aria-expanded'),
+  ).toBe('false');
 });
 
 it.each([

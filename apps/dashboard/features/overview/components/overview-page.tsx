@@ -1,4 +1,6 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 
 import type { SavedSession } from '@moderator/contracts';
 import {
@@ -81,9 +83,12 @@ function OverviewContent({ accountId, name }: { accountId: string; name: string 
           className="flex flex-col rounded-2xl border bg-card p-6 sm:p-8"
         >
           <div className="mb-6 flex items-center gap-3">
-            <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
+            <Badge
+              variant="secondary"
+              className="flex size-10 items-center justify-center rounded-xl bg-muted"
+            >
               <Radio className="size-5" aria-hidden="true" />
-            </span>
+            </Badge>
             <h2 id="current-stream-heading" className="font-semibold">
               Your livestream
             </h2>
@@ -337,9 +342,9 @@ function PreparationLink({ title, description }: { title: string; description: s
 function LoadError({ text, retry, busy }: { text: string; retry: () => void; busy: boolean }) {
   return (
     <div className="space-y-3">
-      <p role="alert" className="text-sm text-muted-foreground">
+      <Alert role="alert" className="text-sm text-muted-foreground">
         {text}
-      </p>
+      </Alert>
       <Button variant="outline" size="sm" onClick={retry} disabled={busy}>
         {busy ? 'Trying again…' : 'Try again'}
       </Button>

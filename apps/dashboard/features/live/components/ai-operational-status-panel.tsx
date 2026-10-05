@@ -1,4 +1,5 @@
 'use client';
+import { Disclosure } from '@/components/disclosure';
 
 import type { AiOperationalStatusResponse } from '@moderator/contracts';
 import Link from 'next/link';
@@ -103,12 +104,12 @@ function StatusContent({ accountId, channelId, channelName }: Props) {
         </Button>
       )}
       {!unavailable && !checking && data && (
-        <details
+        <Disclosure
           open={detailsOpen}
-          onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+          onOpenChange={setDetailsOpen}
           className="text-xs text-muted-foreground"
+          title={<>Status details</>}
         >
-          <summary className="cursor-pointer">Status details</summary>
           <dl className="mt-2 space-y-1 wrap-break-word">
             <div>
               <dt className="inline font-medium">Channel: </dt>
@@ -178,7 +179,7 @@ function StatusContent({ accountId, channelId, channelName }: Props) {
               </>
             )}
           </dl>
-        </details>
+        </Disclosure>
       )}
     </section>
   );

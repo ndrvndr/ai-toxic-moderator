@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import { Button } from '@/components/ui/button';
 import { useSession } from '@/features/auth/hooks/use-session';
@@ -41,9 +42,9 @@ export function LivePage() {
 
       {broadcasts.isError && (
         <div className="space-y-4 rounded-lg border p-5">
-          <p role="alert" className="text-sm text-destructive">
+          <Alert role="alert" className="text-sm text-destructive">
             {getErrorMessage(broadcasts.error)}
-          </p>
+          </Alert>
 
           {reconnect ? (
             <form action={GOOGLE_LOGIN_URL} method="get">

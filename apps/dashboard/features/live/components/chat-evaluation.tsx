@@ -1,3 +1,4 @@
+import { Badge } from '@/components/ui/badge';
 import type { ChatEvaluation as Evaluation } from '@moderator/contracts';
 
 const outcomeLabels: Record<Evaluation['outcome'], string> = {
@@ -37,9 +38,9 @@ export function ChatEvaluation({ evaluation }: { evaluation: Evaluation | null }
         </span>
 
         {evaluation.primary_category && (
-          <span className="rounded-md bg-muted px-2 py-1">
+          <Badge variant="secondary" className="rounded-md bg-muted px-2 py-1">
             {evaluation.primary_category.replaceAll('_', ' ')}
-          </span>
+          </Badge>
         )}
 
         {evaluation.severity !== null && (

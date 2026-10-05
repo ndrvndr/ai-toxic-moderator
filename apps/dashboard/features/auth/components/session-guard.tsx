@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
@@ -31,9 +32,9 @@ export function SessionGuard({ children }: { children: ReactNode }) {
     return (
       <main className="mx-auto max-w-lg space-y-4 px-6 py-16">
         <h1 className="text-xl font-semibold">Unable to verify your session</h1>
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {getErrorMessage(session.error)}
-        </p>
+        </Alert>
         <Button disabled={session.isFetching} onClick={() => void session.refetch()}>
           {session.isFetching ? 'Retrying…' : 'Try again'}
         </Button>

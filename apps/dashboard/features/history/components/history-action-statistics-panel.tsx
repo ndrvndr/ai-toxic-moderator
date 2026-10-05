@@ -1,4 +1,6 @@
 'use client';
+import { Disclosure } from '@/components/disclosure';
+import { Alert } from '@/components/ui/alert';
 
 import type { ActionExecutionCounts } from '@moderator/contracts';
 
@@ -47,11 +49,11 @@ export function HistoryActionStatisticsPanel({
       <section aria-label="Moderation action results" className="space-y-3 rounded-lg border p-5">
         <h2 className="font-semibold">Moderation action results</h2>
 
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {unavailable
             ? 'Action results are unavailable. Check your session and access permissions.'
             : getErrorMessage(statistics.error)}
-        </p>
+        </Alert>
 
         {!unavailable && (
           <Button
@@ -109,8 +111,7 @@ export function HistoryActionStatisticsPanel({
                 {counts.succeeded.toLocaleString('en-US')}
               </dd>
             </dl>
-            <details className="border-t pt-3">
-              <summary className="cursor-pointer text-xs font-medium">All outcomes</summary>
+            <Disclosure className="border-t pt-3" title={<>All outcomes</>}>
               <dl className="mt-3 space-y-2">
                 {outcomes.map(({ key, label: outcomeLabel }) => (
                   <div key={key} className="flex justify-between gap-4 text-sm">
@@ -121,7 +122,7 @@ export function HistoryActionStatisticsPanel({
                   </div>
                 ))}
               </dl>
-            </details>
+            </Disclosure>
           </article>
         ))}
       </div>
@@ -147,8 +148,7 @@ export function HistoryActionStatisticsPanel({
       )}
 
       <div className="space-y-1 text-xs text-muted-foreground">
-        <details>
-          <summary className="cursor-pointer font-medium">How actions are counted</summary>
+        <Disclosure title={<>How actions are counted</>}>
           <div className="mt-2 space-y-1">
             <p>
               Each attempted action is counted once using its latest result. Repeated timeouts are
@@ -159,7 +159,7 @@ export function HistoryActionStatisticsPanel({
               events do not turn uncertain requests into confirmed requests.
             </p>
           </div>
-        </details>
+        </Disclosure>
         <p>
           Last updated:{' '}
           <time dateTime={new Date(statistics.dataUpdatedAt).toISOString()}>

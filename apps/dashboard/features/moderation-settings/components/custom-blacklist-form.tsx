@@ -1,4 +1,8 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 import { Button } from '@/components/ui/button';
 import { ApiError } from '@/lib/api-client';
@@ -91,9 +95,9 @@ export function CustomBlacklistForm({
 
   if (isBlacklistAccessError(mutation.error)) {
     return (
-      <p role="alert">
+      <Alert role="alert">
         Blacklist access changed. Sign in and reload this page to verify your permissions.
-      </p>
+      </Alert>
     );
   }
 
@@ -104,31 +108,30 @@ export function CustomBlacklistForm({
       </p>
       {!canEdit && <p role="status">Only the channel owner can change the blacklist.</p>}
       {notice && <p role="status">{notice}</p>}
-      {validation && <p role="alert">{validation}</p>}
+      {validation && <Alert role="alert">{validation}</Alert>}
       {blocked && (
-        <p role="alert">
+        <Alert role="alert">
           {mutation.error instanceof ApiError && mutation.error.status === 409
             ? 'Another change was saved. Reload the latest blacklist before saving again.'
             : 'The save could not be confirmed. Reload the blacklist before saving again.'}{' '}
           Your draft has been retained.
-        </p>
+        </Alert>
       )}
       <fieldset disabled={!editable} className="space-y-4">
         <legend className="sr-only">Blacklist configuration</legend>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+        <Label className="flex items-center gap-2 text-sm">
+          <Checkbox
             checked={draft.enabled}
-            onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+            onCheckedChange={(checked) => setDraft({ ...draft, enabled: checked === true })}
           />
           Enable blocked words
-        </label>
+        </Label>
         {draft.rules.length > 0 && (
           <div className="space-y-2">
-            <label htmlFor={`blacklist-search-${channelId}`} className="text-sm font-medium">
+            <Label htmlFor={`blacklist-search-${channelId}`} className="text-sm font-medium">
               Search blocked words
-            </label>
-            <input
+            </Label>
+            <Input
               id={`blacklist-search-${channelId}`}
               type="search"
               value={search}

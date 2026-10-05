@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import { monitoringStatus } from '@moderator/contracts';
 
@@ -10,9 +11,11 @@ import { HistorySessionList } from './history-session-list';
 type HistoryPageProps = {
   search?: string;
   status?: string;
+  page?: number;
+  take?: number;
 };
 
-export function HistoryPage({ search = '', status = '' }: HistoryPageProps) {
+export function HistoryPage({ search = '', status = '', page = 1, take = 10 }: HistoryPageProps) {
   const session = useSession();
   const parsedStatus = monitoringStatus.safeParse(status);
 
@@ -29,14 +32,14 @@ export function HistoryPage({ search = '', status = '' }: HistoryPageProps) {
         </p>
       </header>
 
-      <HistorySearchForm key={filterKey} search={search} status={status} />
+      <HistorySearchForm key={filterKey} search={search} status={status} take={take} />
 
       {invalidSearch || invalidStatus ? (
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {invalidSearch
             ? 'Search terms must contain no more than 100 characters.'
             : 'The monitoring status is invalid. Select a valid status or clear the filters.'}
-        </p>
+        </Alert>
       ) : (
         session.data && (
           <HistorySessionList
@@ -44,6 +47,8 @@ export function HistoryPage({ search = '', status = '' }: HistoryPageProps) {
             accountId={session.data.account.id}
             search={search}
             status={parsedStatus.success ? parsedStatus.data : undefined}
+            page={page}
+            take={take}
           />
         )
       )}

@@ -41,7 +41,7 @@ export class SessionService {
   }
   async create(previousToken: string | null) {
     if (!this.config.DEV_AUTH_ENABLED)
-      throw failure(404, 'NOT_FOUND', 'Login development tidak aktif.');
+      throw failure(404, 'NOT_FOUND', 'Development sign-in is disabled.');
     const token = randomBytes(32).toString('base64url');
     const expires = await transaction(this.database.pool, async (client) => {
       // Serialize per-account rotation without granting UPDATE on the accounts table.
@@ -55,7 +55,7 @@ export class SessionService {
         throw failure(
           503,
           'DEV_ACCOUNT_UNAVAILABLE',
-          'Jalankan seed database sebelum login development.',
+          'Seed the database before using development sign-in.',
         );
       await client.query(
         'DELETE FROM dashboard_sessions WHERE account_id=$1 AND (expires_at<=clock_timestamp() OR token_hash=$2)',

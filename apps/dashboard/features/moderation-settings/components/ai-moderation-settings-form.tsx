@@ -1,4 +1,7 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 
 import { Button } from '@/components/ui/button';
 import { ApiError } from '@/lib/api-client';
@@ -92,9 +95,9 @@ export function AiModerationSettingsForm({
 
   if (isAiSettingsAccessError(mutation.error))
     return (
-      <p role="alert">
+      <Alert role="alert">
         AI settings access changed. Sign in and reload this page to verify your permissions.
-      </p>
+      </Alert>
     );
 
   return (
@@ -117,16 +120,15 @@ export function AiModerationSettingsForm({
       {!canEdit && <p role="status">Only the channel owner can change AI settings.</p>}
       <fieldset disabled={!editable} className="space-y-4">
         <legend className="sr-only">AI moderation configuration</legend>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+        <Label className="flex items-center gap-2 text-sm">
+          <Checkbox
             checked={draft.automatic_actions_enabled}
-            onChange={(event) =>
-              setDraft({ ...draft, automatic_actions_enabled: event.target.checked })
+            onCheckedChange={(checked) =>
+              setDraft({ ...draft, automatic_actions_enabled: checked === true })
             }
           />
           Allow AI to take action in new sessions
-        </label>
+        </Label>
         <p className="text-sm text-muted-foreground">
           AI gives each message a severity score from 0 to 1. It is not a probability of a policy
           violation. Lower limits let AI act on more messages. If several enabled limits are met,
@@ -161,19 +163,24 @@ export function AiModerationSettingsForm({
         </div>
       </fieldset>
       {validation && (
-        <p ref={validationNotice} role="alert" tabIndex={-1} className="text-sm text-destructive">
+        <Alert
+          ref={validationNotice}
+          role="alert"
+          tabIndex={-1}
+          className="text-sm text-destructive"
+        >
           {validation}
-        </p>
+        </Alert>
       )}
       {blocked && (
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {mutation.error instanceof ApiError && mutation.error.code === 'AI_MODEL_NOT_CONFIGURED'
             ? 'AI setup is not ready. Contact the app administrator, then reload AI settings.'
             : mutation.error instanceof ApiError && mutation.error.status === 409
               ? 'Another change was saved. Reload the latest AI settings before saving again.'
               : 'The save could not be confirmed. Reload AI settings before saving again.'}{' '}
           Your draft has been retained.
-        </p>
+        </Alert>
       )}
       {notice && (
         <p role="status" className="text-sm">

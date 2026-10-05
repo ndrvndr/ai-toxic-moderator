@@ -1,4 +1,7 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
+import { Label } from '@/components/ui/label';
+import { NativeSelect } from '@/components/ui/native-select';
 
 import { useState } from 'react';
 
@@ -27,7 +30,7 @@ export function ModerationSettingsPage() {
       {session.isPending ? (
         <p role="status">Loading account…</p>
       ) : session.isError ? (
-        <p role="alert">{getErrorMessage(session.error)}</p>
+        <Alert role="alert">{getErrorMessage(session.error)}</Alert>
       ) : session.data ? (
         <ChannelSettings
           key={session.data.account.id}
@@ -35,7 +38,7 @@ export function ModerationSettingsPage() {
           memberships={session.data.memberships}
         />
       ) : (
-        <p role="alert">Please sign in to view moderation settings.</p>
+        <Alert role="alert">Please sign in to view moderation settings.</Alert>
       )}
     </div>
   );
@@ -64,10 +67,10 @@ function ChannelSettings({
       <div className="space-y-2 rounded-xl border p-5">
         {channels.length > 1 ? (
           <>
-            <label htmlFor="settings-channel" className="text-sm font-medium">
+            <Label htmlFor="settings-channel" className="text-sm font-medium">
               Channel
-            </label>
-            <select
+            </Label>
+            <NativeSelect
               id="settings-channel"
               value={active.channel_id}
               onChange={(event) => setSelected(event.target.value)}
@@ -79,7 +82,7 @@ function ChannelSettings({
                   {membership.role === 'OWNER' ? 'Owner' : 'Moderator'}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </>
         ) : (
           <p className="text-sm font-medium">

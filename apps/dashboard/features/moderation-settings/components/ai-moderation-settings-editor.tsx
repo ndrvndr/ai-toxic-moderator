@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -18,11 +19,11 @@ function EditorContent(props: Props) {
   if (query.isError && (isAiSettingsAccessError(query.error) || query.data === undefined))
     return (
       <div className="space-y-3">
-        <p role="alert">
+        <Alert role="alert">
           {isAiSettingsAccessError(query.error)
             ? 'AI settings are unavailable. Verify your account and channel access.'
             : 'Unable to load AI settings.'}
-        </p>
+        </Alert>
         <Button variant="outline" disabled={query.isFetching} onClick={() => void query.refetch()}>
           Retry loading AI settings
         </Button>

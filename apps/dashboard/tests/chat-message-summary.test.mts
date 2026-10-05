@@ -65,12 +65,13 @@ it('shows uncertain and pending outcomes outside the closed details', () => {
   ).toBeTruthy();
   expect(screen.getByText('Timeout request outcome unknown')).toBeTruthy();
   expect(screen.getByText(/This request won’t be retried automatically/)).toBeTruthy();
-  expect(view.container.querySelector('details')?.open).toBe(false);
-  expect(screen.getByRole('group', { name: 'Author action result' }).closest('details')?.open).toBe(
-    false,
-  );
+  expect(
+    screen.getByRole('button', { name: 'Moderation details' }).getAttribute('aria-expanded'),
+  ).toBe('false');
   fireEvent.click(screen.getByText('Moderation details'));
-  expect(view.container.querySelector('details')?.open).toBe(true);
+  expect(
+    screen.getByRole('button', { name: 'Moderation details' }).getAttribute('aria-expanded'),
+  ).toBe('true');
   expect(screen.getByRole('group', { name: 'Author action result' })).toBeTruthy();
 });
 

@@ -124,7 +124,9 @@ describe('AI shadow presentation', () => {
   it('exposes full model provenance and records truncation without implying full-message coverage', () => {
     render(createElement(ChatAiShadow, { result: { ...success, truncated: true } }));
     expect(screen.getByText(/did not evaluate the full message/)).toBeTruthy();
-    const details = screen.getByText('Model details').closest('details');
+    const details = screen
+      .getByText('Model details')
+      .closest<HTMLElement>('[data-slot=collapsible]');
     expect(details).not.toBeNull();
     const metadata = within(details!);
     expect(metadata.getByText(success.model_id)).toBeTruthy();

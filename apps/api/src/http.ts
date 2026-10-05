@@ -47,11 +47,14 @@ export class ApiExceptionFilter implements ExceptionFilter {
           })
         : null;
     const defaults: Record<number, [string, string]> = {
-      400: ['BAD_REQUEST', 'Request tidak valid.'],
-      404: ['NOT_FOUND', 'Resource tidak ditemukan.'],
-      413: ['PAYLOAD_TOO_LARGE', 'Payload terlalu besar.'],
+      400: ['BAD_REQUEST', 'The request is invalid.'],
+      404: ['NOT_FOUND', 'The resource was not found.'],
+      413: ['PAYLOAD_TOO_LARGE', 'The request body is too large.'],
     };
-    const [code, message] = defaults[status] ?? ['INTERNAL_ERROR', 'Request tidak dapat diproses.'];
+    const [code, message] = defaults[status] ?? [
+      'INTERNAL_ERROR',
+      'The request could not be processed.',
+    ];
     response.status(status).json({
       error: {
         code: detail?.code ?? code,

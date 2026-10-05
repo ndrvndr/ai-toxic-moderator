@@ -1,3 +1,6 @@
+import { Disclosure } from '@/components/disclosure';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import type { AiShadowErrorCode, AiShadowSummary } from '@moderator/contracts';
 
 const ratingLabels: Record<NonNullable<AiShadowSummary['rating']>, string> = {
@@ -21,12 +24,12 @@ export function ChatAiShadow({ result }: { result?: AiShadowSummary | null }) {
   if (!result) return null;
 
   return (
-    <div role="group" aria-label="AI shadow result" className="space-y-2 rounded-md border p-3">
+    <Card role="group" aria-label="AI shadow result" className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="font-medium">AI shadow</span>
-        <span className="rounded-md bg-muted px-2 py-1">
+        <Badge variant="secondary" className="rounded-md bg-muted px-2 py-1">
           {result.status === 'SUCCEEDED' ? 'Model output' : 'AI result unavailable'}
-        </span>
+        </Badge>
       </div>
 
       {result.status === 'SUCCEEDED' ? (
@@ -57,8 +60,7 @@ export function ChatAiShadow({ result }: { result?: AiShadowSummary | null }) {
         settings captured for this run and whether enforcement is enabled.
       </p>
 
-      <details className="text-xs text-muted-foreground">
-        <summary className="cursor-pointer">Model details</summary>
+      <Disclosure className="text-xs text-muted-foreground" title={<>Model details</>}>
         <dl className="mt-2 space-y-2">
           <div>
             <dt className="font-medium">Model</dt>
@@ -92,7 +94,7 @@ export function ChatAiShadow({ result }: { result?: AiShadowSummary | null }) {
           Latest stored result for this message. Its revision may differ from the currently
           configured model.
         </p>
-      </details>
-    </div>
+      </Disclosure>
+    </Card>
   );
 }

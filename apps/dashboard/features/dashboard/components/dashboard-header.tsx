@@ -1,5 +1,7 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
+import { ThemeToggle } from '@/components/theme-toggle';
 import { Button } from '@/components/ui/button';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useLogout } from '@/features/auth/hooks/use-logout';
@@ -16,6 +18,7 @@ export function DashboardHeader() {
         <SidebarTrigger aria-label="Toggle navigation" />
 
         <p className="min-w-0 flex-1 truncate text-sm">{session.data?.account.display_name}</p>
+        <ThemeToggle />
 
         <Button variant="outline" disabled={logout.isPending} onClick={() => logout.mutate()}>
           {logout.isPending ? 'Signing out…' : 'Sign out'}
@@ -23,9 +26,9 @@ export function DashboardHeader() {
       </div>
 
       {logout.isError && (
-        <p role="alert" className="mt-3 text-sm text-destructive">
+        <Alert role="alert" className="mt-3 text-sm text-destructive">
           Sign-out failed. {getErrorMessage(logout.error)}
-        </p>
+        </Alert>
       )}
     </header>
   );

@@ -84,7 +84,7 @@ export class GoogleService {
 
   private enabled() {
     if (!this.config.GOOGLE_AUTH_ENABLED)
-      throw failure(404, 'GOOGLE_AUTH_DISABLED', 'Login Google belum diaktifkan.');
+      throw failure(404, 'GOOGLE_AUTH_DISABLED', 'Google sign-in is not enabled.');
   }
 
   async start(previousBrowserToken: string | null) {
@@ -133,7 +133,7 @@ export class GoogleService {
       throw failure(
         400,
         'OAUTH_STATE_INVALID',
-        'Sesi login Google tidak valid. Silakan mulai login kembali.',
+        'The Google sign-in session is invalid. Please start signing in again.',
       );
     // Atomic consumption prevents callback replay, including simultaneous requests.
     const attempt = await this.database.pool.query(
@@ -144,11 +144,11 @@ export class GoogleService {
       throw failure(
         400,
         'OAUTH_STATE_INVALID',
-        'Sesi login Google sudah berakhir atau telah digunakan.',
+        'The Google sign-in session has expired or has already been used.',
       );
-    if (denied) throw failure(400, 'OAUTH_DENIED', 'Izin Google dibatalkan.');
+    if (denied) throw failure(400, 'OAUTH_DENIED', 'Google authorization was cancelled.');
     if (!code || code.length > 4096)
-      throw failure(400, 'OAUTH_CODE_INVALID', 'Kode login Google tidak valid.');
+      throw failure(400, 'OAUTH_CODE_INVALID', 'The Google sign-in code is invalid.');
     const verifier = decryptToken(
       attempt.rows[0].verifier_ciphertext,
       this.config.TOKEN_ENCRYPTION_KEY,
@@ -167,7 +167,7 @@ export class GoogleService {
       throw failure(
         403,
         'GOOGLE_SCOPE_REQUIRED',
-        'Izin profil dan pengelolaan YouTube diperlukan.',
+        'Profile and YouTube management permissions are required.',
       );
     const profile = await this.provider.profile(tokens.access_token);
     let channels: VerifiedYoutubeChannel[] = [];
@@ -216,7 +216,7 @@ export class GoogleService {
         throw failure(
           403,
           'GOOGLE_OFFLINE_REQUIRED',
-          'Akses offline belum diberikan. Hubungkan Google kembali.',
+          'Offline access has not been granted. Please reconnect Google.',
         );
       await client.query(
         "INSERT INTO google_credentials(account_id,access_token_ciphertext,refresh_token_ciphertext,expires_at,scopes) VALUES($1,$2,$3,clock_timestamp()+$4 * interval '1 second',$5) ON CONFLICT(account_id) DO UPDATE SET access_token_ciphertext=EXCLUDED.access_token_ciphertext,refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,expires_at=EXCLUDED.expires_at,scopes=EXCLUDED.scopes,updated_at=clock_timestamp()",

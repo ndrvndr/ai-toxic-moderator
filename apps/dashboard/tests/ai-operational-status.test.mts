@@ -148,10 +148,9 @@ it('keeps expanded details and the current status visible during a background po
   vi.useFakeTimers();
   panel();
   await flush();
-  const details = screen.getByText('Status details').closest('details')!;
+  const details = screen.getByRole('button', { name: 'Status details' });
   act(() => {
-    details.open = true;
-    fireEvent(details, new Event('toggle'));
+    fireEvent.click(details);
   });
   let resolve!: (value: AiOperationalStatusResponse) => void;
   mocks.request.mockReturnValueOnce(
@@ -163,15 +162,15 @@ it('keeps expanded details and the current status visible during a background po
   expect(mocks.request).toHaveBeenCalledTimes(2);
   expect(screen.getByText('AI processing active')).toBeTruthy();
   expect(screen.queryByText('Checking AI status…')).toBeNull();
-  expect(screen.getByText('Status details').closest('details')).toBe(details);
-  expect(details.open).toBe(true);
+  expect(screen.getByRole('button', { name: 'Status details' })).toBe(details);
+  expect(details.getAttribute('aria-expanded')).toBe('true');
   await act(async () => {
     resolve(response('WAITING', 'NO_ELIGIBLE_RUN'));
   });
   await flush();
   expect(screen.getByText('AI waiting for a stream')).toBeTruthy();
-  expect(screen.getByText('Status details').closest('details')).toBe(details);
-  expect(details.open).toBe(true);
+  expect(screen.getByRole('button', { name: 'Status details' })).toBe(details);
+  expect(details.getAttribute('aria-expanded')).toBe('true');
 });
 
 it('shows the channel name and a stream link without displaying internal identifiers', async () => {
@@ -189,8 +188,8 @@ it('explains problems in closed status details and links to moderation settings'
   mocks.request.mockResolvedValue(response('ERROR', 'PROCESSING_FAILED'));
   panel();
   await screen.findByText('AI needs attention');
-  expect(screen.getByText('AI took too long to check a message.').closest('details')?.open).toBe(
-    false,
+  expect(screen.getByRole('button', { name: 'Status details' }).getAttribute('aria-expanded')).toBe(
+    'false',
   );
   expect(screen.getByText(/New AI results may be unavailable/)).toBeTruthy();
   expect(

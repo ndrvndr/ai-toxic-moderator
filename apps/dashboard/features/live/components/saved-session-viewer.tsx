@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import type { SavedSession } from '@moderator/contracts';
 
@@ -36,9 +37,9 @@ export function SavedSessionViewer({ accountId, session }: SavedSessionViewerPro
   if (monitoring.isError) {
     return (
       <div className="space-y-3">
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {getErrorMessage(monitoring.error)}
-        </p>
+        </Alert>
         <Button
           variant="outline"
           disabled={monitoring.isFetching}

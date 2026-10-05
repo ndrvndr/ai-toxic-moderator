@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -30,9 +31,9 @@ function LoginContent() {
   if (session.isError) {
     return (
       <div className="space-y-4">
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {getErrorMessage(session.error)}
-        </p>
+        </Alert>
         <Button disabled={session.isFetching} onClick={() => void session.refetch()}>
           Try again
         </Button>
@@ -50,9 +51,9 @@ function LoginContent() {
       </div>
 
       {failed && (
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           Google sign-in was not completed. Please try again.
-        </p>
+        </Alert>
       )}
 
       {auth === 'expired' && !session.data && (

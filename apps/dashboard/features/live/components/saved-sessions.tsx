@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import { useState } from 'react';
 
@@ -51,9 +52,9 @@ export function SavedSessions({ accountId }: { accountId: string }) {
       )}
 
       {sessions.isError && (
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {getErrorMessage(sessions.error)}
-        </p>
+        </Alert>
       )}
 
       {sessions.isSuccess && items.length === 0 && (

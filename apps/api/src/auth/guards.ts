@@ -19,7 +19,7 @@ export class OriginGuard implements CanActivate {
       !['GET', 'HEAD', 'OPTIONS'].includes(request.method ?? '') &&
       request.headers.origin !== this.config.DASHBOARD_ORIGIN
     )
-      throw failure(403, 'ORIGIN_FORBIDDEN', 'Origin request tidak diizinkan.');
+      throw failure(403, 'ORIGIN_FORBIDDEN', 'The request origin is not allowed.');
     return true;
   }
 }
@@ -38,7 +38,7 @@ export class SessionGuard implements CanActivate {
     const token = cookieToken(request.headers.cookie);
     const account = await this.sessions.resolve(token);
     if (!account || !token)
-      throw failure(401, 'UNAUTHENTICATED', 'Session tidak tersedia atau sudah berakhir.');
+      throw failure(401, 'UNAUTHENTICATED', 'Your session is unavailable or has expired.');
     request.account = account;
     request.sessionHash = tokenHash(token);
     return true;
@@ -52,17 +52,17 @@ export class ChannelGuard implements CanActivate {
     const channelId = request.params.channel_id;
     if (channelId === undefined) return true;
     if (!uuid.safeParse(channelId).success)
-      throw failure(422, 'VALIDATION_ERROR', 'Channel ID tidak valid.', [
+      throw failure(422, 'VALIDATION_ERROR', 'The channel ID is invalid.', [
         { field: 'channel_id', code: 'invalid_format' },
       ]);
-    if (!request.account) throw failure(401, 'UNAUTHENTICATED', 'Session diperlukan.');
+    if (!request.account) throw failure(401, 'UNAUTHENTICATED', 'A session is required.');
     const result = await this.database.pool.query(
       'SELECT role FROM channel_memberships WHERE channel_id=$1 AND account_id=$2',
       [channelId, request.account.id],
     );
     // Operators do not receive channel-content access just by having an operator role.
     if (!['OWNER', 'MODERATOR'].includes(result.rows[0]?.role))
-      throw failure(403, 'CHANNEL_FORBIDDEN', 'Akses channel tidak diizinkan.');
+      throw failure(403, 'CHANNEL_FORBIDDEN', 'You do not have access to this channel.');
     return true;
   }
 }

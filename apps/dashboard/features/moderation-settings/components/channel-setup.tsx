@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import { Button } from '@/components/ui/button';
 import { SESSION_QUERY_KEY } from '@/features/auth/hooks/use-session';
@@ -38,9 +39,9 @@ export function ChannelSetup() {
         </p>
       )}
       {setup.isError && (
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {getErrorMessage(setup.error)}
-        </p>
+        </Alert>
       )}
       <p className="text-sm">
         <a className="underline underline-offset-4" href={GOOGLE_LOGIN_URL}>

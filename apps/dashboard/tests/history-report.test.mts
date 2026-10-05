@@ -61,9 +61,13 @@ it('highlights only confirmed actions and keeps uncertain and awaiting results v
   expect(panel.getByText(/3 requests have an uncertain result/)).toBeTruthy();
   expect(panel.getByText('2 requests are still awaiting a result.')).toBeTruthy();
   expect(panel.getByText(/not unique viewers/)).toBeTruthy();
-  expect(view.container.querySelector('details')?.open).toBe(false);
+  expect(
+    screen.getAllByRole('button', { name: 'All outcomes' })[0]!.getAttribute('aria-expanded'),
+  ).toBe('false');
   fireEvent.click(panel.getAllByText('All outcomes')[0]!);
-  expect(view.container.querySelector('details')?.open).toBe(true);
+  expect(
+    screen.getAllByRole('button', { name: 'All outcomes' })[0]!.getAttribute('aria-expanded'),
+  ).toBe('true');
 });
 
 it('updates totals and removes the uncertainty warning when a fresh report has no uncertain requests', () => {

@@ -1,4 +1,7 @@
 'use client';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 import type { AiTierDraft } from '../lib/ai-moderation-draft';
 
@@ -18,17 +21,16 @@ export function AiModerationTier({
   return (
     <fieldset className="space-y-3 rounded-xl border bg-muted/20 p-4">
       <legend className="px-1 text-sm font-medium">{name}</legend>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
+      <Label className="flex items-center gap-2 text-sm">
+        <Checkbox
           checked={value.enabled}
-          onChange={(event) => onChange({ ...value, enabled: event.target.checked })}
+          onCheckedChange={(checked) => onChange({ ...value, enabled: checked === true })}
         />
         Allow AI {name.toLowerCase()}
-      </label>
-      <label className="block space-y-1 text-sm">
+      </Label>
+      <Label className="block space-y-1 text-sm">
         <span>{name} threshold</span>
-        <input
+        <Input
           type="number"
           min="0"
           max="1"
@@ -37,11 +39,11 @@ export function AiModerationTier({
           onChange={(event) => onChange({ ...value, threshold: event.target.value })}
           className="h-10 w-full rounded-md border bg-background px-3"
         />
-      </label>
+      </Label>
       {name === 'Timeout' && (
-        <label className="block space-y-1 text-sm">
+        <Label className="block space-y-1 text-sm">
           <span>AI timeout seconds</span>
-          <input
+          <Input
             type="number"
             min="1"
             max="86400"
@@ -50,7 +52,7 @@ export function AiModerationTier({
             onChange={(event) => onDurationChange?.(event.target.value)}
             className="h-10 w-full rounded-md border bg-background px-3"
           />
-        </label>
+        </Label>
       )}
       <p className="text-xs text-muted-foreground">
         {name === 'Delete'

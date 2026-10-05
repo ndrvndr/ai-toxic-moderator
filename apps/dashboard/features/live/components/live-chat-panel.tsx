@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import type { ChatObservation, MonitoringRun } from '@moderator/contracts';
 import { useState } from 'react';
@@ -54,9 +55,9 @@ function LiveChatPanelContent({ accountId, run, connectionStatus }: LiveChatPane
   if (connectionStatus === 'unauthenticated' || connectionStatus === 'forbidden') {
     return (
       <section aria-label="Livestream chat" className="border-t pt-4">
-        <p role="alert" className="text-sm text-destructive">
+        <Alert role="alert" className="text-sm text-destructive">
           {connectionLabels[connectionStatus]}
-        </p>
+        </Alert>
       </section>
     );
   }
@@ -121,9 +122,9 @@ function LiveChatPanelContent({ accountId, run, connectionStatus }: LiveChatPane
 
       {chat.isError && (
         <div className="space-y-2">
-          <p role="alert" className="text-sm text-destructive">
+          <Alert role="alert" className="text-sm text-destructive">
             {getErrorMessage(chat.error)}
-          </p>
+          </Alert>
 
           <Button
             size="sm"

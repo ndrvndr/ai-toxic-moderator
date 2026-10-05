@@ -1,4 +1,5 @@
 'use client';
+import { Label } from '@/components/ui/label';
 
 import type { SavedSession } from '@moderator/contracts';
 import { useRouter } from 'next/navigation';
@@ -22,9 +23,10 @@ const statusOptions = [
 type HistorySearchFormProps = {
   search: string;
   status: string;
+  take?: number;
 };
 
-export function HistorySearchForm({ search, status }: HistorySearchFormProps) {
+export function HistorySearchForm({ search, status, take = 10 }: HistorySearchFormProps) {
   const router = useRouter();
   const inputId = useId();
   const [value, setValue] = useState(search);
@@ -32,7 +34,7 @@ export function HistorySearchForm({ search, status }: HistorySearchFormProps) {
   const [isPending, startTransition] = useTransition();
 
   function navigate(q: string, nextStatus: string) {
-    const query = new URLSearchParams();
+    const query = new URLSearchParams({ page: '1', take: String(take) });
 
     if (q) query.set('q', q);
     if (nextStatus) query.set('status', nextStatus);
@@ -55,9 +57,9 @@ export function HistorySearchForm({ search, status }: HistorySearchFormProps) {
       }}
     >
       <div className="space-y-2">
-        <label htmlFor={inputId} className="text-sm font-medium">
+        <Label htmlFor={inputId} className="text-sm font-medium">
           Livestream title
-        </label>
+        </Label>
 
         <Input
           id={inputId}

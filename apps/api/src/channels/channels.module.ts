@@ -11,7 +11,7 @@ class SessionsController {
   @Get()
   async list(@Param('channel_id') channelId: string, @Query() raw: unknown) {
     const parsed = sessionsQuery.safeParse(raw);
-    if (!parsed.success) throw failure(422, 'VALIDATION_ERROR', 'Filter session tidak valid.');
+    if (!parsed.success) throw failure(422, 'VALIDATION_ERROR', 'The session filter is invalid.');
     const { limit, cursor } = parsed.data;
     let position: { created_at: string; id: string } | null = null;
     if (cursor) {
@@ -23,7 +23,7 @@ class SessionsController {
         if (decoded.channel_id !== channelId) throw Error('scope');
         position = decoded;
       } catch {
-        throw failure(400, 'INVALID_CURSOR', 'Cursor session tidak valid untuk channel ini.');
+        throw failure(400, 'INVALID_CURSOR', 'The session cursor is invalid for this channel.');
       }
     }
     const result = await this.database.pool.query(

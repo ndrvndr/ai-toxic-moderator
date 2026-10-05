@@ -18,7 +18,7 @@ class HealthController {
       await this.database.pool.query('SELECT auth_provider FROM dashboard_sessions LIMIT 1');
       await this.database.pool.query('SELECT 1 FROM google_oauth_attempts LIMIT 1');
     } catch {
-      throw failure(503, 'NOT_READY', 'Database atau migration belum siap.');
+      throw failure(503, 'NOT_READY', 'The database or migrations are not ready.');
     }
     return {
       status: 'ready',

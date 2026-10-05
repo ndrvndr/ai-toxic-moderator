@@ -32,13 +32,14 @@ portfolio prototype rather than a validated replacement for human moderators.
 - Authenticated WebSocket delivery with event replay and frontend reconnect handling.
 - Blacklist-first checks and independently recorded AI decisions.
 - Automatic deletion, repeated timeouts, permanent bans, and uncertain-outcome evidence.
-- Saved livestream history, chat filters, message statistics, and action statistics.
+- Saved livestream history with numbered pages (10 streams per page by default), chat filters, message statistics, and action statistics.
 - Versioned moderation Settings and immutable configuration snapshots per run.
 - Custom blocked words, phrases, and domains with independent action choices.
 - Local INT8 AI inference with pinned model identity and isolated native execution.
 - Automatic AI discovery for eligible monitoring runs and captured action thresholds.
 - AI operational status, bounded recovery, and separate planning/execution results.
-- English Overview, compact Live chat, and readable History reports and settings.
+- English dashboard and API messages, compact Live chat, and readable History reports and settings.
+- Shared shadcn/ui controls and a persistent light/dark theme toggle.
 - Streamer-facing public homepage and server-managed AI model configuration.
 - Verified YouTube channel setup before starting monitoring.
 - Dashboard recovery during temporary API outages, including when monitoring is idle.

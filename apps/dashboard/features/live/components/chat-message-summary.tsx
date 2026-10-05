@@ -1,3 +1,4 @@
+import { Card } from '@/components/ui/card';
 import type { ChatObservation } from '@moderator/contracts';
 
 const ruleLabels = {
@@ -34,10 +35,10 @@ export function ChatMessageSummary({ message }: { message: ChatObservation }) {
   const uncertain = deletion?.status === 'UNKNOWN' || author?.status === 'UNKNOWN';
   return (
     <div className="space-y-2">
-      <div
+      <Card
         role="group"
         aria-label="Moderation summary"
-        className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+        className="rounded-none bg-transparent p-0 ring-0 flex-row flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
       >
         {evaluation?.classifier_version === 'blacklist-only-1' && !message.blacklist ? (
           <span>No blocked word matched</span>
@@ -76,7 +77,7 @@ export function ChatMessageSummary({ message }: { message: ChatObservation }) {
             {author.action === 'TIMEOUT' ? 'Timeout' : 'Ban'} request {actionLabels[author.status]}
           </span>
         )}
-      </div>
+      </Card>
       {uncertain && (
         <p className="text-xs text-amber-800 dark:text-amber-200">
           YouTube’s result is uncertain. This request won’t be retried automatically.

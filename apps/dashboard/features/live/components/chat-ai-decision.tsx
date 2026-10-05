@@ -1,3 +1,6 @@
+import { Disclosure } from '@/components/disclosure';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import type { ChatAiDecision as Decision } from '@moderator/contracts';
 
 const reasons: Record<Decision['reason_code'], string> = {
@@ -45,14 +48,16 @@ export function ChatAiDecision({ decision }: { decision: Decision | null | undef
   if (!decision) return null;
   const state = planning[decision.planning_status];
   return (
-    <div
+    <Card
       role="group"
       aria-label="AI moderation decision"
-      className="space-y-2 rounded-lg border p-3 text-xs"
+      className="block ring-0 space-y-2 rounded-lg border p-3 text-xs"
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">AI moderation decision</span>
-        <span className="rounded-md bg-muted px-2 py-1 font-medium">{state.label}</span>
+        <Badge variant="secondary" className="rounded-md bg-muted px-2 py-1 font-medium">
+          {state.label}
+        </Badge>
       </div>
       <p>{reasons[decision.reason_code]}</p>
       {decision.selected_tier && (
@@ -73,8 +78,7 @@ export function ChatAiDecision({ decision }: { decision: Decision | null | undef
         <p>The author could not be identified. Only message deletion was planned.</p>
       )}
       <p className="text-muted-foreground">{state.description}</p>
-      <details className="text-muted-foreground">
-        <summary className="cursor-pointer">AI decision details</summary>
+      <Disclosure className="text-muted-foreground" title={<>AI decision details</>}>
         <dl className="mt-2 space-y-2 wrap-break-word">
           <div>
             <dt className="font-medium">Captured settings</dt>
@@ -114,11 +118,11 @@ export function ChatAiDecision({ decision }: { decision: Decision | null | undef
             <dd>{decision.decided_at}</dd>
           </div>
         </dl>
-      </details>
+      </Disclosure>
       <p className="text-muted-foreground">
         This saved decision uses the settings captured for its run and the considered model result.
         The latest model output may differ. A selected tier does not confirm execution.
       </p>
-    </div>
+    </Card>
   );
 }

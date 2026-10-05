@@ -117,7 +117,7 @@ it('selects all new AI actions without implicit thresholds and saves an explicit
     'Allow AI timeout',
     'Allow AI ban',
   ]) {
-    expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByLabelText(label).getAttribute('aria-checked')).toBe('true');
   }
   fill();
   change('AI timeout seconds', '60');
@@ -162,7 +162,7 @@ it('preserves disabled saved actions instead of applying new-channel defaults', 
     'Allow AI timeout',
     'Allow AI ban',
   ])
-    expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByLabelText(label).getAttribute('aria-checked')).toBe('false');
   expect((screen.getByLabelText('Ban threshold') as HTMLInputElement).value).toBe('0.95');
   expect(posts()).toHaveLength(0);
 });

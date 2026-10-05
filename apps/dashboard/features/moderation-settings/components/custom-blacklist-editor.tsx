@@ -1,4 +1,5 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
 
 import { Button } from '@/components/ui/button';
 import { isBlacklistAccessError, useCustomBlacklist } from '../hooks/use-custom-blacklist';
@@ -15,11 +16,11 @@ function EditorContent(props: Props) {
   if (query.isError)
     return (
       <div className="space-y-3">
-        <p role="alert">
+        <Alert role="alert">
           {isBlacklistAccessError(query.error)
             ? 'You no longer have access to this blacklist. Verify your account and channel permissions.'
             : 'Unable to load the blacklist.'}
-        </p>
+        </Alert>
         <Button variant="outline" onClick={() => void query.refetch()}>
           Retry loading blacklist
         </Button>

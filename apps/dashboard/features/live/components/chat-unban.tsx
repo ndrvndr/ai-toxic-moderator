@@ -1,8 +1,16 @@
 'use client';
+import { Alert } from '@/components/ui/alert';
+import { Card } from '@/components/ui/card';
 
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import type { ChatAuthorAction, UnbanRequest, UnbanSummary } from '@moderator/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Dialog } from 'radix-ui';
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -182,7 +190,7 @@ function OwnerUnban({
   const disabled =
     history.isPending || history.isError || mutation.isPending || Boolean(confirmed || inProgress);
   return (
-    <div role="group" aria-label="Unban viewer" className="space-y-2">
+    <Card role="group" aria-label="Unban viewer" className="block ring-0 space-y-2">
       <RemovalResult removal={removal} />
       {history.isPending && (
         <p role="status" className="text-xs text-muted-foreground">
@@ -191,9 +199,9 @@ function OwnerUnban({
       )}
       {history.isError && (
         <div>
-          <p role="alert" className="text-xs">
+          <Alert role="alert" className="text-xs">
             Unable to check unban history. {getErrorMessage(history.error)}
-          </p>
+          </Alert>
           <Button size="sm" variant="outline" onClick={() => void history.refetch()}>
             Check again
           </Button>
@@ -233,63 +241,60 @@ function OwnerUnban({
           )}
         </div>
       )}
-      <Dialog.Root
+      <Dialog
         open={method !== null}
         onOpenChange={(open) => {
           if (!open && !mutation.isPending) setMethod(null);
         }}
       >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-          <Dialog.Content
-            onEscapeKeyDown={(event) => {
-              if (mutation.isPending) event.preventDefault();
-            }}
-            onPointerDownOutside={(event) => {
-              if (mutation.isPending) event.preventDefault();
-            }}
-            className="fixed left-1/2 top-1/2 z-50 w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 space-y-4 rounded-xl border bg-background p-6 shadow-lg"
-          >
-            <Dialog.Title className="text-lg font-semibold">
-              {method === 'YOUTUBE' ? 'Unban this viewer?' : 'Confirm unban in YouTube Studio'}
-            </Dialog.Title>
-            <Dialog.Description className="text-sm text-muted-foreground">
-              {method === 'YOUTUBE'
-                ? 'Ask YouTube to remove the permanent ban recorded for this message. New messages may be moderated again. Deleted messages will not be restored.'
-                : 'Only confirm after you have removed this viewer from Hidden users in YouTube Studio. This records your confirmation; it does not send an unban request or verify the current YouTube state.'}
-            </Dialog.Description>
-            {mutation.isError && (
-              <p role="alert" className="text-sm text-destructive">
-                {removalError(mutation.error)}{' '}
-                {request &&
-                  'The result may not have reached this page. Retry uses the same request ID and will not repeat an already recorded request.'}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <Dialog.Close asChild>
-                <Button variant="outline" disabled={mutation.isPending}>
-                  Close
-                </Button>
-              </Dialog.Close>
-              <Button
-                disabled={
-                  mutation.isPending ||
-                  (!request && (disabled || (method === 'YOUTUBE' && unknown)))
-                }
-                onClick={() => void submit()}
-              >
-                {mutation.isPending
-                  ? 'Submitting…'
-                  : request
-                    ? 'Retry same request'
-                    : method === 'YOUTUBE'
-                      ? 'Confirm unban'
-                      : 'Confirm already unbanned'}
+        <DialogContent
+          showCloseButton={false}
+          onEscapeKeyDown={(event) => {
+            if (mutation.isPending) event.preventDefault();
+          }}
+          onPointerDownOutside={(event) => {
+            if (mutation.isPending) event.preventDefault();
+          }}
+          className="fixed left-1/2 top-1/2 z-50 w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 space-y-4 rounded-xl border bg-background p-6 shadow-lg"
+        >
+          <DialogTitle className="text-lg font-semibold">
+            {method === 'YOUTUBE' ? 'Unban this viewer?' : 'Confirm unban in YouTube Studio'}
+          </DialogTitle>
+          <DialogDescription className="text-sm text-muted-foreground">
+            {method === 'YOUTUBE'
+              ? 'Ask YouTube to remove the permanent ban recorded for this message. New messages may be moderated again. Deleted messages will not be restored.'
+              : 'Only confirm after you have removed this viewer from Hidden users in YouTube Studio. This records your confirmation; it does not send an unban request or verify the current YouTube state.'}
+          </DialogDescription>
+          {mutation.isError && (
+            <Alert role="alert" className="text-sm text-destructive">
+              {removalError(mutation.error)}{' '}
+              {request &&
+                'The result may not have reached this page. Retry uses the same request ID and will not repeat an already recorded request.'}
+            </Alert>
+          )}
+          <div className="flex justify-end gap-2">
+            <DialogClose asChild>
+              <Button variant="outline" disabled={mutation.isPending}>
+                Close
               </Button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-    </div>
+            </DialogClose>
+            <Button
+              disabled={
+                mutation.isPending || (!request && (disabled || (method === 'YOUTUBE' && unknown)))
+              }
+              onClick={() => void submit()}
+            >
+              {mutation.isPending
+                ? 'Submitting…'
+                : request
+                  ? 'Retry same request'
+                  : method === 'YOUTUBE'
+                    ? 'Confirm unban'
+                    : 'Confirm already unbanned'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </Card>
   );
 }

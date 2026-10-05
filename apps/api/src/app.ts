@@ -59,7 +59,7 @@ export async function createApi(config: AppConfig, pool?: DatabasePool) {
       response.status(403).json({
         error: {
           code: 'HOST_FORBIDDEN',
-          message: 'API development hanya tersedia pada loopback.',
+          message: 'The development API is only available on loopback.',
           field_errors: [],
           trace_id: request.traceId,
         },

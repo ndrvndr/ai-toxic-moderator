@@ -2780,3 +2780,88 @@ test('saved session cursors cannot cross status filters', async () => {
     assert.equal((await wrongResponse.json()).error.code, 'INVALID_CURSOR');
   }
 });
+
+test('numbered history defaults to ten sessions and preserves filters across pages', async () => {
+  const marker = `Numbered history ${randomUUID()}`;
+  const runs = [];
+  for (let i = 0; i < 11; i++) runs.push(await startRun(`${marker} ${i}`));
+  const read = async (suffix = '') => {
+    const response = await request(
+      `/v1/youtube/sessions/history-page?q=${encodeURIComponent(marker)}${suffix}`,
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+    return require('@moderator/contracts').historySessionsPage.parse(await response.json());
+  };
+  const first = await read();
+  assert.equal(first.page, 1);
+  assert.equal(first.take, 10);
+  assert.equal(first.total, 11);
+  assert.equal(first.total_pages, 2);
+  assert.equal(first.items.length, 10);
+  const second = await read('&page=2');
+  assert.equal(second.items.length, 1);
+  assert.equal(new Set([...first.items, ...second.items].map((row) => row.session_id)).size, 11);
+  assert.deepEqual(await read(), first);
+  const smaller = await read('&page=3&take=5&status=STARTING');
+  assert.equal(smaller.total_pages, 3);
+  assert.equal(smaller.items.length, 1);
+  const empty = await read('&page=20');
+  assert.deepEqual(empty.items, []);
+  assert.equal(empty.total, 11);
+  assert.equal((await read('&status=STOPPED')).total, 0);
+  // Revoking membership removes both the count and the page rows immediately.
+  await admin.query('DELETE FROM channel_memberships WHERE channel_id=$1 AND account_id=$2', [
+    runs[0].channel_id,
+    accountId,
+  ]);
+  const revoked = await read();
+  assert.equal(revoked.total, 10);
+  assert.equal(
+    revoked.items.some((row) => row.session_id === runs[0].session_id),
+    false,
+  );
+});
+
+test('numbered history validates pagination and sends English authentication errors', async () => {
+  for (const query of [
+    'page=0',
+    'page=-1',
+    'page=100001',
+    'take=0',
+    'take=51',
+    'page=abc',
+    'status=INVALID',
+  ]) {
+    const response = await request(`/v1/youtube/sessions/history-page?${query}`);
+    assert.equal(response.status, 422);
+    assert.equal(
+      (await response.json()).error.message,
+      'Provide a valid page, page size and history filters.',
+    );
+  }
+  const response = await request('/v1/youtube/sessions/history-page', { headers: { Cookie: '' } });
+  assert.equal(response.status, 401);
+  assert.equal(
+    (await response.json()).error.message,
+    'Your session is unavailable or has expired.',
+  );
+});
+
+test('generic API errors use safe English copy', async () => {
+  const missing = await request('/v1/not-a-route');
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error.message, 'The resource was not found.');
+  const oversized = await request('/v1/monitoring/start', {
+    method: 'POST',
+    body: { value: 'x'.repeat(20_000) },
+  });
+  assert.equal(oversized.status, 413);
+  assert.equal((await oversized.json()).error.message, 'The request body is too large.');
+  const malformed = await fetch(base + '/v1/monitoring/start', {
+    method: 'POST',
+    headers: { Cookie: cookie, Origin: origin, 'Content-Type': 'application/json' },
+    body: '{',
+  });
+  assert.equal(malformed.status, 400);
+  assert.equal((await malformed.json()).error.message, 'The request is invalid.');
+});

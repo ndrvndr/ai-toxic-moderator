@@ -1,3 +1,5 @@
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import type { ChatDeletion as Deletion } from '@moderator/contracts';
 
 const statusDetails: Record<Deletion['status'], { label: string; description: string }> = {
@@ -32,12 +34,18 @@ export function ChatDeletion({ deletion }: { deletion?: Deletion | null }) {
   const details = statusDetails[deletion.status];
 
   return (
-    <div role="group" aria-label="Deletion result" className="space-y-2 rounded-md border p-3">
+    <Card
+      role="group"
+      aria-label="Deletion result"
+      className="block ring-0 space-y-2 rounded-md border p-3"
+    >
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-muted-foreground">Automatic action</span>
-        <span className="rounded-md bg-muted px-2 py-1 font-medium">{details.label}</span>
+        <Badge variant="secondary" className="rounded-md bg-muted px-2 py-1 font-medium">
+          {details.label}
+        </Badge>
       </div>
       <p className="text-xs text-muted-foreground">{details.description}</p>
-    </div>
+    </Card>
   );
 }

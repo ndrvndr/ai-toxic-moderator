@@ -1,4 +1,5 @@
 'use client';
+import { Badge } from '@/components/ui/badge';
 
 import Link from 'next/link';
 
@@ -27,7 +28,9 @@ export function HistorySessionCard({ session }: HistorySessionCardProps) {
         <h2 className="wrap-break-word font-medium">{session.title || 'Untitled livestream'}</h2>
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="rounded-md bg-muted px-2 py-1">{status}</span>
+          <Badge variant="secondary" className="rounded-md bg-muted px-2 py-1">
+            {status}
+          </Badge>
           <span>
             Saved{' '}
             <time dateTime={session.created_at}>

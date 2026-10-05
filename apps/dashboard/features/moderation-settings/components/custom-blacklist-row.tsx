@@ -1,4 +1,8 @@
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { NativeSelect } from '@/components/ui/native-select';
 import { Trash2 } from 'lucide-react';
 import type { BlacklistEntryDraft } from '../lib/blacklist-draft';
 
@@ -20,22 +24,21 @@ export function CustomBlacklistRow({
       <legend className="sr-only">Blacklist entry {number}</legend>
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2 text-xs">
-          <label htmlFor={`${id}-pattern`}>
+          <Label htmlFor={`${id}-pattern`}>
             <span aria-hidden="true">Blocked text</span>
             <span className="sr-only">Blocked text for entry {number}</span>
-          </label>
-          <label className="flex items-center gap-1.5 text-muted-foreground">
-            <input
+          </Label>
+          <Label className="flex items-center gap-1.5 text-muted-foreground">
+            <Checkbox
               aria-label={`Entry ${number} enabled`}
-              type="checkbox"
               checked={entry.enabled}
-              onChange={(e) => onChange({ ...entry, enabled: e.target.checked })}
+              onCheckedChange={(checked) => onChange({ ...entry, enabled: checked === true })}
             />
             <span className="sr-only">Entry {number} enabled</span>
             <span aria-hidden="true">Enabled</span>
-          </label>
+          </Label>
         </div>
-        <input
+        <Input
           aria-label={`Blocked text for entry ${number}`}
           id={`${id}-pattern`}
           className="h-10 w-full rounded-md border bg-background px-3 text-sm"
@@ -53,11 +56,11 @@ export function CustomBlacklistRow({
         </p>
       </div>
       <div className="space-y-2">
-        <label htmlFor={`${id}-type`} className="block text-xs">
+        <Label htmlFor={`${id}-type`} className="block text-xs">
           <span aria-hidden="true">Match</span>
           <span className="sr-only">Match type for entry {number}</span>
-        </label>
-        <select
+        </Label>
+        <NativeSelect
           aria-label={`Match type for entry ${number}`}
           id={`${id}-type`}
           className="h-10 w-full rounded-md border bg-background px-2 text-sm"
@@ -69,14 +72,14 @@ export function CustomBlacklistRow({
           <option value="WORD">Word</option>
           <option value="PHRASE">Phrase</option>
           <option value="DOMAIN">Domain</option>
-        </select>
+        </NativeSelect>
       </div>
       <div className="space-y-2">
-        <label htmlFor={`${id}-action`} className="block text-xs">
+        <Label htmlFor={`${id}-action`} className="block text-xs">
           <span aria-hidden="true">Action</span>
           <span className="sr-only">Action for entry {number}</span>
-        </label>
-        <select
+        </Label>
+        <NativeSelect
           aria-label={`Action for entry ${number}`}
           id={`${id}-action`}
           className="h-10 w-full rounded-md border bg-background px-2 text-sm"
@@ -88,12 +91,12 @@ export function CustomBlacklistRow({
           <option value="DELETE">Delete message</option>
           <option value="DELETE_TIMEOUT">Delete and time out viewer</option>
           <option value="DELETE_BAN">Delete and ban viewer</option>
-        </select>
+        </NativeSelect>
         {entry.action === 'DELETE_TIMEOUT' && (
-          <label className="flex items-center gap-2 text-xs" htmlFor={`${id}-duration`}>
+          <Label className="flex items-center gap-2 text-xs" htmlFor={`${id}-duration`}>
             <span aria-hidden="true">Seconds</span>
             <span className="sr-only">Timeout seconds for entry {number}</span>
-            <input
+            <Input
               aria-label={`Timeout seconds for entry ${number}`}
               id={`${id}-duration`}
               type="number"
@@ -104,7 +107,7 @@ export function CustomBlacklistRow({
               value={entry.duration_seconds}
               onChange={(e) => onChange({ ...entry, duration_seconds: e.target.value })}
             />
-          </label>
+          </Label>
         )}
       </div>
       <Button

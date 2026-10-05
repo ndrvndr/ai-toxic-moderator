@@ -1,3 +1,5 @@
+import { Disclosure } from '@/components/disclosure';
+import { Card } from '@/components/ui/card';
 import type { ChatBlacklistDecision } from '@moderator/contracts';
 
 const matchLabels = { WORD: 'Word', PHRASE: 'Phrase', DOMAIN: 'Domain' };
@@ -13,7 +15,7 @@ export function ChatBlacklist({ decision }: { decision?: ChatBlacklistDecision |
         : 'Delete message';
 
   return (
-    <div
+    <Card
       role="group"
       aria-label="Blacklist decision"
       className="space-y-2 rounded-md border p-3 text-xs"
@@ -33,8 +35,7 @@ export function ChatBlacklist({ decision }: { decision?: ChatBlacklistDecision |
           plan is retained.
         </p>
       )}
-      <details className="text-muted-foreground">
-        <summary className="cursor-pointer">Blacklist details</summary>
+      <Disclosure className="text-muted-foreground" title={<>Blacklist details</>}>
         <dl className="mt-2 space-y-1 wrap-break-word">
           <dt>Captured revision</dt>
           <dd>{decision.blacklist_revision}</dd>
@@ -51,7 +52,7 @@ export function ChatBlacklist({ decision }: { decision?: ChatBlacklistDecision |
           <dt>Matcher version</dt>
           <dd>{decision.matcher_version}</dd>
         </dl>
-      </details>
-    </div>
+      </Disclosure>
+    </Card>
   );
 }
