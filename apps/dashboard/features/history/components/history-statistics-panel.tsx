@@ -53,10 +53,10 @@ export function HistoryStatisticsPanel({ accountId, sessionId }: HistoryStatisti
   const data = statistics.data;
   const metrics = [
     { label: 'Total messages', value: data.total_messages },
-    { label: 'Allowed by rules', value: data.allowed_messages },
-    { label: 'Flagged by rules', value: data.flagged_messages },
+    { label: 'No match in text checks', value: data.allowed_messages },
+    { label: 'Flagged by text checks', value: data.flagged_messages },
     { label: 'Checks failed', value: data.error_messages },
-    { label: 'Not checked by rules', value: data.unevaluated_messages },
+    { label: 'No text check', value: data.unevaluated_messages },
   ];
 
   return (
@@ -88,8 +88,9 @@ export function HistoryStatisticsPanel({ accountId, sessionId }: HistoryStatisti
       </dl>
 
       <p className="text-xs leading-5 text-muted-foreground">
-        These counts cover saved text messages and their rule checks. AI ratings and action results
-        are separate; “allowed by rules” does not mean no action was taken.
+        These counts cover saved text messages and their blacklist checks, including historical rule
+        results. AI ratings and action results are separate; a non-match does not mean no action was
+        taken.
       </p>
       <details className="rounded-lg border p-4">
         <summary className="cursor-pointer text-sm font-medium">Why messages were flagged</summary>

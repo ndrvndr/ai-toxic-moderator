@@ -1,6 +1,5 @@
 import { ActionPlanner, RuleDetectionEngine } from '@moderator/moderation-core';
 import { createHash } from 'node:crypto';
-import { DEFAULT_RULES } from './default-rules';
 
 export type ControlledDeleteScope = { sessionId: string; authorChannelId: string };
 export const CONTROLLED_DELETE_MESSAGE = 'ATM_DELETE_TEST_V1';
@@ -16,7 +15,6 @@ export function controlledDeleteVersion(scope: ControlledDeleteScope): string {
 
 export function controlledDeletePolicy(scope: ControlledDeleteScope) {
   const version = controlledDeleteVersion(scope);
-  const normal = new RuleDetectionEngine(DEFAULT_RULES);
   const test = new RuleDetectionEngine([
     {
       id: 'development.controlled-delete',
@@ -43,10 +41,7 @@ export function controlledDeletePolicy(scope: ControlledDeleteScope) {
     version,
     engine: {
       async detect(input: Parameters<RuleDetectionEngine['detect']>[0]) {
-        const signals = await normal.detect(input);
-        return input.author_external_id === scope.authorChannelId
-          ? [...signals, ...(await test.detect(input))]
-          : signals;
+        return input.author_external_id === scope.authorChannelId ? await test.detect(input) : [];
       },
     },
     planner: {

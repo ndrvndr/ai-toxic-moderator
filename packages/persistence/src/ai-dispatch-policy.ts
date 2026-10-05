@@ -1,4 +1,4 @@
-/** Uses scoped observation alias o; explicit built-in and blacklist actions take priority. */
+/** Uses scoped observation alias o; blacklist and historical explicit actions take priority. */
 export const AI_UNOPPOSED_SQL = `NOT EXISTS (
   SELECT 1 FROM youtube_moderation_action_plans prior
   JOIN youtube_chat_classifications prior_c ON prior_c.id=prior.classification_id

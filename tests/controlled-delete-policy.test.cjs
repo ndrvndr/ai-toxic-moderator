@@ -164,9 +164,9 @@ test('the actual classification factory remains opt-in and persists a test plan 
     assert.equal(plans[0].action, enabled ? 'DELETE' : 'NONE');
     assert.equal(
       plans[0].policy_version,
-      enabled ? controlledDeleteVersion(scope) : `settings-run-${context.classification_id}`,
+      enabled ? controlledDeleteVersion(scope) : 'blacklist-only-1',
     );
-    assert.equal(snapshotReads, enabled ? 0 : 1);
+    assert.equal(snapshotReads, 0);
   }
 });
 

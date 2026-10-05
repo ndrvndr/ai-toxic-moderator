@@ -31,6 +31,7 @@ const snapshot = z
     }
   });
 
+/** Legacy snapshot reader retained for historical-policy compatibility tests; not used by the worker. */
 export class RunSettingsPlanner {
   async resolve(client: PoolClient, observation: ClassificationObservation) {
     const runId = uuid.parse(observation.runId).toLowerCase();

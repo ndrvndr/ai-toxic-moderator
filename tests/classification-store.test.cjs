@@ -401,3 +401,78 @@ test('snapshot planning on replay uses the original classification run and persi
   assert.equal(saved, true);
   assert.equal('run_id' in result.decision, false);
 });
+
+test('normal classification never reads retired settings or detects developer-maintained words', async () => {
+  const { createClassificationStore } = source(
+    'apps/worker/src/ingestion/create-classification-store.ts',
+  );
+  for (const text of [
+    'idiot',
+    'bodoh tolol goblok',
+    'judi slot gacor',
+    'https://example.invalid',
+  ]) {
+    const plans = [];
+    const store = createClassificationStore(
+      {
+        async save(_client, plan) {
+          plans.push(plan);
+        },
+      },
+      undefined,
+      undefined,
+      {
+        async save(_client, bundle) {
+          assert.deepEqual(bundle.plans, []);
+        },
+      },
+    );
+    const client = {
+      async query(sql, params) {
+        assert.ok(
+          !sql.includes('monitoring_settings_snapshots'),
+          'Retired action settings must not be consulted.',
+        );
+        if (sql.includes('FROM monitoring_blacklist_snapshots'))
+          return {
+            rows: [
+              {
+                run_id: params[0],
+                channel_id: params[1],
+                session_id: params[2],
+                blacklist_id: null,
+                blacklist_revision: null,
+                source: 'DEFAULT',
+                configuration: { schema_version: 1, enabled: false, rules: [] },
+              },
+            ],
+          };
+        if (sql.includes('SELECT')) return { rows: [] };
+        assert.match(sql, /INSERT INTO youtube_chat_classifications/);
+        assert.equal(params[5], 'blacklist-only-1');
+        return {
+          rows: [
+            {
+              id: params[0],
+              run_id: params[4],
+              outcome: params[7],
+              primary_category: params[8],
+              severity: params[9],
+              reason_code: params[10],
+              reason: params[11],
+              signals: JSON.parse(params[12]),
+            },
+          ],
+        };
+      },
+    };
+    const result = await store.classify(client, {
+      ...observation,
+      payload: { snippet: { type: 'textMessageEvent', textMessageDetails: { messageText: text } } },
+    });
+    assert.equal(result.decision.outcome, 'ALLOW');
+    assert.deepEqual(result.decision.signals, []);
+    assert.equal(plans.length, 1);
+    assert.equal(plans[0].action, 'NONE');
+  }
+});

@@ -5,7 +5,27 @@ const { source } = require('./helpers/source.cjs');
 const { SettingsActionPlanner, RuleDetectionEngine } = source(
   'packages/moderation-core/src/index.ts',
 );
-const { DEFAULT_RULES } = source('apps/worker/src/ingestion/default-rules.ts');
+// Historical planner fixtures only. The runtime factory has no built-in rules.
+const legacyRules = [
+  {
+    id: 'id.harassment.direct-insult',
+    version: '1',
+    category: 'HARASSMENT',
+    severity: 2,
+    strength: 'STRONG',
+    intent: 'DIRECT_INSULT',
+    pattern: /idiot/u,
+  },
+  {
+    id: 'id.gambling.promotion',
+    version: '1',
+    category: 'GAMBLING',
+    severity: 1,
+    strength: 'AMBIGUOUS',
+    intent: 'GAMBLING_PROMOTION',
+    pattern: /slot/u,
+  },
+];
 const context = {
   classification_id: '10000000-0000-4000-8000-000000000001',
   channel_id: '20000000-0000-4000-8000-000000000002',
@@ -26,7 +46,7 @@ function configuration(action = 'DELETE', enabled = true) {
   };
 }
 async function detect(text) {
-  return new RuleDetectionEngine(DEFAULT_RULES).detect({
+  return new RuleDetectionEngine(legacyRules).detect({
     external_message_id: context.external_message_id,
     author_external_id: context.author_channel_id,
     author_display_name: 'Test viewer',

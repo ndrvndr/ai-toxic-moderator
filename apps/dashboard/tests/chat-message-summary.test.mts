@@ -30,6 +30,33 @@ const message: ChatObservation = {
 
 afterEach(cleanup);
 
+it('shows new blacklist non-matches without claiming a rule or AI safety verdict', () => {
+  render(
+    createElement(ChatMessage, {
+      compact: true,
+      message: {
+        ...message,
+        evaluation_status: 'ALLOW',
+        evaluation: {
+          ...message.evaluation!,
+          outcome: 'ALLOW',
+          primary_category: null,
+          severity: 0,
+          reason_code: 'NO_RULE_MATCH',
+          classifier_version: 'blacklist-only-1',
+        },
+        deletion: null,
+        author_action: null,
+      },
+    }),
+  );
+  expect(screen.getByText('No blocked word matched')).toBeTruthy();
+  expect(screen.getByText(/AI ratings and action results are shown separately/)).toBeTruthy();
+  expect(screen.queryByText(/Rule check:/)).toBeNull();
+  expect(screen.queryByText('Allowed')).toBeNull();
+  expect(screen.queryByText(/Severity:/)).toBeNull();
+});
+
 it('shows uncertain and pending outcomes outside the closed details', () => {
   const view = render(createElement(ChatMessage, { message, compact: true }));
   expect(screen.getByText('Rule check: Flagged')).toBeTruthy();

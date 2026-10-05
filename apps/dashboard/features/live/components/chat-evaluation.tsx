@@ -12,6 +12,15 @@ export function ChatEvaluation({ evaluation }: { evaluation: Evaluation | null }
     return <p className="text-xs text-muted-foreground">Not evaluated</p>;
   }
 
+  if (evaluation.classifier_version === 'blacklist-only-1') {
+    // Blacklist matches have their own details. A non-match is not an AI safety assessment.
+    return evaluation.reason_code === 'BLACKLIST_MATCH' ? null : (
+      <p className="text-xs text-muted-foreground">
+        No blocked word matched. AI ratings and action results are shown separately.
+      </p>
+    );
+  }
+
   const flagged = evaluation.outcome === 'REVIEW' || evaluation.outcome === 'ACTION_REQUIRED';
 
   return (

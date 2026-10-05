@@ -335,7 +335,7 @@ test('provenance rejects swapped plan slots and another channel or session', asy
   );
 });
 
-test('dispatch eligibility validates linked blacklist plans and keeps authorized built-in actions eligible', async () => {
+test('dispatch eligibility validates linked blacklist plans and blocks retired built-in actions', async () => {
   for (const staged of [true, false]) {
     const f = await fixture({ seedClassification: !staged });
     let ids;
@@ -354,8 +354,12 @@ test('dispatch eligibility validates linked blacklist plans and keeps authorized
         const saved = [];
         for (const [index, plan] of f.bundle.plans.entries()) {
           saved.push(
-            (await plans.save(client, { ...plan, policy_version: `eligible-built-in-${index}` }))
-              .id,
+            (
+              await plans.save(client, {
+                ...plan,
+                policy_version: `settings-run-${f.runId}-${index}`,
+              })
+            ).id,
           );
         }
         return saved;
@@ -379,7 +383,7 @@ test('dispatch eligibility validates linked blacklist plans and keeps authorized
       f.sessionId,
     );
     const timeout = await new BanExecutionStore(worker).ensure(ids[1], f.channelId, f.sessionId);
-    const expected = { accountId: f.accountId };
+    const expected = staged ? { accountId: f.accountId } : null;
     assert.deepEqual(
       await new DeleteEligibilityStore(worker, () => true).resolve(deletion),
       expected,
@@ -401,6 +405,33 @@ async function classifyFixture(
   if (result.classificationId) f.classificationId = result.classificationId;
   return result;
 }
+
+test('a pending pre-settings built-in plan remains readable but cannot discover or dispatch', async () => {
+  const f = await fixture({ action: 'DELETE' });
+  const plan = await transaction(worker, (client) =>
+    new ActionPlanStore().save(client, {
+      ...f.bundle.plans[0],
+      policy_version: 'actions-1',
+    }),
+  );
+  await activateDispatch(f);
+  const execution = await new DeleteExecutionStore(worker).ensure(
+    plan.id,
+    f.channelId,
+    f.sessionId,
+  );
+  assert.equal(await new DeleteCandidateStore(worker).next(null), null);
+  assert.equal(await new DeleteEligibilityStore(worker, () => true).resolve(execution), null);
+  const retained = await admin.query(
+    'SELECT policy_version, action FROM youtube_moderation_action_plans WHERE id=$1',
+    [plan.id],
+  );
+  assert.deepEqual(retained.rows, [{ policy_version: 'actions-1', action: 'DELETE' }]);
+  await admin.query(
+    "UPDATE monitoring_runs SET status='STOPPED', finished_at=clock_timestamp() WHERE id=$1",
+    [f.runId],
+  );
+});
 
 test('competing pipeline classifications reuse one classification, audit and pair of plans', async () => {
   const f = await fixture({ seedClassification: false });

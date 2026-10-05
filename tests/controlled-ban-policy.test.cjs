@@ -296,11 +296,9 @@ test('classification factory persists controlled author plans only when scoped',
       assert.equal(plans[0].action, enabled ? action : 'NONE');
       assert.equal(
         plans[0].policy_version,
-        enabled
-          ? controlledBanVersion({ ...scope, action })
-          : `settings-run-${context.classification_id}`,
+        enabled ? controlledBanVersion({ ...scope, action }) : 'blacklist-only-1',
       );
-      assert.equal(snapshotReads, enabled ? 0 : 1);
+      assert.equal(snapshotReads, 0);
     }
   }
 });

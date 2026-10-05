@@ -8,7 +8,7 @@ endpoints, and YouTube chat ingestion are implemented.
 The worker retrieves chat resources and persists observations with checkpoints,
 deduplication, retry handling, and lease-based recovery.
 
-The dashboard supports authenticated WebSocket updates, rule-based classification,
+The dashboard supports authenticated WebSocket updates, blacklist checks,
 per-message moderation results, livestream history, and channel moderation Settings.
 The worker can plan and execute DELETE, TIMEOUT, and BAN actions with existing
 authorization and execution guards. Local AI inference, configurable severity
@@ -30,7 +30,7 @@ portfolio prototype rather than a validated replacement for human moderators.
 - Persisted retry schedules and chat completion.
 - Separate database roles for the API and worker.
 - Authenticated WebSocket delivery with event replay and frontend reconnect handling.
-- Rule-based classification and visible classification reasons.
+- Blacklist-first checks and independently recorded AI decisions.
 - Automatic deletion, repeated timeouts, permanent bans, and uncertain-outcome evidence.
 - Saved livestream history, chat filters, message statistics, and action statistics.
 - Versioned moderation Settings and immutable configuration snapshots per run.
@@ -317,11 +317,12 @@ without automatic retry.
 Counts of distinct external IDs represent chat resources, not exclusively
 viewer text messages. Checkpoint revisions are not message counts.
 
-The ingestion batch transaction also persists rule-based classifications and action
-plans. Normal action planning uses the monitoring run's immutable Settings snapshot;
-DEFAULT and LEGACY snapshots disable automatic actions. Saving Settings affects new
-runs, not an existing run. Provider dispatch requires the corresponding worker
-action switches and current authorization. See [Moderation Settings](docs/moderation-settings.md).
+The ingestion batch transaction persists blacklist checks and their action plans.
+Blocked words, phrases, and domains take priority; unmatched messages can be evaluated
+by AI using the monitoring run's captured settings. Built-in rules are retired and
+no longer produce new decisions or authorize pending action plans. Historical rule
+results remain readable. Provider dispatch requires the corresponding worker action
+switches and current authorization. See [Moderation Settings](docs/moderation-settings.md).
 
 ## Testing
 
@@ -477,10 +478,10 @@ production deployment procedure.
 
 On October 3, 2026, the developer indicated successful Settings-driven DELETE,
 snapshot/restart, TIMEOUT, repeated-TIMEOUT, and BAN verification by continuing
-after each procedure. See [Moderation Settings](docs/moderation-settings.md) for
+after each procedure. See [historical verification notes](docs/archive/built-in-moderation-settings.md) for
 the reported outcomes and evidence limits. The assistant did not run those checks.
 
-Rule-based classification is implemented. Its general accuracy and performance
+Built-in rule enforcement is retired. AI accuracy and performance
 have not been measured, and these development checks do not establish production
 readiness.
 

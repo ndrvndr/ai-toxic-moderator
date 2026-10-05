@@ -17,11 +17,11 @@ const reasons: Record<Decision['reason_code'], string> = {
 const planning: Record<Decision['planning_status'], { label: string; description: string }> = {
   NOT_SELECTED: {
     label: 'No AI action selected',
-    description: 'Blacklist and built-in moderation decisions are evaluated separately.',
+    description: 'Blocked word decisions are evaluated separately.',
   },
   BUILT_IN_PRIORITY: {
     label: 'AI action suppressed',
-    description: 'An explicit built-in or blacklist action for this message takes priority.',
+    description: 'A blocked word action or a previously recorded moderation plan takes priority.',
   },
   AWAITING_PLANS: {
     label: 'AI plans pending',

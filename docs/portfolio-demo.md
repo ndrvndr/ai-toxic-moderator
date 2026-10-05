@@ -19,7 +19,7 @@ channel or worker.
    Overview. Use an existing History report for the first part; reading that report
    does not start monitoring or fetch YouTube chat.
 3. In Moderation, review and save each section separately. Check blocked words,
-   built-in rules, AI model identity, enabled actions, and ordered thresholds.
+   AI model identity, enabled actions, and ordered thresholds.
    Changes apply to the next monitoring run, including a restarted run for the
    same broadcast; they do not replace an active run's captured settings.
 4. If demonstrating native AI, prepare the pinned cached artifacts and ensure
@@ -63,7 +63,7 @@ the very low functional-test values such as 0.10 on ordinary viewers.
    settings apply to a new run and that the highest enabled AI tier wins.
 3. **Live:** start monitoring a test broadcast with chat available. Verify
    monitoring and AI status separately.
-4. **Ordinary message:** send a greeting from the test viewer. Inspect rule check,
+4. **Ordinary message:** send a greeting from the test viewer. Inspect the blacklist check,
    model output, saved AI decision, and execution outcome as separate stages.
    If it triggers an action, report that result rather than calling it safe.
 5. **Blocked word:** send one configured literal example. Verify the captured

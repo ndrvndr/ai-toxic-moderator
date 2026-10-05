@@ -7,7 +7,6 @@ import { getErrorMessage } from '@/lib/api-client';
 
 import { AiModerationSettingsEditor } from './ai-moderation-settings-editor';
 import { CustomBlacklistEditor } from './custom-blacklist-editor';
-import { ModerationSettingsEditor } from './moderation-settings-editor';
 
 export function ModerationSettingsPage() {
   const session = useSession();
@@ -105,9 +104,6 @@ function ChannelSettings({
         <a href="#ai-action-limits" className="underline underline-offset-4">
           AI action limits
         </a>
-        <a href="#built-in-rules" className="underline underline-offset-4">
-          Built-in rules
-        </a>
       </nav>
       <section
         id="blocked-words"
@@ -137,9 +133,8 @@ function ChannelSettings({
           AI action limits
         </h2>
         <p className="text-sm text-muted-foreground">
-          Choose when AI can delete a message, time out a viewer, or ban them. Blocked words and
-          built-in rule actions take priority. A selected action still needs a confirmed result from
-          YouTube.
+          Choose when AI can delete a message, time out a viewer, or ban them. Blocked words take
+          priority. A selected action still needs a confirmed result from YouTube.
         </p>
         <AiModerationSettingsEditor
           accountId={accountId}
@@ -147,23 +142,6 @@ function ChannelSettings({
           canEdit={active.role === 'OWNER'}
         />
       </section>
-      <details id="built-in-rules" className="scroll-mt-6 rounded-2xl border bg-card p-5 sm:p-6">
-        <summary className="cursor-pointer text-lg font-semibold">
-          Built-in rules · Advanced
-        </summary>
-        <div className="mt-5 space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Built-in checks look for a small set of patterns, such as direct insults. They are
-            provided by the app, so you do not need to add these patterns to your blocked words.
-            Choose which actions these checks can take. Their action plans take priority over AI.
-          </p>
-          <ModerationSettingsEditor
-            accountId={accountId}
-            channelId={active.channel_id}
-            canEdit={active.role === 'OWNER'}
-          />
-        </div>
-      </details>
     </div>
   );
 }

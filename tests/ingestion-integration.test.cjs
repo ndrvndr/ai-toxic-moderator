@@ -347,12 +347,12 @@ test('HTTP start, scheduled ingestion and HTTP stop complete across runtime role
   assert.equal(classificationsStored.rows[0].outcome, 'ALLOW');
   assert.equal(classificationsStored.rows[0].primary_category, null);
   assert.equal(classificationsStored.rows[0].severity, 0);
-  assert.equal(classificationsStored.rows[0].classifier_version, 'rules-blacklist-1');
+  assert.equal(classificationsStored.rows[0].classifier_version, 'blacklist-only-1');
   assert.equal(classificationsStored.rows[0].policy_version, 'policy-1');
   const firstPlans = await readPlans(run);
   assert.equal(firstPlans.length, 1);
   assert.equal(firstPlans[0].action, 'NONE');
-  assert.equal(firstPlans[0].policy_version, `settings-run-${run.id}`);
+  assert.equal(firstPlans[0].policy_version, 'blacklist-only-1');
   assert.equal(refreshCalls, 1);
   assert.equal(chatCalls, 1);
 
@@ -517,7 +517,7 @@ test('action plan failure rolls back the entire ingestion batch and permits retr
     'SELECT outcome FROM youtube_chat_classifications WHERE session_id = $1',
     [run.session_id],
   );
-  assert.equal(classified.rows[0].outcome, 'REVIEW');
+  assert.equal(classified.rows[0].outcome, 'ALLOW');
   await worker.leases.finish(lease, 'STOPPED');
 });
 
@@ -887,135 +887,75 @@ test('a failed blacklist audit rolls back the complete ingested batch and its up
   }
 });
 
-test('worker plans saved actions from the run snapshot despite later settings changes', async () => {
-  for (const action of ['DELETE', 'TIMEOUT', 'BAN']) {
-    const initial = await startRun();
-    assert.equal((await stopThroughApi(initial)).status, 'STOPPED');
-    const configuration = {
-      schema_version: 1,
-      automatic_actions_enabled: true,
-      rules: [
-        {
-          rule_id: 'id.harassment.direct-insult',
-          rule_version: '1',
-          minimum_severity: 2,
-          action,
-          ...(action === 'TIMEOUT' ? { duration_seconds: 30 } : {}),
-        },
-      ],
-    };
-    const settingsPath = `/v1/channels/${initial.channel_id}/moderation-settings`;
-    const saved = await request(settingsPath, {
-      method: 'POST',
-      body: { expected_revision: 0, configuration },
-    });
-    assert.equal(saved.status, 200, await saved.clone().text());
-
-    const start = await request('/v1/monitoring/start', {
-      method: 'POST',
-      headers: { 'Idempotency-Key': randomUUID() },
-      body: { youtube_broadcast_id: initial.youtube_broadcast_id },
-    });
-    assert.equal(start.status, 200, await start.clone().text());
-    const run = startMonitoringResponse.parse(await start.json()).run;
-    const worker = createWorker();
-    const lease = await worker.leases.claim(run.id, randomUUID());
-    assert.ok(lease);
-    const broadcast = broadcasts.get(run.youtube_broadcast_id);
-    const authorId = 'UC' + 'a'.repeat(22);
-    const commit = async (messageId, text) => {
-      const checkpoint = await worker.writer.checkpoint(lease);
-      return worker.writer.commit(lease, {
-        expected_revision: checkpoint.revision,
-        request_page_token: checkpoint.next_page_token,
-        next_page_token: `next-${messageId}`,
-        polling_interval_ms: 60000,
-        items: [
+test('worker ignores saved built-in actions and classifies only the captured blacklist', async () => {
+  const initial = await startRun();
+  await stopThroughApi(initial);
+  // Historical settings can still exist in the database after the feature is retired.
+  await admin.query(
+    `INSERT INTO channel_moderation_settings(id, channel_id, revision, configuration, created_by)
+    VALUES ($1, $2, 1, $3::jsonb, $4)`,
+    [
+      randomUUID(),
+      initial.channel_id,
+      JSON.stringify({
+        schema_version: 1,
+        automatic_actions_enabled: true,
+        rules: [
           {
-            id: messageId,
-            snippet: {
-              type: 'textMessageEvent',
-              liveChatId: broadcast.live_chat_id,
-              publishedAt: '2026-01-01T00:00:00Z',
-              textMessageDetails: { messageText: text },
-            },
-            authorDetails: { channelId: authorId, displayName: 'Test viewer' },
+            rule_id: 'id.harassment.direct-insult',
+            rule_version: '1',
+            minimum_severity: 2,
+            action: 'BAN',
           },
         ],
-      });
-    };
-    assert.equal((await commit('first', 'idiot')).inserted, 1);
-    const changed = await request(settingsPath, {
-      method: 'POST',
-      body: {
-        expected_revision: 1,
-        configuration: { schema_version: 1, automatic_actions_enabled: false, rules: [] },
-      },
-    });
-    assert.equal(changed.status, 200, await changed.clone().text());
-    assert.equal((await commit('second', 'idiot')).inserted, 1);
-    assert.equal((await commit('safe', 'Hello test')).inserted, 1);
-    const stored = await admin.query(
-      `SELECT o.external_message_id, p.action, p.duration_seconds::text, p.policy_version
-       FROM youtube_moderation_action_plans p
-       JOIN youtube_chat_classifications c ON c.id = p.classification_id
-       JOIN youtube_chat_observations o ON o.id = c.observation_id
-       WHERE c.run_id = $1 ORDER BY o.external_message_id`,
-      [run.id],
-    );
-    assert.equal(stored.rows.length, 3);
-    for (const plan of stored.rows) {
-      assert.equal(plan.action, plan.external_message_id === 'safe' ? 'NONE' : action);
-      assert.equal(plan.policy_version, `settings-run-${run.id}`);
-      assert.equal(
-        plan.duration_seconds,
-        action === 'TIMEOUT' && plan.external_message_id !== 'safe' ? '30' : null,
-      );
-    }
-    // Reading snapshots is allowed, but the worker cannot edit their configuration.
-    const permissions = await workerPool.query(`SELECT
-      has_table_privilege(current_user, 'monitoring_settings_snapshots', 'SELECT') AS readable,
-      has_table_privilege(current_user, 'monitoring_settings_snapshots', 'UPDATE') AS editable`);
-    assert.deepEqual(permissions.rows[0], { readable: true, editable: false });
-    await worker.leases.finish(lease, 'STOPPED');
-
-    const restart = await request('/v1/monitoring/start', {
-      method: 'POST',
-      headers: { 'Idempotency-Key': randomUUID() },
-      body: { youtube_broadcast_id: run.youtube_broadcast_id },
-    });
-    assert.equal(restart.status, 200, await restart.clone().text());
-    const restarted = startMonitoringResponse.parse(await restart.json()).run;
-    const newLease = await worker.leases.claim(restarted.id, randomUUID());
-    assert.ok(newLease);
-    const checkpoint = await worker.writer.checkpoint(newLease);
-    await worker.writer.commit(newLease, {
-      expected_revision: checkpoint.revision,
-      request_page_token: checkpoint.next_page_token,
-      next_page_token: 'disabled-page',
-      polling_interval_ms: 60000,
-      items: [
-        {
-          id: 'disabled',
-          snippet: {
-            type: 'textMessageEvent',
-            liveChatId: broadcast.live_chat_id,
-            publishedAt: '2026-01-01T00:00:01Z',
-            textMessageDetails: { messageText: 'idiot' },
-          },
-          authorDetails: { channelId: authorId, displayName: 'Test viewer' },
+      }),
+      accountId,
+    ],
+  );
+  const start = await request('/v1/monitoring/start', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': randomUUID() },
+    body: { youtube_broadcast_id: initial.youtube_broadcast_id },
+  });
+  assert.equal(start.status, 200);
+  const run = startMonitoringResponse.parse(await start.json()).run;
+  const worker = createWorker();
+  const lease = await worker.leases.claim(run.id, randomUUID());
+  assert.ok(lease);
+  const checkpoint = await worker.writer.checkpoint(lease);
+  await worker.writer.commit(lease, {
+    expected_revision: checkpoint.revision,
+    request_page_token: checkpoint.next_page_token,
+    next_page_token: 'no-built-in-page',
+    polling_interval_ms: 60000,
+    items: ['idiot', 'judi slot gacor', 'https://example.invalid', 'Hello viewer'].map(
+      (text, index) => ({
+        id: 'retired-rules-' + index,
+        snippet: {
+          type: 'textMessageEvent',
+          liveChatId: broadcasts.get(run.youtube_broadcast_id).live_chat_id,
+          publishedAt: '2026-01-01T00:00:00Z',
+          textMessageDetails: { messageText: text },
         },
-      ],
-    });
-    const disabled = await admin.query(
-      `SELECT p.action, p.policy_version FROM youtube_moderation_action_plans p
-       JOIN youtube_chat_classifications c ON c.id = p.classification_id
-       WHERE c.run_id = $1`,
-      [restarted.id],
-    );
-    assert.deepEqual(disabled.rows, [
-      { action: 'NONE', policy_version: `settings-run-${restarted.id}` },
-    ]);
-    await worker.leases.finish(newLease, 'STOPPED');
+        authorDetails: { channelId: 'UC' + 'a'.repeat(22), displayName: 'Test viewer' },
+      }),
+    ),
+  });
+  const checks = await admin.query(
+    'SELECT outcome, signals, classifier_version FROM youtube_chat_classifications WHERE run_id=$1',
+    [run.id],
+  );
+  assert.equal(checks.rows.length, 4);
+  for (const check of checks.rows) {
+    assert.equal(check.outcome, 'ALLOW');
+    assert.deepEqual(check.signals, []);
+    assert.equal(check.classifier_version, 'blacklist-only-1');
   }
+  const plans = await readPlans(run);
+  assert.equal(plans.length, 4);
+  for (const plan of plans) {
+    assert.equal(plan.action, 'NONE');
+    assert.equal(plan.policy_version, 'blacklist-only-1');
+  }
+  await worker.leases.finish(lease, 'STOPPED');
 });

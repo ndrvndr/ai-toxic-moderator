@@ -267,8 +267,8 @@ function LatestStreamSummary({ accountId, sessionId }: { accountId: string; sess
         />
       </dl>
       <p className="text-xs leading-5 text-muted-foreground">
-        Flagged messages come from chat-rule checks. Confirmed actions include message deletions,
-        timeouts, and viewers hidden from chat.
+        Flagged messages come from blacklist checks and historical rule results. Confirmed actions
+        include message deletions, timeouts, and viewers hidden from chat.
       </p>
       {(messages.isError || actions.isError) && (
         <LoadError

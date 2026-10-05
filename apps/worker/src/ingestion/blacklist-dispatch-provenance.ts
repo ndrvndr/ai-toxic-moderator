@@ -11,7 +11,8 @@ type Slot = 'message' | 'author';
 /** Uses the existing scoped plan/classification/observation/run aliases p, c, o, r. */
 export function blacklistDispatchAllowedSql(slot: Slot): string {
   const link = slot === 'message' ? 'message_plan_id' : 'author_plan_id';
-  return `(
+  // Retired built-in plans remain auditable, but must never authorize new requests.
+  return `(p.policy_version NOT LIKE 'settings-run-%' AND p.policy_version <> 'actions-1' AND (
     (p.policy_version NOT LIKE 'blacklist-%' AND c.reason_code <> 'BLACKLIST_MATCH')
     OR (
       p.policy_version LIKE 'blacklist-%'
@@ -33,7 +34,7 @@ export function blacklistDispatchAllowedSql(slot: Slot): string {
           AND bl.bundle -> 'blacklist_revision' = to_jsonb(captured.blacklist_revision)
       )
     )
-  )`;
+  ))`;
 }
 
 /** Recompute immutable policy evidence; no credentials or provider calls are involved. */

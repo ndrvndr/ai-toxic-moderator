@@ -18,6 +18,7 @@ export class ModerationSettingsConflict extends Error {
   }
 }
 
+/** Legacy immutable storage retained for historical data; no active settings route exposes it. */
 export class ModerationSettingsStore {
   constructor(private readonly pool: Pool) {}
 

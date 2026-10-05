@@ -307,9 +307,9 @@ both roles after migration. Persistence itself does not send provider requests.
 
 ## Classification pipeline
 
-The normal factory uses classifier version `rules-blacklist-1`. It first looks up
+The normal factory uses classifier version `blacklist-only-1`. It first looks up
 any persisted classification, then resolves its original run snapshot. A fresh
-blacklist match bypasses built-in detection and action planning and records
+blacklist match records
 `ACTION_REQUIRED` with reason `BLACKLIST_MATCH`, empty signals, and null category
 and severity. This is explicit streamer policy, not a model toxicity assessment.
 Migration `023_blacklist_classification_reason.sql` supports this decision without
@@ -318,8 +318,9 @@ the new reason; History displays uncategorized policy matches as Streamer policy
 
 Matched decisions save independent deletion and optional timeout/ban plans. If the
 author target is unavailable, deletion is retained. No-match decisions also retain
-their captured provenance, then use the existing built-in rules and settings
-planner. Controlled development delete/ban policies keep their isolated behavior.
+their captured provenance and a no-action audit plan. Unmatched messages can enter
+AI processing using captured enabled AI settings. Built-in detection and its settings
+planner are retired. Controlled development delete/ban policies keep their isolated marker behavior.
 Explicit non-text YouTube events are skipped even when they contain display text.
 
 Classification, blacklist audit, and action plans share the ingestion transaction;

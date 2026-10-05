@@ -39,7 +39,9 @@ export function ChatMessageSummary({ message }: { message: ChatObservation }) {
         aria-label="Moderation summary"
         className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
       >
-        {evaluation && (
+        {evaluation?.classifier_version === 'blacklist-only-1' && !message.blacklist ? (
+          <span>No blocked word matched</span>
+        ) : evaluation && evaluation.classifier_version !== 'blacklist-only-1' ? (
           <span
             className={
               attention ? 'font-medium text-amber-800 dark:text-amber-200' : 'text-muted-foreground'
@@ -47,7 +49,7 @@ export function ChatMessageSummary({ message }: { message: ChatObservation }) {
           >
             Rule check: {ruleLabels[evaluation.outcome]}
           </span>
-        )}
+        ) : null}
         {message.blacklist && <span className="font-medium">Blocked word matched</span>}
         {ai && (
           <span className="text-muted-foreground">

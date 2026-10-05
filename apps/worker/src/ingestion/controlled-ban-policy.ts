@@ -3,8 +3,6 @@ import { ActionPlanner, RuleDetectionEngine } from '@moderator/moderation-core';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
-import { DEFAULT_RULES } from './default-rules';
-
 const scopeSchema = z.strictObject({
   sessionId: z.uuid(),
   authorChannelId: z.string().regex(/^UC[A-Za-z0-9_-]{22}$/),
@@ -39,7 +37,6 @@ export function controlledBanVersion(input: ControlledBanScope): string {
 export function controlledBanPolicy(input: ControlledBanScope) {
   const scope = scopeSchema.parse(input);
   const version = controlledBanVersion(scope);
-  const normal = new RuleDetectionEngine(DEFAULT_RULES);
 
   // Bind the signal to this exact scope and action.
   const ruleId = `development.${version}`;
@@ -64,11 +61,9 @@ export function controlledBanPolicy(input: ControlledBanScope) {
     version,
     engine: {
       async detect(message: Parameters<RuleDetectionEngine['detect']>[0]) {
-        const signals = await normal.detect(message);
-
         return message.author_external_id === scope.authorChannelId
-          ? [...signals, ...(await test.detect(message))]
-          : signals;
+          ? await test.detect(message)
+          : [];
       },
     },
     planner: {

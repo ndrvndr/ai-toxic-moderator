@@ -6,7 +6,7 @@ Steps 1–9 define shared settings contracts, immutable revisions and run snapsh
 
 Step 10 real-provider DELETE, TIMEOUT, and BAN scenarios were reported successful by the developer on October 4, 2026 (Asia/Jakarta). See [real-provider verification](#real-provider-verification) for evidence and limitations. The assistant did not independently execute these scenarios.
 
-The new contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from built-in rule settings and custom blacklist revisions.
+The contracts live in `packages/contracts/src/ai-moderation-settings.ts`. They are separate from custom blacklist revisions. Built-in rule settings are retired; historical contracts and stored results remain compatible.
 
 ## Configuration contract
 

@@ -5,16 +5,10 @@ import { AiModerationSettingsController } from './ai-moderation-settings.control
 import { AiModerationSettingsService } from './ai-moderation-settings.service';
 import { CustomBlacklistController } from './custom-blacklist.controller';
 import { CustomBlacklistService } from './custom-blacklist.service';
-import { ModerationSettingsController } from './moderation-settings.controller';
-import { ModerationSettingsService } from './moderation-settings.service';
 
 @Module({
   imports: [AuthModule],
-  controllers: [
-    ModerationSettingsController,
-    CustomBlacklistController,
-    AiModerationSettingsController,
-  ],
-  providers: [ModerationSettingsService, CustomBlacklistService, AiModerationSettingsService],
+  controllers: [CustomBlacklistController, AiModerationSettingsController],
+  providers: [CustomBlacklistService, AiModerationSettingsService],
 })
 export class SettingsModule {}
