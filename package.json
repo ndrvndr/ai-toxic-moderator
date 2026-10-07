@@ -21,7 +21,6 @@
     "test:automatic-ai-cycle": "node --experimental-test-isolation=none --test tests/automatic-ai-cycle.test.cjs",
     "test:automatic-ai-run-reader": "node --experimental-test-isolation=none --test tests/automatic-ai-run-reader.test.cjs",
     "test:chat-ai-decision": "node --experimental-test-isolation=none --test tests/chat-ai-decision.test.cjs",
-    "test:chat-ai-decision": "node --experimental-test-isolation=none --test tests/chat-ai-decision.test.cjs",
     "test:ai-action-plan-cycle": "node --experimental-test-isolation=none --test tests/ai-action-plan-cycle.test.cjs",
     "test:ai-action-decision-cycle": "node --experimental-test-isolation=none --test tests/ai-action-decision-cycle.test.cjs",
     "test:ai-action-decision-store": "node --env-file-if-exists=.env --experimental-test-isolation=none --test tests/ai-action-decision-store.test.cjs",
@@ -103,7 +102,8 @@
     "db:worker": "node --env-file-if-exists=.env scripts/worker-role.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "format": "node scripts/organize-imports.mjs && prettier --write .",
-    "format:check": "node scripts/organize-imports.mjs --check && prettier --check ."
+    "format:check": "node scripts/organize-imports.mjs --check && prettier --check .",
+    "test:ai-quality": "node --experimental-test-isolation=none --test tests/ai-quality-report.test.cjs tests/ai-policy-evaluation.test.cjs"
   },
   "devDependencies": {
     "@huggingface/transformers": "3.8.1",

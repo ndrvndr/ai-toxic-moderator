@@ -2,6 +2,13 @@
 
 Status: initial local evaluation completed on 2026-10-05. Native inference ran on all 40 existing probes using the cached pinned revision. See [observed results](ai-quality-results.md). This stage does not require a YouTube livestream or send moderation requests.
 
+The follow-up [action-policy evaluation](ai-policy-evaluation.md) was completed on
+2026-10-07 using a fresh pinned-model rerun and the actual application planner.
+It compares all-tier, stricter, and observation-only configurations. The controlled
+demo candidate is Delete 0.50, Timeout 0.57, Ban 0.90, with a 30-second timeout;
+it is not a production recommendation and was not applied to saved settings.
+Final controlled livestream verification with this exact candidate is still pending.
+
 ## Steps
 
 1. Review the proposed labels in `scripts/ai-prototype-cases.json` before comparing scores. Keep clear, abusive, ambiguous, and out-of-scope cases separate. Record disagreements rather than silently relabeling examples to match model output.
@@ -30,3 +37,15 @@ The second command names the report generated for this evaluation. On another ru
 Thresholds were compared after inspecting existing scores. These are in-sample exploratory comparisons; no held-out generalization claim is justified. A cutoff of 0.50 selects one clear example and ten of eleven abusive examples. At 0.56 it selects no clear examples in this sample but only six of eleven abusive examples. At 0.60 it selects only one of eleven abusive examples. Thresholds alone do not resolve the overlap.
 
 No universal demo preset is endorsed. Permanent bans are not justified by this small quality sample. An explicit demonstration with a test viewer can still verify configurable Delete, Timeout, and Ban execution independently of toxicity quality. Saved channel settings and executor switches were not modified. Final demo settings remain a product decision, with the limitations above disclosed.
+
+The follow-up report records an explicit demo candidate and its false-positive
+and missed-message tradeoffs. Reproduce its planner comparison after building core:
+
+```powershell
+node scripts/ai-policy-evaluation.mjs .cache/ai-prototype/results-1791227972815.json
+npm run test:ai-quality
+```
+
+Use the report path printed by your own inference run when the recorded cache file
+is not available. The evaluation imports the built application planner; it does
+not recreate tier-selection logic or send plans to a database or executor.

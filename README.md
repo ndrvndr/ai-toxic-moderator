@@ -530,9 +530,11 @@ outcomes. Successful execution does not prove that a model's decision was correc
 Toxicity scores do not establish spam, scam, or gambling-promotion detection.
 
 Use the [portfolio demo guide](docs/portfolio-demo.md) to prepare a repeatable
-demonstration. Final demo policy selection and end-to-end AI quality evaluation
-have not been completed; the authored-example exploration above remains the
-available model-quality evidence. Additional platform integrations and production
+demonstration. The [offline AI policy comparison](docs/ai-policy-evaluation.md)
+is complete and records a controlled all-tier candidate (Delete 0.50, Timeout 0.57,
+Ban 0.90, 30 seconds). It selects ten of eleven abusive examples but also deletes
+one clear anti-harassment example. Final livestream verification with this exact
+candidate remains pending; no saved settings were changed. Additional platform integrations and production
 security/deployment verification remain separate work. The application currently
 enforces local development boundaries; this README does not describe a public
 production deployment procedure.
@@ -544,21 +546,22 @@ the reported outcomes and evidence limits. The assistant did not run those check
 
 Built-in rule enforcement is retired. The authored-example AI measurements above
 do not establish independent accuracy, production throughput, or production
-readiness. The implemented portfolio feature scope is complete, but final demo
-threshold selection and AI policy verification have not been completed.
+readiness. The implemented portfolio feature scope and offline AI evaluation are
+complete; final controlled demo-policy execution verification remains pending.
 
 ## MVP completion and evaluation status
 
 The portfolio MVP feature scope is implemented, including unban, History pagination,
-English dashboard/API messages, and theme switching. Final AI evaluation remains
-an optional outstanding quality-validation step if the portfolio is closed now;
-skipping it does not establish model accuracy or validate the chosen action thresholds.
+English dashboard/API messages, and theme switching. Offline AI action-policy
+evaluation is complete. The final live check of its recorded demo candidate has
+not been performed. Neither this small authored sample nor successful provider
+execution establishes independent model accuracy or production-safe thresholds.
 
-| Area                  | Status                             | Evidence and limits                                                                                                                                                                                                                                                                                                                     |
-| --------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Unban                 | Implemented                        | Authorization, concurrent requests, provider failures, uncertain outcomes, and renewed moderation eligibility have automated coverage. The developer reported successful controlled live ban/removal checks. The [verification checklist](docs/unban-verification.md) still distinguishes individual checks awaiting recorded evidence. |
-| Dashboard refinements | Implemented and developer-reviewed | History defaults to page 1 with 10 sessions per page; shared controls use shadcn/ui; theme choice persists; dashboard and generated API copy use English. Automated checks cover pagination, access, forms, and theme switching.                                                                                                        |
-| Final AI evaluation   | Not completed                      | Existing results cover 40 authored examples only. Final demo thresholds and the complete policy's false positives/missed messages have not received a final evaluation. No independently validated accuracy or production-safe threshold is claimed.                                                                                    |
+| Area                  | Status                                     | Evidence and limits                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unban                 | Implemented                                | Authorization, concurrent requests, provider failures, uncertain outcomes, and renewed moderation eligibility have automated coverage. The developer reported successful controlled live ban/removal checks. The [verification checklist](docs/unban-verification.md) still distinguishes individual checks awaiting recorded evidence.                                |
+| Dashboard refinements | Implemented and developer-reviewed         | History defaults to page 1 with 10 sessions per page; shared controls use shadcn/ui; theme choice persists; dashboard and generated API copy use English. Automated checks cover pagination, access, forms, and theme switching.                                                                                                                                       |
+| Final AI evaluation   | Offline complete; final live check pending | A fresh pinned-model run and the real planner compared three policies on 40 authored examples. The report documents false positives, missed abuse, ambiguous messages, threats, and scope limits. The all-tier demo candidate has not been applied or verified in a final livestream run. No independently validated accuracy or production-safe threshold is claimed. |
 
 The implemented MVP unban flow covers bans with a recorded provider ban ID.
 An unknown ban outcome without an ID cannot be removed through that flow.
@@ -596,6 +599,7 @@ gate, even when the portfolio MVP feature scope is complete.
 - [Dashboard redesign](docs/dashboard-redesign.md)
 - [AI quality evaluation](docs/ai-quality-evaluation.md)
 - [AI quality results](docs/ai-quality-results.md)
+- [Offline AI action-policy comparison](docs/ai-policy-evaluation.md)
 - [Automatic AI monitoring](docs/automatic-ai-monitoring.md)
 - [AI moderation settings and planning](docs/ai-moderation.md)
 - [AI operational status](docs/ai-operational-status.md)

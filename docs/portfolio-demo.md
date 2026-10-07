@@ -1,6 +1,8 @@
 # Portfolio demo guide
 
-Status: preparation guide. The developer selected a demo with AI Delete, Timeout,
+Status: preparation guide. Offline policy evaluation completed on 2026-10-07;
+the final livestream run with its exact candidate remains pending.
+The developer selected a demo with AI Delete, Timeout,
 and Ban enabled. All three tiers are part of the intended demo configuration;
 they are not promises of accurate detection. This document does not change saved
 settings or enable any worker action switches.
@@ -40,6 +42,13 @@ demo policy. Choose strictly ordered thresholds: Delete < Timeout < Ban. A score
 does not trigger all three tiers at once: the highest enabled threshold reached
 determines the selected tier. Timeout/Ban can include deletion of the triggering
 message, with separate provider outcomes.
+
+The [offline comparison](ai-policy-evaluation.md) records a controlled candidate:
+Delete **0.50**, Timeout **0.57**, Ban **0.90**, timeout **30 seconds**. These values
+demonstrate the all-tier workflow on a test viewer; they are not installed defaults
+or independently validated safety thresholds. One clear example still selects
+Delete and one abusive example selects no tier. Settings have not been changed
+by the evaluation script.
 
 | Action  | Streamer-facing explanation                                              | Consequence of a mistaken decision                               |
 | ------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------- |
