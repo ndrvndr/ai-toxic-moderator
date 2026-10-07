@@ -16,6 +16,14 @@ thresholds, and automatic action planning are implemented. Model quality has bee
 explored on 40 authored examples; safe and abusive scores overlap, so this is a
 portfolio prototype rather than a validated replacement for human moderators.
 
+## Video demo
+
+[Watch the full demo (7 minutes)](https://res.cloudinary.com/dqqmzgesp/video/upload/v1791393503/ai-toxic-mod-demo_oxjnoe.mp4).
+
+The walkthrough shows Google login, moderation settings, live chat updates,
+blacklist deletion, AI-driven timeouts, repeated timeouts, ban/unban, and saved
+session reports.
+
 ## Current capabilities
 
 - Google OAuth login and persistent dashboard sessions.
