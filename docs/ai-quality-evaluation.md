@@ -6,8 +6,10 @@ The follow-up [action-policy evaluation](ai-policy-evaluation.md) was completed 
 2026-10-07 using a fresh pinned-model rerun and the actual application planner.
 It compares all-tier, stricter, and observation-only configurations. The controlled
 demo candidate is Delete 0.50, Timeout 0.57, Ban 0.90, with a 30-second timeout;
-it is not a production recommendation and was not applied to saved settings.
-Final controlled livestream verification with this exact candidate is still pending.
+it is not a production recommendation. Offline analysis did not change saved
+settings. On 2026-10-07, the developer reported that the final controlled E2E
+checklist with this candidate passed. See the action-policy report for the
+confirmation and its evidence limits.
 
 ## Steps
 

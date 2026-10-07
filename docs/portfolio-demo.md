@@ -1,7 +1,10 @@
 # Portfolio demo guide
 
-Status: preparation guide. Offline policy evaluation completed on 2026-10-07;
-the final livestream run with its exact candidate remains pending.
+Status: repeatable demonstration guide. Offline policy evaluation completed on
+2026-10-07. On the same date, the developer reported that the final controlled
+E2E checklist with the recorded candidate passed. See
+[the verification record](ai-policy-evaluation.md#final-e2e-confirmation) for
+reported checks and evidence limits. Model-quality limitations remain unchanged.
 The developer selected a demo with AI Delete, Timeout,
 and Ban enabled. All three tiers are part of the intended demo configuration;
 they are not promises of accurate detection. This document does not change saved

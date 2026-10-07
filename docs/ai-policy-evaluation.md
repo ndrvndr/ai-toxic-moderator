@@ -111,7 +111,21 @@ Use **Delete 0.50, Timeout 0.57, Ban 0.90, timeout duration 30 seconds** only as
 
 The candidate is selected to show three different planning paths with the recorded model outputs while exposing its errors. It still wrongly selects a safe message and misses abuse. No permanent-ban threshold is justified as safe by this evaluation. Review the limitations when presenting the project.
 
-No channel settings or environment switches were changed. Final controlled livestream verification for this exact candidate remains **pending**. Existing execution E2E results cannot be relabeled as a new run with these captured settings.
+The offline evaluation did not change channel settings or environment switches. On **2026-10-07 (Asia/Jakarta)**, after receiving the final controlled E2E procedure, the developer confirmed that it had been tested and all checks passed. This records a new developer confirmation, rather than relabeling earlier execution results.
+
+### Final E2E confirmation
+
+| Check                                                   | Reported result |
+| ------------------------------------------------------- | --------------- |
+| New monitoring run with the candidate captured settings | Passed          |
+| Greeting with no AI action                              | Passed          |
+| Delete execution                                        | Passed          |
+| Timeout execution and return after the timeout window   | Passed          |
+| Repeated timeout                                        | Passed          |
+| Permanent ban and subsequent unban                      | Passed          |
+| History retained after reload                           | Passed          |
+
+These results are **developer-reported**, following the supplied checklist. The assistant did not execute or observe the livestream. Exact run/session identifiers, per-message scores and provider logs were not supplied for this final confirmation. This closes the portfolio execution verification; it does not remove the documented false positive, missed abuse or other model-quality limitations.
 
 ## Final controlled livestream checklist
 
