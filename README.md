@@ -18,7 +18,9 @@ portfolio prototype rather than a validated replacement for human moderators.
 
 ## Video demo
 
-[Watch the full demo (7 minutes)](https://res.cloudinary.com/dqqmzgesp/video/upload/v1791393503/ai-toxic-mod-demo_oxjnoe.mp4).
+[![AI Toxic Moderator video demo preview](https://res.cloudinary.com/dqqmzgesp/video/upload/so_3,w_1200,c_limit,f_jpg/v1791393503/ai-toxic-mod-demo_oxjnoe.jpg)](https://res.cloudinary.com/dqqmzgesp/video/upload/v1791393503/ai-toxic-mod-demo_oxjnoe.mp4)
+
+Click the preview above or [watch the full demo (7 minutes)](https://res.cloudinary.com/dqqmzgesp/video/upload/v1791393503/ai-toxic-mod-demo_oxjnoe.mp4).
 
 The walkthrough shows Google login, moderation settings, live chat updates,
 blacklist deletion, AI-driven timeouts, repeated timeouts, ban/unban, and saved
